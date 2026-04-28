@@ -420,6 +420,22 @@ def test_tmux_idle_detection_accepts_claude_prompt_with_insert_status() -> None:
     assert _tmux_pane_looks_idle(pane_tail) is True
 
 
+def test_tmux_idle_detection_rejects_claude_active_status_with_prompt_area() -> None:
+    pane_tail = """
+● Read(/tmp/prompt.md)
+  ⎿  Read 931 lines
+
+✢ Actualizing… (2m 9s · ↓ 3.6k tokens · almost done thinking)
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on (shift+tab to cycle)
+"""
+
+    assert _tmux_pane_looks_idle(pane_tail) is False
+
+
 def test_make_runner_maps_state_to_backend() -> None:
     assert make_runner({'agentRunner': 'tmux-claude'}).backend == 'tmux-claude'
     assert make_runner({'agentRunner': 'subprocess'}).backend == 'subprocess'

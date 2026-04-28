@@ -14,7 +14,7 @@ from typing import Any
 
 DEFAULT_TMUX_SUBMIT_DELAY_SECONDS = 0.5
 DEFAULT_TMUX_CLEAR_DELAY_SECONDS = 0.5
-DEFAULT_TMUX_IDLE_GRACE_SECONDS = 8.0
+DEFAULT_TMUX_IDLE_GRACE_SECONDS = 60.0
 DEFAULT_TMUX_IDLE_POLL_SECONDS = 5.0
 
 
@@ -473,6 +473,8 @@ def _tmux_pane_looks_idle(pane_tail: str) -> bool:
     lines = [line.strip() for line in pane_tail.splitlines() if line.strip()]
     if not lines:
         return False
+    if _tmux_pane_has_active_claude_status(lines):
+        return False
     last_line = lines[-1]
     if re.search(r'(^|\s)(❯|>|[$#])\s*$', last_line):
         return True
@@ -481,6 +483,24 @@ def _tmux_pane_looks_idle(pane_tail: str) -> bool:
         return True
     lowered_tail = pane_tail.lower()
     return 'no active conversation' in lowered_tail or 'press enter to continue' in lowered_tail
+
+
+def _tmux_pane_has_active_claude_status(lines: list[str]) -> bool:
+    active_patterns = (
+        'actualizing',
+        'thinking',
+        'drizzling',
+        'running',
+        'processing',
+        'working',
+        'esc to interrupt',
+    )
+    for line in lines[-20:]:
+        lowered = line.lower()
+        if any(pattern in lowered for pattern in active_patterns):
+            if '…' in line or '...' in line or re.search(r'\(\d+[smh]', line):
+                return True
+    return False
 
 
 def _tmux_timeout_message(*, done_path: Path, run_id: str, pane_tail: str, pane_is_idle: bool) -> str:
