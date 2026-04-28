@@ -269,6 +269,102 @@ raise SystemExit(0)
     assert state['requirementsAccepted'] is False
 
 
+def test_revise_requirements_gate_includes_plannotator_submitted_feedback(tmp_path: Path) -> None:
+    workspace, _ = _make_ralph_workspace(tmp_path)
+    fake_tmux = tmp_path / 'tmux'
+    _write(
+        fake_tmux,
+        """#!/usr/bin/env python3
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+if sys.argv[1:2] == ["paste-buffer"]:
+    prompt = (Path(os.environ["RRC_RUN_DIR"]) / "prompt.md").read_text(encoding="utf-8")
+    match = re.search(r"Write the Markdown body to this exact file:\\n(.+)", prompt)
+    if match:
+        body_path = Path(match.group(1).strip())
+        body_path.parent.mkdir(parents=True, exist_ok=True)
+        if "please remove the Baidu unit" in prompt:
+            requirement = "Revised from local Plannotator feedback."
+        else:
+            requirement = "Initial Claude draft."
+        body_path.write_text(
+            "# Requirements & Acceptance Confirmation\\n\\n"
+            f"## 1. Requirements\\n- {requirement}\\n\\n"
+            "## 2. User Journeys\\n- User completes delivery acceptance.\\n\\n"
+            "## 3. Acceptance Criteria\\n- Delivery evidence is verified.\\n\\n"
+            "## 4. Test Strategy\\n- Run the declared verification command.\\n\\n"
+            "## 5. Out of Scope\\n- Future units.\\n\\n"
+            "## 6. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
+            encoding="utf-8",
+        )
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({"status": "done", "summary": "requirements generated", "run_id": os.environ["RRC_RUN_ID"]}),
+            encoding="utf-8",
+        )
+        raise SystemExit(0)
+raise SystemExit(0)
+""",
+    )
+    fake_tmux.chmod(fake_tmux.stat().st_mode | stat.S_IXUSR)
+    state_dir = tmp_path / '.rrc-controller'
+    init_result = run_rrc(
+        'init',
+        '--state-dir',
+        str(state_dir),
+        '--workspace-dir',
+        str(workspace),
+        '--from-ralph',
+        '--target',
+        '1.1',
+        '--runner',
+        'tmux-claude',
+        '--tmux-target',
+        '1.2',
+        '--agent',
+        str(fake_tmux),
+        '--force',
+    )
+    assert init_result.returncode == 0, init_result.stderr
+    draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
+    assert draft_result.returncode == 0, draft_result.stderr
+
+    plannotator_dir = state_dir / 'plannotator'
+    plannotator_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = plannotator_dir / 'requirements-last-review.stdout.log'
+    stdout_path.write_text(
+        json.dumps(
+            {
+                'decision': 'annotated',
+                'feedback': '- please remove the Baidu unit before regenerating requirements.',
+            }
+        ),
+        encoding='utf-8',
+    )
+    (plannotator_dir / 'requirements-last-review.json').write_text(
+        json.dumps(
+            {
+                'gate': 'requirements',
+                'gate_path': str(state_dir / 'approvals' / 'requirements-and-acceptance.md'),
+                'stdout_path': str(stdout_path),
+                'process_id': None,
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'requirements')
+
+    assert result.returncode == 0, result.stderr
+    gate_content = (state_dir / 'approvals' / 'requirements-and-acceptance.md').read_text(encoding='utf-8')
+    assert 'Revised from local Plannotator feedback.' in gate_content
+    assert not (plannotator_dir / 'requirements-last-review.json').exists()
+    assert (plannotator_dir / 'requirements-last-review-used-1.json').exists()
+
+
 def test_revise_requirements_gate_can_rewind_from_unit_plan_approval(tmp_path: Path) -> None:
     workspace, _ = _make_ralph_workspace(tmp_path)
     state_dir = tmp_path / '.rrc-controller'

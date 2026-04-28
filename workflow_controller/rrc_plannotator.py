@@ -48,7 +48,7 @@ def run_plannotator_gate_review(
     stdout_path = review_dir / f'{gate}-last-review.stdout.log'
     stderr_path = review_dir / f'{gate}-last-review.stderr.log'
 
-    full_command = [*command_parts, 'annotate', str(gate_path), '--gate']
+    full_command = [*command_parts, 'annotate', str(gate_path), '--gate', '--json']
     env = os.environ.copy()
     if port is not None:
         env['PLANNOTATOR_PORT'] = str(port)

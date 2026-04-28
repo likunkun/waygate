@@ -840,11 +840,13 @@ print('https://share.plannotator.ai/#fake')
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
     assert 'https://share.plannotator.ai/#fake' in result.stdout
+    assert 'Request changes' in result.stdout
     assert '完成审阅后，请回到这里输入 a 通过、r 返工或 q 退出。' in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
         'annotate',
         str(gate_path),
         '--gate',
+        '--json',
     ]
     summary_path = state_dir / 'plannotator' / 'unit-plan-last-review.json'
     assert summary_path.exists()
@@ -857,6 +859,129 @@ print('https://share.plannotator.ai/#fake')
         if line.strip()
     ]
     assert any(event['type'] == 'plannotator_review_requested' for event in events)
+
+
+def test_drive_blocks_revise_after_plannotator_when_feedback_is_not_submitted(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        '# Unit Plan Confirmation\n\n## Human Confirmation\n\nStatus: pending\nConfirmed by: \nConfirmed at: \nContent hash: sha256:legacy\n',
+        encoding='utf-8',
+    )
+    fake_plannotator = tmp_path / 'fake-plannotator'
+    fake_plannotator.write_text(
+        """#!/usr/bin/env python3
+print('Open this link on your local machine to annotate:')
+print('https://share.plannotator.ai/#fake-no-local-feedback')
+""",
+        encoding='utf-8',
+    )
+    fake_plannotator.chmod(0o755)
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--plannotator-command',
+        str(fake_plannotator),
+        input_text='v\nr\nq\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'Plannotator 尚未提交可供 controller 读取的返工反馈' in result.stdout
+    assert 'Request changes' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert 'unitPlanRevisionCount' not in state
+
+
+def test_drive_blocks_revise_after_plannotator_review_without_submitted_feedback(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        '# Unit Plan Confirmation\n\n## Human Confirmation\n\nStatus: pending\nConfirmed by: \nConfirmed at: \nContent hash: sha256:legacy\n',
+        encoding='utf-8',
+    )
+    summary_path = state_dir / 'plannotator' / 'unit-plan-last-review.json'
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                'gate': 'unit-plan',
+                'gate_path': str(gate_path),
+                'stdout': '',
+                'stderr': '(document only, annotations added in browser)',
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        input_text='r\nq\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'Plannotator 尚未提交可供 controller 读取的返工反馈' in result.stdout
+    assert 'Request changes' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert 'unitPlanRevisionCount' not in state
 
 
 def test_drive_passes_configured_plannotator_port_to_review_command(

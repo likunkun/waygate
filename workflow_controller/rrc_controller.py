@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -305,13 +306,46 @@ class RalphRefinerController:
             return self._revise_unit_plan_gate()
         raise ValueError(f'Unsupported gate revision: {gate}')
 
+    def _revision_feedback_for_gate(self, gate: str, gate_path: Path) -> str:
+        gate_content = gate_path.read_text(encoding='utf-8')
+        plannotator_feedback, pending_reason = _read_plannotator_submitted_feedback(
+            self.state_dir,
+            gate,
+            gate_path,
+            gate_content,
+        )
+        if plannotator_feedback:
+            return (
+                gate_content.rstrip()
+                + '\n\n## Plannotator Feedback\n\n'
+                + plannotator_feedback.rstrip()
+                + '\n'
+            )
+        if pending_reason:
+            raise ValueError(
+                'Plannotator 尚未提交可供 controller 读取的返工反馈；'
+                f'{pending_reason}。'
+            )
+        return gate_content
+
+    def _consume_plannotator_feedback(self, gate: str, revision_count: int | None) -> None:
+        summary_path = _plannotator_summary_path(self.state_dir, gate)
+        if not summary_path.exists():
+            return
+        archive_path = summary_path.with_name(
+            f'{gate}-last-review-used-{revision_count or 0}.json'
+        )
+        if archive_path.exists():
+            archive_path.unlink()
+        summary_path.rename(archive_path)
+
     def reject_final_acceptance_gate(self) -> Path:
         state = self.store.load_state()
         if state.get('currentStep') != 'WAITING_FINAL_ACCEPTANCE':
             raise ValueError('Final acceptance can only be rejected at WAITING_FINAL_ACCEPTANCE')
 
         gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
-        rejection_feedback = gate_path.read_text(encoding='utf-8')
+        rejection_feedback = self._revision_feedback_for_gate('final-acceptance', gate_path)
         route = _final_acceptance_rejection_route(rejection_feedback)
         state['finalAcceptanceRejectionFeedback'] = rejection_feedback
         state['finalAcceptanceRejectionRoute'] = route
@@ -340,6 +374,10 @@ class RalphRefinerController:
             'revision_count': state.get('finalAcceptanceRejectionCount'),
             'route': route,
         })
+        self._consume_plannotator_feedback(
+            'final-acceptance',
+            int(state.get('finalAcceptanceRejectionCount') or 0),
+        )
         self._save_state(state)
         return gate_path
 
@@ -418,7 +456,7 @@ class RalphRefinerController:
                 f'Requirements gate not found: {gate_path}. Run the requirements drafter first.'
             )
 
-        state['requirementsRevisionFeedback'] = gate_path.read_text(encoding='utf-8')
+        state['requirementsRevisionFeedback'] = self._revision_feedback_for_gate('requirements', gate_path)
         state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
         state['requirementsAccepted'] = False
         state['unitPlanAccepted'] = False
@@ -439,6 +477,10 @@ class RalphRefinerController:
         state.pop('requirementsRevisionFeedback', None)
         state['requirementsDraftGenerated'] = True
         state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+        self._consume_plannotator_feedback(
+            'requirements',
+            int(state.get('requirementsRevisionCount') or 0),
+        )
         self.store.append_event('requirements_draft_revised', {
             'task_id': state.get('task_id'),
             'path': str(gate_path),
@@ -458,7 +500,7 @@ class RalphRefinerController:
                 f'Unit plan gate not found: {gate_path}. Run the unit plan drafter first.'
             )
 
-        state['unitPlanRevisionFeedback'] = gate_path.read_text(encoding='utf-8')
+        state['unitPlanRevisionFeedback'] = self._revision_feedback_for_gate('unit-plan', gate_path)
         state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
         state['unitPlanAccepted'] = False
         state.pop('unitPlanAcceptedHash', None)
@@ -475,6 +517,10 @@ class RalphRefinerController:
         state['unitPlanDraftGenerated'] = True
         state['unitPlanAccepted'] = False
         state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+        self._consume_plannotator_feedback(
+            'unit-plan',
+            int(state.get('unitPlanRevisionCount') or 0),
+        )
         self.store.append_event('unit_plan_draft_revised', {
             'task_id': state.get('task_id'),
             'path': str(gate_path),
@@ -1059,12 +1105,14 @@ class RalphRefinerController:
                     'path': str(gate_info['path']),
                     'command': result.command,
                     'summary_path': str(result.summary_path),
+                    'stdout_path': str(result.summary_path.with_suffix('.stdout.log')),
                 })
                 output_func('[Plannotator] 已打开辅助审阅。')
                 output_func(f'  审阅记录：{result.summary_path}')
                 _print_plannotator_output(result.stdout, output_func)
                 if result.stderr.strip():
                     _print_plannotator_output(result.stderr, output_func)
+                output_func('  如需返工，请先在 Plannotator 浏览器点击 Request changes，然后回到这里输入 r。')
                 output_func('  完成审阅后，请回到这里输入 a 通过、r 返工或 q 退出。')
                 continue
             if choice in {'a', 'approve'}:
@@ -1072,7 +1120,11 @@ class RalphRefinerController:
                 output_func(f"[确认] {gate_info['label']} 已确认，继续推进。")
                 return True
             if choice in {'r', 'revise'} and gate_info.get('can_revise'):
-                self.revise_human_gate(str(gate_info['gate']))
+                try:
+                    self.revise_human_gate(str(gate_info['gate']))
+                except Exception as exc:
+                    output_func(f'[修订] 无法返工：{exc}')
+                    continue
                 output_func(f"[修订] 已重新生成 {gate_info['label']}，请重新阅读确认。")
                 return True
             if choice in {'r', 'reject', 'rework'} and gate_info.get('can_rework'):
@@ -1082,7 +1134,11 @@ class RalphRefinerController:
                     output_func,
                 ):
                     return False
-                self.reject_final_acceptance_gate()
+                try:
+                    self.reject_final_acceptance_gate()
+                except Exception as exc:
+                    output_func(f'[返工] 无法返工：{exc}')
+                    continue
                 route = self.store.load_state().get('finalAcceptanceRejectionRoute')
                 message = FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES.get(
                     str(route),
@@ -1700,6 +1756,93 @@ def _print_plannotator_output(output: str, output_func: Callable[[str], None]) -
     for line in output.splitlines():
         if line.strip():
             output_func(f'  {line}')
+
+
+def _plannotator_summary_path(state_dir: Path, gate: str) -> Path:
+    return state_dir / 'plannotator' / f'{gate}-last-review.json'
+
+
+def _read_plannotator_submitted_feedback(
+    state_dir: Path,
+    gate: str,
+    gate_path: Path,
+    gate_content: str,
+) -> tuple[str | None, str | None]:
+    summary_path = _plannotator_summary_path(state_dir, gate)
+    if not summary_path.exists():
+        return None, None
+    try:
+        summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return None, None
+    if str(summary.get('gate_path') or '') != str(gate_path):
+        return None, None
+    if _gate_changed_after_plannotator_review(summary_path, gate_path, gate_content):
+        return None, None
+
+    stdout = str(summary.get('stdout') or '')
+    stdout_path = summary.get('stdout_path')
+    if stdout_path:
+        stdout = (stdout + '\n' + _read_optional_text(Path(str(stdout_path)))).strip()
+    feedback = _extract_plannotator_feedback(stdout)
+    if feedback:
+        return feedback, None
+
+    process_id = summary.get('process_id')
+    if _process_is_alive(process_id):
+        return None, '请先在 Plannotator 浏览器点击 Request changes/请求修改，等待其提交反馈后再输入 r'
+    return None, 'Plannotator 没有返回返工反馈；请在浏览器里选择 Request changes，而不是只关闭或批准'
+
+
+def _gate_changed_after_plannotator_review(summary_path: Path, gate_path: Path, gate_content: str) -> bool:
+    try:
+        return gate_path.stat().st_mtime > summary_path.stat().st_mtime and bool(gate_body(gate_content).strip())
+    except FileNotFoundError:
+        return False
+
+
+def _read_optional_text(path: Path) -> str:
+    if not path.exists():
+        return ''
+    return path.read_text(encoding='utf-8', errors='replace')
+
+
+def _extract_plannotator_feedback(output: str) -> str | None:
+    for line in reversed([line.strip() for line in output.splitlines() if line.strip()]):
+        if not line.startswith('{'):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        feedback = str(payload.get('feedback') or payload.get('reason') or '').strip()
+        if feedback:
+            return feedback
+        decision = str(payload.get('decision') or '').strip()
+        if decision in {'approved', 'exit'}:
+            return None
+    plain_output = output.strip()
+    if plain_output and not plain_output.startswith('Open this link on your local machine to annotate:'):
+        return plain_output
+    return None
+
+
+def _process_is_alive(process_id: Any) -> bool:
+    try:
+        pid = int(process_id)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def parse_args() -> argparse.Namespace:
