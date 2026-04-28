@@ -41,6 +41,20 @@
   - `python -m pytest workflow_controller/tests -q` -> `79 passed in 21.05s`
   - 实际运行目录新增行为测试 -> `3 passed in 1.40s`
 
+### 阶段 7：验证失败原因摘要
+- **状态：** complete
+- 开始时间：2026-04-28
+- 背景：
+  - controller 验证失败时紧凑输出只显示“验证未通过”，用户需要打开 artifact 才能看到失败命令和根因。
+  - 本次实际失败根因是 Playwright 验证命令缺少 `DATABASE_URL`，Next.js warning 只是噪声。
+- 已完成：
+  - retry 输出会追加 compact failure reason：失败命令、exit code、优先提取的根因行。
+  - 对 `Environment variable not found: DATABASE_URL` 这类错误会压缩成 `missing env DATABASE_URL`。
+  - 保留完整 stdout/stderr 在 `verification.json`。
+- 已验证：
+  - `python -m pytest workflow_controller/tests -q` -> `80 passed in 19.99s`
+  - 实际运行目录失败摘要测试 -> `1 passed in 1.15s`
+
 ### 阶段 1：运行问题修复
 - **状态：** complete
 - 执行的操作：

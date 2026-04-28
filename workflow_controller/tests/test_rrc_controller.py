@@ -280,6 +280,48 @@ def test_drive_prints_verification_state_change_markers(tmp_path: Path) -> None:
     assert '[验证] 完成 通过' in rendered
 
 
+def test_drive_prints_compact_verification_failure_reason(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'VERIFY_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'workspacePath': str(workspace),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'Delivery',
+                    'passes': False,
+                    'verification_commands': [
+                        "python -c \"import sys; print('error: Environment variable not found: DATABASE_URL'); sys.exit(1)\"",
+                    ],
+                },
+            ],
+        },
+        force=True,
+    )
+    output: list[str] = []
+
+    controller.drive(max_steps=1, output_func=output.append, timestamp_output=False)
+
+    rendered = '\n'.join(output)
+    assert '原因 验证未通过' in rendered
+    assert 'DATABASE_URL' in rendered
+    assert 'exit 1' in rendered
+
+
 def test_drive_compact_output_groups_failed_attempt_and_retry(tmp_path: Path, monkeypatch) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)

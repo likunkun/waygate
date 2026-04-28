@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -1190,7 +1191,7 @@ class _CompactDriveReporter:
             self.stage_results['Reviewer'] = 'failed' if failed else 'ok'
             if failed:
                 self._print_attempt_summary()
-                self._print_retry('review failed')
+                self._print_retry('review failed', _compact_failure_reason(after_state))
             return
         if action == 'run_verifier':
             self._ensure_attempt()
@@ -1198,7 +1199,7 @@ class _CompactDriveReporter:
             self.stage_results['Verifier'] = 'failed' if failed else 'ok'
             self._print_attempt_summary()
             if failed:
-                self._print_retry('verification failed')
+                self._print_retry('verification failed', _compact_failure_reason(after_state))
 
     def _ensure_attempt(self) -> None:
         if self.attempt_number == 0 or self.stage_results.get('_closed') == 'true':
@@ -1222,12 +1223,13 @@ class _CompactDriveReporter:
             self.output_func(_paint(f"第 {self.attempt_number} 轮", 'blue', self.color_enabled) + f"  {' -> '.join(parts)}")
         self.stage_results['_closed'] = 'true'
 
-    def _print_retry(self, reason: str) -> None:
+    def _print_retry(self, reason: str, detail: str | None = None) -> None:
         reason_label = COMPACT_RETRY_REASONS.get(reason, reason)
+        detail_suffix = f"：{detail}" if detail else ''
         self.output_func(
             _paint(f"重试第 {self.attempt_number + 1} 轮", 'yellow', self.color_enabled)
             + f"    {_stage_tokens('Builder', color_enabled=self.color_enabled)}\n"
-            f"          原因 {_paint(reason_label, 'red', self.color_enabled)}"
+            f"          原因 {_paint(reason_label + detail_suffix, 'red', self.color_enabled)}"
         )
 
 
@@ -1280,6 +1282,65 @@ def _display_units_for_state(state: dict[str, Any]) -> list[dict[str, Any]]:
     if target_units and any(str(unit.get('id')) == current_unit_id for unit in target_units):
         return target_units
     return units
+
+
+def _compact_failure_reason(state: dict[str, Any]) -> str | None:
+    last_failure = state.get('lastFailure')
+    if not isinstance(last_failure, dict):
+        return None
+    details = last_failure.get('details')
+    if not isinstance(details, dict):
+        summary = str(last_failure.get('summary') or '').strip()
+        return _short_failure_text(summary) if summary else None
+
+    parts: list[str] = []
+    command = str(details.get('command') or '').strip()
+    if command:
+        parts.append(_short_command(command, max_chars=80))
+    returncode = details.get('returncode')
+    if returncode is not None:
+        parts.append(f'exit {returncode}')
+    root_cause = _extract_failure_root_cause(details)
+    if root_cause:
+        parts.append(root_cause)
+    if parts:
+        return _short_failure_text(' | '.join(parts))
+    summary = str(last_failure.get('summary') or '').strip()
+    return _short_failure_text(summary) if summary else None
+
+
+def _extract_failure_root_cause(details: dict[str, Any]) -> str | None:
+    text = '\n'.join(
+        str(details.get(key) or '')
+        for key in ('stdout_tail', 'stderr_tail')
+    )
+    if not text.strip():
+        return None
+    patterns = [
+        r'Environment variable not found:\s*([A-Z0-9_]+)',
+        r'(DATABASE_URL[^\n]*)',
+        r'(Error:\s*[^\n]+)',
+        r'(PrismaClientInitializationError[^\n]*)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        if len(match.groups()) == 1 and pattern.startswith('Environment variable'):
+            return f'missing env {match.group(1)}'
+        return ' '.join(match.group(1).split())
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _short_failure_text(text: str, max_chars: int = 220) -> str:
+    normalized = ' '.join(text.split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - 3] + '...'
 
 
 def _stage_for_state(state: dict[str, Any]) -> str | None:

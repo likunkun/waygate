@@ -75,6 +75,15 @@
 - [x] 测试通过
 - **状态：** complete
 
+### 阶段 9：验证失败原因摘要
+- [x] controller retry 输出显示失败命令摘要
+- [x] controller retry 输出显示 exit code
+- [x] controller retry 输出优先提取根因，如缺少 `DATABASE_URL`
+- [x] 完整失败详情仍保留在 `verification.json`
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 测试通过
+- **状态：** complete
+
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。
 2. 是否需要为新工作区补充独立的打包配置、入口脚本或 CI，后续按开发需要决定。
