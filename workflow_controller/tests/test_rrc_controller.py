@@ -198,6 +198,41 @@ def test_drive_compact_output_shows_unit_roadmap_and_attempt_summary(tmp_path: P
     assert '[执行]' not in rendered
 
 
+def test_drive_compact_output_shows_planning_roadmap_before_unit_execution(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'target-v2-2',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'unitPlanAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'V2.2 target acceptance', 'units': ['target-v2-2'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'target-v2-2', 'name': 'V2.2 target', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    output: list[str] = []
+
+    controller.drive(max_steps=0, output_func=output.append, timestamp_output=False)
+    rendered = '\n'.join(output)
+
+    assert '当前   生成需求与验收草案' in rendered
+    assert '阶段 [需求草案*] [需求确认] [Unit Plan] [Unit Plan确认] [构建]' in rendered
+    assert '阶段 [构建] [精修] [评审] [验证] [单元完成]' not in rendered
+
+
 def test_compact_output_counts_units_for_requested_target_not_historical_units(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)

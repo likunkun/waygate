@@ -129,6 +129,21 @@ COMPACT_STAGE_LABELS = {
     'Unit done': '单元完成',
 }
 
+COMPACT_PLANNING_STAGE_LABELS = {
+    'Requirements draft': '需求草案',
+    'Requirements confirmation': '需求确认',
+    'Unit plan': 'Unit Plan',
+    'Unit plan confirmation': 'Unit Plan确认',
+    'Builder': '构建',
+}
+
+COMPACT_PLANNING_ACTION_STAGES = {
+    'run_requirements_drafter': 'Requirements draft',
+    'check_requirements_acceptance': 'Requirements confirmation',
+    'run_unit_plan_drafter': 'Unit plan',
+    'check_unit_plan_approval': 'Unit plan confirmation',
+}
+
 COMPACT_RESULT_LABELS = {
     'ok': '通过',
     'failed': '未通过',
@@ -1449,13 +1464,12 @@ def _compact_roadmap(state: dict[str, Any], *, color_enabled: bool = False) -> s
         for unit in units[index:]
         if not unit.get('passes')
     )
-    current_stage = _stage_for_state(state)
     action = state.get('nextAction') or compute_next_allowed_action(state)
     now = ACTION_LABELS.get(action, action) if action else '-'
     return (
         f"{_paint('▶', 'green', color_enabled)} {_paint(str(state.get('requestedOutcome') or '-'), 'bold', color_enabled)}\n"
         f"          {_paint('单元', 'cyan', color_enabled)}   {index}/{total}  {unit_id}\n"
-        f"          {_paint('阶段', 'cyan', color_enabled)} {_stage_tokens(current_stage, color_enabled=color_enabled)}\n"
+        f"          {_paint('阶段', 'cyan', color_enabled)} {_stage_tokens_for_state(state, color_enabled=color_enabled)}\n"
         f"          {_paint('当前', 'cyan', color_enabled)}   {_paint(str(now), 'yellow', color_enabled) if now != '-' else now}\n"
         f"          {_paint('剩余', 'cyan', color_enabled)}   {_paint(str(remaining_after), 'dim', color_enabled)} 个单元"
     )
@@ -1562,8 +1576,40 @@ def _stage_for_state(state: dict[str, Any]) -> str | None:
 
 def _stage_tokens(current_stage: str | None, *, color_enabled: bool = False) -> str:
     stages = ['Builder', 'Refiner', 'Reviewer', 'Verifier', 'Unit done']
+    return _format_stage_tokens(stages, COMPACT_STAGE_LABELS, current_stage, color_enabled=color_enabled)
+
+
+def _stage_tokens_for_state(state: dict[str, Any], *, color_enabled: bool = False) -> str:
+    action = state.get('nextAction') or compute_next_allowed_action(state)
+    planning_stage = COMPACT_PLANNING_ACTION_STAGES.get(str(action))
+    if planning_stage:
+        stages = [
+            'Requirements draft',
+            'Requirements confirmation',
+            'Unit plan',
+            'Unit plan confirmation',
+            'Builder',
+        ]
+        return _format_stage_tokens(
+            stages,
+            COMPACT_PLANNING_STAGE_LABELS,
+            planning_stage,
+            color_enabled=color_enabled,
+        )
+    return _stage_tokens(_stage_for_state(state), color_enabled=color_enabled)
+
+
+def _format_stage_tokens(
+    stages: list[str],
+    labels: dict[str, str],
+    current_stage: str | None,
+    *,
+    color_enabled: bool = False,
+) -> str:
     return ' '.join(
-        _paint(f'[{COMPACT_STAGE_LABELS[stage]}*]', 'yellow', color_enabled) if stage == current_stage else _paint(f'[{COMPACT_STAGE_LABELS[stage]}]', 'dim', color_enabled)
+        _paint(f'[{labels[stage]}*]', 'yellow', color_enabled)
+        if stage == current_stage
+        else _paint(f'[{labels[stage]}]', 'dim', color_enabled)
         for stage in stages
     )
 
