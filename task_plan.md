@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成 workflow-controller 可靠性增强：重复失败硬阻断、run_id 防串线、verification_env、Unit Plan 预检和 timeout 诊断。
+已完成 workflow-controller 可靠性增强、Plannotator 人工 gate 集成、Unit Plan 审批预检、历史单元 rollup 校验修复，以及 Unit Plan 确认后直接进入 Builder 的状态机修复。当前变更已同步到实际运行目录，尚未提交。
 
 ## 各阶段
 
@@ -93,9 +93,45 @@
 - [x] 测试通过
 - **状态：** complete
 
+### 阶段 11：Plannotator 与人工 Gate 集成
+- [x] Plannotator `Approve` 后 controller 自动继续，不再要求用户回终端再选一次
+- [x] Plannotator `Close` 后保持 gate pending
+- [x] controller 启动 Plannotator 时输出打开网址 `http://localhost:20000`
+- [x] 审阅文件改为 Claude 生成的 body artifact，确认文件仍保留在 `approvals/`
+- [x] 终端回显审阅文件和确认文件路径，避免审阅对象和落盘对象不一致
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- **状态：** complete
+
+### 阶段 12：Unit Plan Gate 校验与反馈闭环
+- [x] Unit Plan approval 前先校验 Controller State Patch、测试策略和验证环境
+- [x] 无效 Unit Plan 不写 `Status: approved`
+- [x] 无效原因写入 `blockedReason` 并显示在人工确认菜单中
+- [x] `r` 或 Plannotator 反馈返工时，将 controller validation error 一并写入 Claude 返工 prompt
+- [x] Plannotator 多条反馈终端显示 `共 N 条`，完整反馈写入 Claude prompt
+- [x] Plannotator `annotations` 数组保留为结构化信息
+- **状态：** complete
+
+### 阶段 13：Unit Plan Rollup 与历史单元兼容
+- [x] 允许 `partial` 聚合目标引用已完成历史单元
+- [x] 未完成且未声明在 `units` 中的单元仍然阻断
+- [x] Unit Plan prompt 更新，说明 completed existing unit 可在 rollup objective 中引用
+- [x] 修复 V2.2 只剩 `v2-2-u5-baidu-search` 时被 `u1-u4` 历史单元卡住的问题
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- **状态：** complete
+
+### 阶段 14：Unit Plan 确认后执行推进修复
+- [x] 修复 `PLAN_CREATED + scopeApproved=True` 没有下一步动作的问题
+- [x] Unit Plan 确认后若 scope 已批准，直接进入 `PLAN_APPROVED`
+- [x] `lastVerifiedStep` 在新 Unit Plan 生效后重置为 `PLAN_CREATED`，避免继承上一单元 `VERIFY_UNIT`
+- [x] 已落盘的卡住状态可在 `get_status()` 中自动修复为 Builder-ready
+- [x] 用当前 V2.2 状态验证 `nextAction=run_builder`
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- **状态：** complete
+
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。
 2. 是否需要为新工作区补充独立的打包配置、入口脚本或 CI，后续按开发需要决定。
+3. 当前工作区有未提交变更，下一步需要根据用户要求决定是否提交到 `workflow-controller` 分支。
 
 ## 已做决策
 | 决策 | 理由 |

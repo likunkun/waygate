@@ -1,5 +1,88 @@
 # 进度日志
 
+## 会话：2026-04-29
+
+### 阶段 9：Plannotator 与人工 Gate 集成
+- **状态：** complete
+- 背景：
+  - 用户使用 Plannotator 审阅需求和 Unit Plan 时，期望浏览器 `Approve` 后 controller 自动继续。
+  - 之前 controller 让 Plannotator 审阅的文件与 Claude 写入的 body artifact 不一致。
+  - 用户需要启动 Plannotator 时直接看到打开网址。
+- 已完成：
+  - Plannotator `Approve` 输出 `decision=approved` 后，controller 自动调用对应 gate approval 并继续。
+  - Plannotator `Close` 输出 `decision=dismissed` 后，controller 保持 gate pending。
+  - 需求审阅文件改为 `artifacts/requirements-draft/requirements-body.md`。
+  - Unit Plan 审阅文件改为 `artifacts/unit-plan-draft/unit-plan-body.md`。
+  - `approvals/requirements-and-acceptance.md` 和 `approvals/unit-plan.md` 继续作为确认文件。
+  - 启动 Plannotator 时输出 `打开网址：http://localhost:20000`。
+
+### 阶段 10：Unit Plan Gate 校验与反馈闭环
+- **状态：** complete
+- 背景：
+  - 用户按 `a` 后 Unit Plan 可能仍然 gate invalid，但旧流程会留下令人误解的确认状态。
+  - Plannotator 多条反馈在终端短预览中看起来像只收到第一条。
+- 已完成：
+  - `approve_human_gate('unit-plan')` 先校验 Unit Plan，再写 approval。
+  - 无效 Unit Plan 保持 pending，并在菜单中显示 `unit plan gate invalid: ...`。
+  - Unit Plan 返工 prompt 包含 `Controller Validation Error`。
+  - Plannotator 反馈显示 `共 N 条，完整反馈已写入 Claude 返工 prompt。`，并保留预览。
+  - Plannotator 返回 `annotations` 数组时保留结构化信息。
+- 已验证：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `65 passed in 17.62s`
+  - 实际运行目录单测：Plannotator feedback 回显用例通过。
+
+### 阶段 11：Unit Plan Rollup 与历史单元兼容
+- **状态：** complete
+- 背景：
+  - V2.2 当前只剩 `v2-2-u5-baidu-search` 需要执行。
+  - Unit Plan 的 rollup objective `Complete V2.2...` 合理引用 `v2-2-u1` 到 `u5`，但旧校验要求 partial objective 的每个 unit 都必须出现在 `units`。
+- 已完成：
+  - 已完成历史单元可以出现在 `partial` 聚合目标里。
+  - 未完成且未声明在 `units` 中的 unit 仍然被阻断。
+  - Unit Plan drafter prompt 更新，说明 completed existing unit 可用于 rollup objective。
+- 已验证：
+  - 新增正向用例：partial rollup 可引用 completed existing units。
+  - 新增反向用例：undeclared unfinished unit 仍然阻断。
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `67 passed in 17.44s`
+  - 实际运行目录新增用例 -> `2 passed in 1.16s`
+
+### 阶段 12：Unit Plan 确认后执行推进修复
+- **状态：** complete
+- 背景：
+  - 用户在 V2.2 Unit Plan 菜单按 `a` 后，controller 输出 `[停止] 当前没有可执行的下一步。`
+  - 现场 `session.json` 状态为 `currentStep=PLAN_CREATED`、`scopeApproved=True`、`unitPlanAccepted=True`、`lastVerifiedStep=VERIFY_UNIT`。
+- 根因：
+  - 状态机只处理 `PLAN_CREATED + scopeApproved=false -> require_scope_approval`。
+  - `PLAN_CREATED + scopeApproved=true` 没有动作，导致 `compute_next_allowed_action()` 返回 `None`。
+  - 新 Unit Plan 生效时没有重置上一单元留下的 `lastVerifiedStep=VERIFY_UNIT`。
+- 已完成：
+  - Unit Plan 确认后若 `scopeApproved=True`，直接进入 `PLAN_APPROVED`。
+  - 新 Unit Plan 生效后将 `lastVerifiedStep` 重置为 `PLAN_CREATED`。
+  - `reconcile_state()` 会自动把已落盘的 `PLAN_CREATED + scopeApproved=True + unitPlanAccepted=True` 修复为 `PLAN_APPROVED`。
+  - 已同步 `rrc_controller.py`、`rrc_validators.py` 和相关测试到实际运行目录。
+- 已验证：
+  - 新增用例：preapproved scope 的 Unit Plan approval 直接进入 builder-ready state。
+  - 新增用例：已落盘卡住状态在 `get_status()` 中自动修复。
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `69 passed in 17.65s`
+  - 实际运行目录新增用例 -> `2 passed in 1.19s`
+  - 当前 V2.2 state 检查结果：
+    - `currentStep=PLAN_APPROVED`
+    - `nextAction=run_builder`
+    - `currentUnitId=v2-2-u5-baidu-search`
+    - `lastVerifiedStep=PLAN_CREATED`
+
+### 当前未提交变更
+- **状态：** pending
+- `workflow_controller/rrc_controller.py`
+- `workflow_controller/rrc_human_gates.py`
+- `workflow_controller/rrc_steps.py`
+- `workflow_controller/rrc_validators.py`
+- `workflow_controller/tests/test_rrc_controller.py`
+- `workflow_controller/tests/test_rrc_human_gates.py`
+- `task_plan.md`
+- `findings.md`
+- `progress.md`
+
 ## 会话：2026-04-28
 
 ### 阶段 5：控制器可靠性增强
