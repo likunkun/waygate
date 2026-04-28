@@ -22,6 +22,7 @@ from workflow_controller.rrc_human_gates import (
     migrate_unit_plan_gate_to_state_patch,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,
+    write_gate_file,
 )
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import (
@@ -270,6 +271,10 @@ class RalphRefinerController:
         if self.tmux_target:
             state['tmuxTarget'] = self.tmux_target
         state = reconcile_state(state, self.artifacts_dir)
+        before_validation = _unit_plan_validation_state_key(state)
+        state = self._refresh_unit_plan_gate_validation(state)
+        if _unit_plan_validation_state_key(state) != before_validation:
+            self._save_state(state)
         state['nextAction'] = compute_next_allowed_action(state)
         return state
 
@@ -290,6 +295,7 @@ class RalphRefinerController:
             gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
         else:
             raise ValueError(f'Unknown human gate: {gate}')
+        self._validate_human_gate_before_approval(gate, state, gate_path)
         approve_gate_file(gate_path, actor=actor)
         self.store.append_event('human_gate_approved', {
             'task_id': state.get('task_id'),
@@ -298,6 +304,52 @@ class RalphRefinerController:
             'path': str(gate_path),
         })
         return gate_path
+
+    def _validate_human_gate_before_approval(
+        self,
+        gate: str,
+        state: dict[str, Any],
+        gate_path: Path,
+    ) -> None:
+        if gate != 'unit-plan':
+            return
+        reason = self._unit_plan_gate_invalid_reason(state, gate_path)
+        if reason:
+            write_gate_file(gate_path, gate_body(gate_path.read_text(encoding='utf-8')))
+            state['unitPlanAccepted'] = False
+            state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+            state['blockedReason'] = reason
+            self._save_state(state)
+            raise ValueError(reason)
+
+    def _refresh_unit_plan_gate_validation(self, state: dict[str, Any]) -> dict[str, Any]:
+        if state.get('currentStep') != 'WAITING_UNIT_PLAN_APPROVAL':
+            return state
+        gate_path = self.approvals_dir / 'unit-plan.md'
+        if not gate_path.exists():
+            return state
+        reason = self._unit_plan_gate_invalid_reason(state, gate_path)
+        if reason:
+            state['unitPlanAccepted'] = False
+            state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+            state['blockedReason'] = reason
+            return state
+        if str(state.get('blockedReason') or '').startswith('unit plan gate invalid:'):
+            state['blockedReason'] = None
+        return state
+
+    def _unit_plan_gate_invalid_reason(self, state: dict[str, Any], gate_path: Path) -> str | None:
+        try:
+            candidate_state = apply_unit_plan_state_patch_from_gate(state, gate_path)
+            validate_unit_plan_test_strategy(
+                self.approvals_dir / 'requirements-and-acceptance.md',
+                gate_path,
+                candidate_state,
+            )
+            validate_unit_plan_verification_environment(candidate_state)
+        except ValueError as exc:
+            return f'unit plan gate invalid: {exc}'
+        return None
 
     def revise_human_gate(self, gate: str) -> Path:
         if gate == 'requirements':
@@ -314,19 +366,31 @@ class RalphRefinerController:
             gate_path,
             gate_content,
         )
-        if plannotator_feedback:
-            return (
-                gate_content.rstrip()
-                + '\n\n## Plannotator Feedback\n\n'
-                + plannotator_feedback.rstrip()
-                + '\n'
-            )
         if pending_reason:
             raise ValueError(
                 'Plannotator 尚未提交可供 controller 读取的返工反馈；'
                 f'{pending_reason}。'
             )
-        return gate_content
+        validation_feedback = self._validation_feedback_for_gate(gate)
+        feedback = gate_content.rstrip()
+        if validation_feedback:
+            feedback += (
+                '\n\n## Controller Validation Error\n\n'
+                + validation_feedback.rstrip()
+            )
+        if plannotator_feedback:
+            feedback += (
+                '\n\n## Plannotator Feedback\n\n'
+                + plannotator_feedback.rstrip()
+            )
+        return feedback + '\n'
+
+    def _validation_feedback_for_gate(self, gate: str) -> str | None:
+        state = self.store.load_state()
+        reason = str(state.get('blockedReason') or '').strip()
+        if gate == 'unit-plan' and reason.startswith('unit plan gate invalid:'):
+            return reason
+        return None
 
     def _consume_plannotator_feedback(self, gate: str, revision_count: int | None) -> None:
         summary_path = _plannotator_summary_path(self.state_dir, gate)
@@ -431,6 +495,7 @@ class RalphRefinerController:
         state.pop('unitPlanRevisionFeedback', None)
         state['unitPlanDraftGenerated'] = True
         state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+        state = self._refresh_unit_plan_gate_validation(state)
 
     def _mark_current_unit_incomplete(self, state: dict[str, Any]) -> None:
         current_unit_id = state.get('currentUnitId')
@@ -517,6 +582,7 @@ class RalphRefinerController:
         state['unitPlanDraftGenerated'] = True
         state['unitPlanAccepted'] = False
         state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+        state = self._refresh_unit_plan_gate_validation(state)
         self._consume_plannotator_feedback(
             'unit-plan',
             int(state.get('unitPlanRevisionCount') or 0),
@@ -661,6 +727,7 @@ class RalphRefinerController:
             state['unitPlanDraftGenerated'] = True
             state['unitPlanAccepted'] = False
             state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+            state = self._refresh_unit_plan_gate_validation(state)
             self.store.append_event('unit_plan_draft_generated', {
                 'task_id': state.get('task_id'),
                 'path': str(self.approvals_dir / 'unit-plan.md'),
@@ -699,7 +766,8 @@ class RalphRefinerController:
             gate_path = ensure_unit_plan_gate(state, self.approvals_dir)
             if self._unsafe_skip_gate(state, 'unit_plan', gate_path):
                 state['unitPlanAccepted'] = True
-                state['currentStep'] = 'PLAN_CREATED'
+                state['lastVerifiedStep'] = 'PLAN_CREATED'
+                state['currentStep'] = 'PLAN_APPROVED' if state.get('scopeApproved') else 'PLAN_CREATED'
                 self._save_state(state)
                 return state
             gate = check_gate_file(gate_path)
@@ -722,7 +790,8 @@ class RalphRefinerController:
                 state['unitPlanAcceptedHash'] = gate.content_hash
                 state['unitPlanAcceptedBy'] = gate.confirmed_by
                 state['blockedReason'] = None
-                state['currentStep'] = 'PLAN_CREATED'
+                state['lastVerifiedStep'] = 'PLAN_CREATED'
+                state['currentStep'] = 'PLAN_APPROVED' if state.get('scopeApproved') else 'PLAN_CREATED'
                 self.store.append_event('unit_plan_approved', {
                     'task_id': state.get('task_id'),
                     'path': str(gate_path),
@@ -1053,6 +1122,7 @@ class RalphRefinerController:
         return {
             'gate': gate,
             'path': path,
+            'review_path': _plannotator_review_path_for_gate(self.artifacts_dir, gate, path),
             'label': HUMAN_GATE_LABELS[gate],
             'reason': approved_but_invalid or check.reason,
             'can_revise': can_revise,
@@ -1068,6 +1138,11 @@ class RalphRefinerController:
     ) -> bool:
         output_func(f"[人工确认] {gate_info['label']}")
         output_func(f"  文件：{gate_info['path']}")
+        review_path = Path(gate_info.get('review_path') or gate_info['path'])
+        approval_gate_path = Path(gate_info['path'])
+        if review_path != approval_gate_path:
+            output_func(f'  审阅文件：{review_path}')
+            output_func(f'  确认文件：{approval_gate_path}')
         if gate_info.get('reason'):
             output_func(f"  状态：{_gate_reason_label(str(gate_info['reason']))}")
         output_func('  操作：')
@@ -1092,7 +1167,7 @@ class RalphRefinerController:
                     result = run_plannotator_gate_review(
                         gate=str(gate_info['gate']),
                         label=str(gate_info['label']),
-                        gate_path=Path(gate_info['path']),
+                        gate_path=review_path,
                         state_dir=self.state_dir,
                         command=self.plannotator_command,
                         port=self.plannotator_port,
@@ -1100,23 +1175,107 @@ class RalphRefinerController:
                 except Exception as exc:
                     output_func(f'[Plannotator] 启动失败：{exc}')
                     continue
+                _record_plannotator_review_paths(
+                    result.summary_path,
+                    approval_gate_path=approval_gate_path,
+                    review_path=review_path,
+                )
                 self.store.append_event('plannotator_review_requested', {
                     'gate': gate_info['gate'],
                     'path': str(gate_info['path']),
+                    'review_path': str(review_path),
+                    'approval_gate_path': str(approval_gate_path),
                     'command': result.command,
                     'summary_path': str(result.summary_path),
                     'stdout_path': str(result.summary_path.with_suffix('.stdout.log')),
                 })
                 output_func('[Plannotator] 已打开辅助审阅。')
+                if self.plannotator_port is not None:
+                    output_func(f'  打开网址：http://localhost:{self.plannotator_port}')
                 output_func(f'  审阅记录：{result.summary_path}')
                 _print_plannotator_output(result.stdout, output_func)
                 if result.stderr.strip():
                     _print_plannotator_output(result.stderr, output_func)
-                output_func('  如需返工，请先在 Plannotator 浏览器点击 Request changes，然后回到这里输入 r。')
-                output_func('  完成审阅后，请回到这里输入 a 通过、r 返工或 q 退出。')
+                output_func('  请在 Plannotator 浏览器里选择 Approve 或 Close。Approve 会自动继续。')
+                decision = _wait_for_plannotator_gate_decision(
+                    self.state_dir,
+                    str(gate_info['gate']),
+                    Path(gate_info['path']),
+                    output_func,
+                )
+                status = decision.get('status')
+                if status == 'approved':
+                    try:
+                        self.approve_human_gate(str(gate_info['gate']), actor=actor)
+                    except ValueError as exc:
+                        output_func(f"[确认] {gate_info['label']} 无法确认：{exc}")
+                        continue
+                    output_func('[Plannotator] 已收到 Approve，等同于人工确认通过。')
+                    return True
+                if status == 'feedback' and gate_info.get('can_revise'):
+                    output_func(f"[Plannotator] 已收到修改意见，开始重新生成 {gate_info['label']}。")
+                    feedback_summary = _plannotator_feedback_summary(decision)
+                    if feedback_summary:
+                        output_func(f'  修改意见：{feedback_summary}')
+                    feedback_preview = _plannotator_feedback_preview(decision)
+                    if feedback_preview:
+                        output_func(f'  预览：{feedback_preview}')
+                    self.store.append_event('plannotator_feedback_received', {
+                        'gate': gate_info['gate'],
+                        'path': str(gate_info['path']),
+                        'feedback_count': _plannotator_feedback_count(decision),
+                        'feedback_preview': feedback_preview,
+                    })
+                    try:
+                        self.revise_human_gate(str(gate_info['gate']))
+                    except Exception as exc:
+                        output_func(f'[修订] 无法返工：{exc}')
+                        continue
+                    output_func(f"[修订] 已根据 Plannotator 反馈重新生成 {gate_info['label']}。")
+                    return True
+                if status == 'feedback' and gate_info.get('can_rework'):
+                    output_func('[Plannotator] 已收到最终验收修改意见，请先选择返工流向。')
+                    feedback_summary = _plannotator_feedback_summary(decision)
+                    if feedback_summary:
+                        output_func(f'  修改意见：{feedback_summary}')
+                    feedback_preview = _plannotator_feedback_preview(decision)
+                    if feedback_preview:
+                        output_func(f'  预览：{feedback_preview}')
+                    self.store.append_event('plannotator_feedback_received', {
+                        'gate': gate_info['gate'],
+                        'path': str(gate_info['path']),
+                        'feedback_count': _plannotator_feedback_count(decision),
+                        'feedback_preview': feedback_preview,
+                    })
+                    if not _ensure_final_acceptance_rejection_route_from_prompt(
+                        Path(gate_info['path']),
+                        input_func,
+                        output_func,
+                    ):
+                        return False
+                    try:
+                        self.reject_final_acceptance_gate()
+                    except Exception as exc:
+                        output_func(f'[返工] 无法返工：{exc}')
+                        continue
+                    route = self.store.load_state().get('finalAcceptanceRejectionRoute')
+                    message = FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES.get(
+                        str(route),
+                        '最终验收未通过，已按人工路由处理。',
+                    )
+                    output_func(f'[返工] {message}')
+                    return True
+                if status == 'closed':
+                    output_func('[Plannotator] 已关闭，未批准；仍停在人工确认点。')
+                    continue
+                output_func('[Plannotator] 未返回可执行决策；仍停在人工确认点。')
                 continue
             if choice in {'a', 'approve'}:
-                self.approve_human_gate(str(gate_info['gate']), actor=actor)
+                try:
+                    self.approve_human_gate(str(gate_info['gate']), actor=actor)
+                except ValueError as exc:
+                    output_func(f"[确认] {gate_info['label']} 无法确认：{exc}")
+                    continue
                 output_func(f"[确认] {gate_info['label']} 已确认，继续推进。")
                 return True
             if choice in {'r', 'revise'} and gate_info.get('can_revise'):
@@ -1739,6 +1898,14 @@ def _approved_gate_invalid_reason(gate: str, state: dict[str, Any]) -> str | Non
     return None
 
 
+def _unit_plan_validation_state_key(state: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return (
+        state.get('currentStep'),
+        state.get('unitPlanAccepted'),
+        state.get('blockedReason'),
+    )
+
+
 def _timestamped_output(output_func: Callable[[str], None]) -> Callable[[str], None]:
     def emit(message: str) -> None:
         prefix = datetime.now().strftime('[%H:%M:%S] ')
@@ -1758,6 +1925,34 @@ def _print_plannotator_output(output: str, output_func: Callable[[str], None]) -
             output_func(f'  {line}')
 
 
+def _plannotator_review_path_for_gate(artifacts_dir: Path, gate: str, approval_gate_path: Path) -> Path:
+    body_paths = {
+        'requirements': artifacts_dir / 'requirements-draft' / 'requirements-body.md',
+        'unit-plan': artifacts_dir / 'unit-plan-draft' / 'unit-plan-body.md',
+    }
+    body_path = body_paths.get(gate)
+    if body_path and body_path.exists():
+        return body_path
+    return approval_gate_path
+
+
+def _record_plannotator_review_paths(
+    summary_path: Path,
+    *,
+    approval_gate_path: Path,
+    review_path: Path,
+) -> None:
+    try:
+        summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+    if not isinstance(summary, dict):
+        return
+    summary['review_path'] = str(review_path)
+    summary['approval_gate_path'] = str(approval_gate_path)
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
 def _plannotator_summary_path(state_dir: Path, gate: str) -> Path:
     return state_dir / 'plannotator' / f'{gate}-last-review.json'
 
@@ -1768,30 +1963,16 @@ def _read_plannotator_submitted_feedback(
     gate_path: Path,
     gate_content: str,
 ) -> tuple[str | None, str | None]:
-    summary_path = _plannotator_summary_path(state_dir, gate)
-    if not summary_path.exists():
+    decision = _read_plannotator_decision(state_dir, gate, gate_path, gate_content)
+    if decision.get('status') in {'missing', 'stale', 'path-mismatch'}:
         return None, None
-    try:
-        summary = json.loads(summary_path.read_text(encoding='utf-8'))
-    except json.JSONDecodeError:
-        return None, None
-    if str(summary.get('gate_path') or '') != str(gate_path):
-        return None, None
-    if _gate_changed_after_plannotator_review(summary_path, gate_path, gate_content):
-        return None, None
-
-    stdout = str(summary.get('stdout') or '')
-    stdout_path = summary.get('stdout_path')
-    if stdout_path:
-        stdout = (stdout + '\n' + _read_optional_text(Path(str(stdout_path)))).strip()
-    feedback = _extract_plannotator_feedback(stdout)
-    if feedback:
-        return feedback, None
-
-    process_id = summary.get('process_id')
-    if _process_is_alive(process_id):
-        return None, '请先在 Plannotator 浏览器点击 Request changes/请求修改，等待其提交反馈后再输入 r'
-    return None, 'Plannotator 没有返回返工反馈；请在浏览器里选择 Request changes，而不是只关闭或批准'
+    if decision.get('status') == 'feedback':
+        return str(decision.get('feedback') or '').strip(), None
+    if decision.get('status') == 'pending':
+        return None, '请先在 Plannotator 浏览器完成当前审阅，等待其提交决策后再输入 r'
+    if decision.get('status') == 'approved':
+        return None, 'Plannotator 已返回 Approve；如需通过请直接输入 a，或重新打开审阅'
+    return None, 'Plannotator 没有返回返工反馈；如需返工，请在确认文件里写批注后输入 r'
 
 
 def _gate_changed_after_plannotator_review(summary_path: Path, gate_path: Path, gate_content: str) -> bool:
@@ -1807,7 +1988,102 @@ def _read_optional_text(path: Path) -> str:
     return path.read_text(encoding='utf-8', errors='replace')
 
 
+def _plannotator_feedback_summary(decision: dict[str, Any]) -> str | None:
+    feedback = str(decision.get('feedback') or '').strip()
+    if not feedback:
+        return None
+    count = _plannotator_feedback_count(decision)
+    if count > 1:
+        return f'共 {count} 条，完整反馈已写入 Claude 返工 prompt。'
+    if count == 1:
+        return '共 1 条，完整反馈已写入 Claude 返工 prompt。'
+    return '完整反馈已写入 Claude 返工 prompt。'
+
+
+def _plannotator_feedback_count(decision: dict[str, Any]) -> int:
+    annotations = decision.get('annotations')
+    if isinstance(annotations, list) and annotations:
+        return len(annotations)
+    feedback = str(decision.get('feedback') or '')
+    heading_count = len(re.findall(r'(?m)^##\s+\d+\.\s+Feedback on:', feedback))
+    if heading_count:
+        return heading_count
+    match = re.search(r"have\s+(\d+)\s+pieces?\s+of\s+feedback", feedback, flags=re.IGNORECASE)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return 0
+    return 1 if feedback.strip() else 0
+
+
+def _plannotator_feedback_preview(decision: dict[str, Any]) -> str | None:
+    feedback = str(decision.get('feedback') or '').strip()
+    if not feedback:
+        return None
+    return _short_failure_text(feedback, max_chars=220)
+
+
+def _wait_for_plannotator_gate_decision(
+    state_dir: Path,
+    gate: str,
+    gate_path: Path,
+    output_func: Callable[[str], None],
+) -> dict[str, Any]:
+    status_announced = False
+    while True:
+        decision = _read_plannotator_decision(state_dir, gate, gate_path)
+        if decision.get('status') != 'pending':
+            return decision
+        if not status_announced:
+            output_func('  等待 Plannotator 操作结果...')
+            status_announced = True
+        time.sleep(0.25)
+
+
+def _read_plannotator_decision(
+    state_dir: Path,
+    gate: str,
+    gate_path: Path,
+    gate_content: str | None = None,
+) -> dict[str, Any]:
+    summary_path = _plannotator_summary_path(state_dir, gate)
+    if not summary_path.exists():
+        return {'status': 'missing'}
+    try:
+        summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return {'status': 'missing'}
+    summary_gate_path = str(summary.get('gate_path') or '')
+    summary_approval_gate_path = str(summary.get('approval_gate_path') or '')
+    if summary_gate_path != str(gate_path) and summary_approval_gate_path != str(gate_path):
+        return {'status': 'path-mismatch'}
+    if gate_content is not None and _gate_changed_after_plannotator_review(summary_path, gate_path, gate_content):
+        return {'status': 'stale'}
+
+    stdout = str(summary.get('stdout') or '')
+    stdout_path = summary.get('stdout_path')
+    if stdout_path:
+        stdout = (stdout + '\n' + _read_optional_text(Path(str(stdout_path)))).strip()
+
+    decision = _extract_plannotator_decision(stdout)
+    if decision.get('status') != 'none':
+        return decision
+
+    if _process_is_alive(summary.get('process_id')):
+        return {'status': 'pending'}
+    return {'status': 'closed'}
+
+
 def _extract_plannotator_feedback(output: str) -> str | None:
+    decision = _extract_plannotator_decision(output)
+    if decision.get('status') == 'feedback':
+        return str(decision.get('feedback') or '').strip()
+    return None
+
+
+def _extract_plannotator_decision(output: str) -> dict[str, Any]:
+    saw_json = False
     for line in reversed([line.strip() for line in output.splitlines() if line.strip()]):
         if not line.startswith('{'):
             continue
@@ -1817,16 +2093,45 @@ def _extract_plannotator_feedback(output: str) -> str | None:
             continue
         if not isinstance(payload, dict):
             continue
+        saw_json = True
+        decision = str(payload.get('decision') or '').strip().lower()
+        if decision in {'approved', 'approve'}:
+            return {'status': 'approved'}
+        if decision in {'exit', 'closed', 'close', 'dismissed', 'cancelled', 'canceled'}:
+            return {'status': 'closed'}
+        annotations = payload.get('annotations')
         feedback = str(payload.get('feedback') or payload.get('reason') or '').strip()
+        if not feedback and isinstance(annotations, list) and annotations:
+            feedback = (
+                '# Plannotator Annotations\n\n'
+                + json.dumps(annotations, ensure_ascii=False, indent=2)
+            )
         if feedback:
-            return feedback
-        decision = str(payload.get('decision') or '').strip()
-        if decision in {'approved', 'exit'}:
-            return None
+            decision_payload = {'status': 'feedback', 'feedback': feedback}
+            if isinstance(annotations, list):
+                decision_payload['annotations'] = annotations
+            return decision_payload
+        if decision in {'annotated', 'block', 'blocked', 'feedback', 'rejected', 'revise'}:
+            return {'status': 'feedback', 'feedback': ''}
+    if saw_json:
+        return {'status': 'none'}
     plain_output = output.strip()
-    if plain_output and not plain_output.startswith('Open this link on your local machine to annotate:'):
-        return plain_output
-    return None
+    if plain_output and not _has_plannotator_link_only_output(plain_output):
+        return {'status': 'feedback', 'feedback': plain_output}
+    return {'status': 'none'}
+
+
+def _has_plannotator_link_only_output(output: str) -> bool:
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return False
+    ignored_prefixes = (
+        'Open this link on your local machine to annotate:',
+        'https://share.plannotator.ai/#',
+        'Resolved:',
+        '(',
+    )
+    return all(line.startswith(ignored_prefixes) for line in lines)
 
 
 def _process_is_alive(process_id: Any) -> bool:

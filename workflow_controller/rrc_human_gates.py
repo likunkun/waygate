@@ -196,16 +196,35 @@ def _preserved_existing_units_from_coverage(
     declared_unit_ids: set[str],
     previous_units: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    completed_existing_ids = {
+        unit_id
+        for unit_id, unit in previous_units.items()
+        if bool(unit.get('passes'))
+    }
+    completed_existing_ids.update(
+        unit_id
+        for item in coverage
+        if item['status'] == 'covered'
+        for unit_id in item['units']
+        if unit_id in previous_units
+    )
+
     preserved_ids: list[str] = []
     for item in coverage:
         extra_unit_ids = [unit_id for unit_id in item['units'] if unit_id not in declared_unit_ids]
         if not extra_unit_ids:
             continue
         if item['status'] != 'covered':
-            raise ValueError(
-                'objectiveCoverage may omit existing unit ids from units only for covered objectives: '
-                f'{extra_unit_ids}'
-            )
+            unfinished_extra_unit_ids = [
+                unit_id
+                for unit_id in extra_unit_ids
+                if unit_id not in completed_existing_ids
+            ]
+            if unfinished_extra_unit_ids:
+                raise ValueError(
+                    'partial objectiveCoverage may omit only completed existing unit ids from units; '
+                    f'declare unfinished unit ids in units: {unfinished_extra_unit_ids}'
+                )
         for unit_id in extra_unit_ids:
             if unit_id not in preserved_ids:
                 preserved_ids.append(unit_id)

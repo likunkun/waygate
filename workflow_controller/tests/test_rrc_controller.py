@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -769,7 +767,8 @@ def test_drive_stops_for_pending_unit_plan_gate_with_chinese_prompt(tmp_path: Pa
     assert result.returncode == 0, result.stderr
     assert '[人工确认] Unit Plan' in result.stdout
     assert str(gate_path) in result.stdout
-    assert '状态：待确认' in result.stdout
+    assert '状态：unit plan gate invalid' in result.stdout
+    assert 'Controller State Patch' in result.stdout
     assert '    v  使用 Plannotator 辅助审阅' in result.stdout
     assert '    a  确认通过并继续' in result.stdout
     assert '[退出] 已停止在人工确认点。' in result.stdout
@@ -821,6 +820,7 @@ from pathlib import Path
 Path(os.environ['PLANNOTATOR_LOG']).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')
 print('Open this link on your local machine to annotate:')
 print('https://share.plannotator.ai/#fake')
+print('{"decision":"dismissed"}')
 """,
         encoding='utf-8',
     )
@@ -840,8 +840,8 @@ print('https://share.plannotator.ai/#fake')
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
     assert 'https://share.plannotator.ai/#fake' in result.stdout
-    assert 'Request changes' in result.stdout
-    assert '完成审阅后，请回到这里输入 a 通过、r 返工或 q 退出。' in result.stdout
+    assert '请在 Plannotator 浏览器里选择 Approve 或 Close。Approve 会自动继续。' in result.stdout
+    assert '[Plannotator] 已关闭，未批准；仍停在人工确认点。' in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
         'annotate',
         str(gate_path),
@@ -859,6 +859,268 @@ print('https://share.plannotator.ai/#fake')
         if line.strip()
     ]
     assert any(event['type'] == 'plannotator_review_requested' for event in events)
+
+
+def test_drive_plannotator_reviews_requirements_body_artifact_when_available(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    approval_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    approval_path.write_text(
+        '# Requirements & Acceptance Confirmation\n\nClaude body\n\n## Human Confirmation\n\nStatus: pending\n',
+        encoding='utf-8',
+    )
+    body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
+    body_path.parent.mkdir(parents=True, exist_ok=True)
+    body_path.write_text('# Requirements & Acceptance Confirmation\n\nClaude body\n', encoding='utf-8')
+    plannotator_log = tmp_path / 'plannotator-args.json'
+    fake_plannotator = tmp_path / 'fake-plannotator'
+    fake_plannotator.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+Path(os.environ['PLANNOTATOR_LOG']).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')
+print('Open this link on your local machine to annotate:')
+print('https://share.plannotator.ai/#requirements-body')
+print('{"decision":"dismissed"}')
+""",
+        encoding='utf-8',
+    )
+    fake_plannotator.chmod(0o755)
+    monkeypatch.setenv('PLANNOTATOR_LOG', str(plannotator_log))
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--plannotator-command',
+        str(fake_plannotator),
+        input_text='v\nq\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f'审阅文件：{body_path}' in result.stdout
+    assert f'确认文件：{approval_path}' in result.stdout
+    assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
+        'annotate',
+        str(body_path),
+        '--gate',
+        '--json',
+    ]
+    summary = json.loads((state_dir / 'plannotator' / 'requirements-last-review.json').read_text(encoding='utf-8'))
+    assert summary['gate_path'] == str(body_path)
+    assert summary['review_path'] == str(body_path)
+    assert summary['approval_gate_path'] == str(approval_path)
+
+
+def test_drive_auto_approves_gate_when_plannotator_approves(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.rrc_human_gates import approve_gate_file, write_gate_file
+
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        '# Requirements & Acceptance Confirmation\n\n## 4. Test Strategy\n- Unit tests cover delivery.\n',
+    )
+    approve_gate_file(requirements_path, actor='tester')
+
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Units
+### unit-01 - Delivery
+- Verification commands:
+  - `pytest tests/test_delivery.py -q`
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery",
+      "passes": false,
+      "verification_commands": ["pytest tests/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    fake_plannotator = tmp_path / 'fake-plannotator'
+    fake_plannotator.write_text(
+        """#!/usr/bin/env python3
+print('Open this link on your local machine to annotate:')
+print('https://share.plannotator.ai/#approved')
+print('{"decision":"approved"}')
+""",
+        encoding='utf-8',
+    )
+    fake_plannotator.chmod(0o755)
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--max-steps',
+        '1',
+        '--actor',
+        'tester',
+        '--plannotator-command',
+        str(fake_plannotator),
+        input_text='v\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '[Plannotator] 已收到 Approve，等同于人工确认通过。' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['unitPlanAccepted'] is True
+    assert state['currentStep'] == 'PLAN_CREATED'
+
+
+def test_drive_announces_plannotator_feedback_before_revising_gate(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.rrc_human_gates import approve_gate_file, write_gate_file
+
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        '# Requirements & Acceptance Confirmation\n\n## 4. Test Strategy\n- Unit tests cover delivery.\n',
+    )
+    approve_gate_file(requirements_path, actor='tester')
+
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Units
+### unit-01 - Delivery
+- Verification commands:
+  - `pytest tests/test_delivery.py -q`
+""",
+    )
+    fake_plannotator = tmp_path / 'fake-plannotator'
+    fake_plannotator.write_text(
+        """#!/usr/bin/env python3
+import json
+
+print('Open this link on your local machine to annotate:')
+print('https://share.plannotator.ai/#feedback')
+print(json.dumps({
+    "decision": "annotated",
+    "feedback": "# File Feedback\\n\\nI've reviewed this file and have 2 pieces of feedback:\\n\\n## 1. Feedback on: \\"Objective Coverage Matrix\\"\\n> please split this unit before approval.\\n\\n## 2. Feedback on: \\"Verification commands\\"\\n> please add explicit database env.\\n\\n---\\n"
+}))
+""",
+        encoding='utf-8',
+    )
+    fake_plannotator.chmod(0o755)
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--max-steps',
+        '1',
+        '--plannotator-command',
+        str(fake_plannotator),
+        input_text='v\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '[Plannotator] 已收到修改意见，开始重新生成 Unit Plan。' in result.stdout
+    assert '修改意见：共 2 条，完整反馈已写入 Claude 返工 prompt。' in result.stdout
+    assert '预览：# File Feedback' in result.stdout
+    assert '[修订] 已根据 Plannotator 反馈重新生成 Unit Plan。' in result.stdout
 
 
 def test_drive_blocks_revise_after_plannotator_when_feedback_is_not_submitted(
@@ -916,7 +1178,7 @@ print('https://share.plannotator.ai/#fake-no-local-feedback')
 
     assert result.returncode == 0, result.stderr
     assert 'Plannotator 尚未提交可供 controller 读取的返工反馈' in result.stdout
-    assert 'Request changes' in result.stdout
+    assert 'Plannotator 没有返回返工反馈' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
     assert 'unitPlanRevisionCount' not in state
@@ -979,7 +1241,7 @@ def test_drive_blocks_revise_after_plannotator_review_without_submitted_feedback
 
     assert result.returncode == 0, result.stderr
     assert 'Plannotator 尚未提交可供 controller 读取的返工反馈' in result.stdout
-    assert 'Request changes' in result.stdout
+    assert 'Plannotator 没有返回返工反馈' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert 'unitPlanRevisionCount' not in state
 
@@ -1051,12 +1313,12 @@ print('https://share.plannotator.ai/#fake-port')
     )
 
     assert result.returncode == 0, result.stderr
+    assert 'http://localhost:20000' in result.stdout
     assert json.loads(env_log.read_text(encoding='utf-8')) == {'port': '20000'}
 
 
-def test_drive_returns_after_plannotator_prints_link_even_if_review_keeps_running(
+def test_drive_waits_for_plannotator_approval_after_printing_link(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -1069,6 +1331,7 @@ def test_drive_returns_after_plannotator_prints_link_even_if_review_keeps_runnin
             'status': 'active',
             'requestedOutcome': 'usable-system',
             'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
             'humanGatesRequired': True,
             'requirementsAccepted': True,
             'unitPlanAccepted': False,
@@ -1083,54 +1346,79 @@ def test_drive_returns_after_plannotator_prints_link_even_if_review_keeps_runnin
         force=True,
     )
     gate_path = state_dir / 'approvals' / 'unit-plan.md'
-    gate_path.parent.mkdir(parents=True, exist_ok=True)
-    gate_path.write_text(
-        '# Unit Plan Confirmation\n\n## Human Confirmation\n\nStatus: pending\nConfirmed by: \nConfirmed at: \nContent hash: sha256:legacy\n',
-        encoding='utf-8',
+    from workflow_controller.rrc_human_gates import approve_gate_file, write_gate_file
+
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        '# Requirements & Acceptance Confirmation\n\n## 4. Test Strategy\n- Unit tests cover delivery.\n',
     )
-    pid_file = tmp_path / 'plannotator.pid'
+    approve_gate_file(requirements_path, actor='tester')
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Units
+### unit-01 - Delivery
+- Verification commands:
+  - `pytest tests/test_delivery.py -q`
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery",
+      "passes": false,
+      "verification_commands": ["pytest tests/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
     fake_plannotator = tmp_path / 'fake-plannotator'
     fake_plannotator.write_text(
         """#!/usr/bin/env python3
-import os
 import time
-from pathlib import Path
 
-Path(os.environ['PLANNOTATOR_PID']).write_text(str(os.getpid()), encoding='utf-8')
 print('Open this link on your local machine to annotate:', flush=True)
 print('https://share.plannotator.ai/#long-running', flush=True)
-time.sleep(60)
+time.sleep(0.2)
+print('{"decision":"approved"}', flush=True)
 """,
         encoding='utf-8',
     )
     fake_plannotator.chmod(0o755)
-    monkeypatch.setenv('PLANNOTATOR_PID', str(pid_file))
 
-    try:
-        result = run_rrc(
-            'drive',
-            '--state-dir',
-            str(state_dir),
-            '--auto-approve',
-            '--plannotator-command',
-            str(fake_plannotator),
-            input_text='v\nq\n',
-        )
-    finally:
-        if pid_file.exists():
-            pid = int(pid_file.read_text(encoding='utf-8'))
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--max-steps',
+        '1',
+        '--plannotator-command',
+        str(fake_plannotator),
+        input_text='v\n',
+    )
 
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
     assert 'https://share.plannotator.ai/#long-running' in result.stdout
-    assert 'timed out' not in result.stdout
+    assert '等待 Plannotator 操作结果' in result.stdout
+    assert '[Plannotator] 已收到 Approve，等同于人工确认通过。' in result.stdout
     summary = json.loads((state_dir / 'plannotator' / 'unit-plan-last-review.json').read_text(encoding='utf-8'))
     assert summary['process_id'] > 0
     assert summary['returncode'] is None
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['unitPlanAccepted'] is True
 
 
 def test_drive_can_approve_unit_plan_gate_and_continue(tmp_path: Path) -> None:
@@ -1223,7 +1511,7 @@ def test_drive_can_approve_unit_plan_gate_and_continue(tmp_path: Path) -> None:
     assert state['currentStep'] == 'PLAN_CREATED'
 
 
-def test_drive_shows_unit_plan_gate_again_when_approved_plan_is_invalid(tmp_path: Path) -> None:
+def test_drive_blocks_unit_plan_approval_when_plan_is_invalid(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
     controller.init_state(
@@ -1284,8 +1572,91 @@ def test_drive_shows_unit_plan_gate_again_when_approved_plan_is_invalid(tmp_path
 
     assert result.returncode == 0, result.stderr
     assert 'unit plan gate invalid' in result.stdout
-    assert result.stdout.count('[人工确认] Unit Plan') == 2
+    assert '[确认] Unit Plan 已确认，继续推进。' not in result.stdout
+    assert '[确认] Unit Plan 无法确认：unit plan gate invalid' in result.stdout
+    assert result.stdout.count('[人工确认] Unit Plan') == 1
     assert '[停止] 已达到最大自动步数' not in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['unitPlanAccepted'] is False
+    assert 'unitPlanAcceptedHash' not in state
+    assert state['blockedReason'].startswith('unit plan gate invalid:')
+    assert 'Status: pending' in gate_path.read_text(encoding='utf-8')
+
+
+def test_drive_refreshes_stale_unit_plan_invalid_reason_from_current_gate(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-db',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'blockedReason': "unit plan gate invalid: old target-v2-2 error",
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-db'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-db', 'name': 'Database unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.rrc_human_gates import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Objective Coverage Matrix
+- Delivery objective -> unit-db
+
+## Units
+### unit-db - Database unit
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-db",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-db"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-db",
+      "name": "Database unit",
+      "passes": false,
+      "verification_commands": ["cd app && pnpm exec prisma migrate dev --name init"]
+    }
+  ]
+}
+```
+""",
+    )
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        input_text='q\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'verification_env is incomplete' in result.stdout
+    assert 'old target-v2-2 error' not in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert 'verification_env is incomplete' in state['blockedReason']
+    assert 'old target-v2-2 error' not in state['blockedReason']
 
 
 def test_drive_can_revise_unit_plan_gate_from_human_notes(tmp_path: Path) -> None:

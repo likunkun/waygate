@@ -8,6 +8,7 @@ from pathlib import Path
 
 from workflow_controller.rrc_controller import RalphRefinerController
 from workflow_controller.rrc_human_gates import approve_gate_file, ensure_final_acceptance_gate, write_gate_file
+from workflow_controller.rrc_steps import _render_unit_plan_draft_prompt
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,6 +58,30 @@ def _make_ralph_workspace(tmp_path: Path) -> tuple[Path, Path]:
         ),
     )
     return workspace, plan_path
+
+
+def test_unit_plan_prompt_allows_covered_legacy_units_outside_executable_units(tmp_path: Path) -> None:
+    prompt = _render_unit_plan_draft_prompt(
+        {
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'currentUnitId': 'target-v2-2',
+            'objectiveCoverage': [
+                {'objective': 'Old objective', 'units': ['old-unit'], 'status': 'covered'},
+                {'objective': 'New objective', 'units': ['new-unit'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'old-unit', 'name': 'Old unit', 'passes': True},
+                {'id': 'target-v2-2', 'name': 'Target unit', 'passes': False},
+            ],
+        },
+        tmp_path / 'requirements.md',
+        tmp_path / 'unit-plan-body.md',
+    )
+
+    assert 'Completed existing unit ids may remain outside `units` when they are marked `covered` elsewhere in objectiveCoverage' in prompt
+    assert 'Every unfinished `partial` objectiveCoverage unit id must exist in `units`' in prompt
+    assert 'every objectiveCoverage unit id must exist in units' not in prompt
 
 
 def _generate_requirements_gate(state_dir: Path) -> None:
@@ -711,6 +736,236 @@ def test_unit_plan_patch_can_preserve_completed_existing_units_in_coverage(tmp_p
         {'objective': 'Old objective', 'units': ['old-unit'], 'status': 'covered'},
         {'objective': 'Delivery objective', 'units': ['unit-a'], 'status': 'partial'},
     ]
+
+
+def test_unit_plan_patch_allows_partial_rollup_to_reference_completed_existing_units(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'target-v2-2',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Completed objective', 'units': ['v2-2-u1'], 'status': 'covered'},
+                {'objective': 'Target objective', 'units': ['target-v2-2'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'v2-2-u1', 'name': 'Completed unit', 'passes': True},
+                {'id': 'target-v2-2', 'name': 'Target placeholder', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "v2-2-u2",
+  "objectiveCoverage": [
+    {"objective": "Completed objective", "units": ["v2-2-u1"], "status": "covered"},
+    {"objective": "Complete V2.2", "units": ["v2-2-u1", "v2-2-u2"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "v2-2-u2",
+      "name": "Remaining unit",
+      "passes": false,
+      "scope": ["Finish remaining work"],
+      "verification_commands": ["pytest tests/test_remaining.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'PLAN_CREATED'
+    assert state['unitPlanAccepted'] is True
+    assert state['currentUnitId'] == 'v2-2-u2'
+    assert [unit['id'] for unit in state['units']] == ['v2-2-u2', 'v2-2-u1']
+    assert state['units'][1]['passes'] is True
+    assert state['objectiveCoverage'] == [
+        {'objective': 'Completed objective', 'units': ['v2-2-u1'], 'status': 'covered'},
+        {'objective': 'Complete V2.2', 'units': ['v2-2-u1', 'v2-2-u2'], 'status': 'partial'},
+    ]
+
+
+def test_unit_plan_patch_rejects_partial_rollup_with_undeclared_unfinished_unit(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'target-v2-2',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Target objective', 'units': ['target-v2-2'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'target-v2-2', 'name': 'Target placeholder', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "v2-2-u2",
+  "objectiveCoverage": [
+    {"objective": "Complete V2.2", "units": ["target-v2-2", "v2-2-u2"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "v2-2-u2",
+      "name": "Remaining unit",
+      "passes": false,
+      "scope": ["Finish remaining work"],
+      "verification_commands": ["pytest tests/test_remaining.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'declare unfinished unit ids in units' in state['blockedReason']
+    assert 'target-v2-2' in state['blockedReason']
+
+
+def test_unit_plan_approval_with_preapproved_scope_advances_to_builder_ready_state(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'v2-2-u4',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Completed objective', 'units': ['v2-2-u4'], 'status': 'covered'},
+                {'objective': 'Remaining objective', 'units': ['target-v2-2'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'v2-2-u4', 'name': 'Completed unit', 'passes': True},
+                {'id': 'target-v2-2', 'name': 'Target placeholder', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "v2-2-u5",
+  "objectiveCoverage": [
+    {"objective": "Completed objective", "units": ["v2-2-u4"], "status": "covered"},
+    {"objective": "Remaining objective", "units": ["v2-2-u5"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "v2-2-u5",
+      "name": "Remaining unit",
+      "passes": false,
+      "scope": ["Finish remaining work"],
+      "verification_commands": ["pytest tests/test_remaining.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is True
+    assert state['currentStep'] == 'PLAN_APPROVED'
+    assert state['lastVerifiedStep'] == 'PLAN_CREATED'
+    assert state['nextAllowedActions'] == ['run_builder']
+
+
+def test_status_repairs_preapproved_plan_created_state_to_builder_ready_state(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'v2-2-u5',
+            'currentStep': 'PLAN_CREATED',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Remaining objective', 'units': ['v2-2-u5'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'v2-2-u5', 'name': 'Remaining unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+
+    state = controller.get_status()
+
+    assert state['currentStep'] == 'PLAN_APPROVED'
+    assert state['nextAction'] == 'run_builder'
 
 
 def test_unit_plan_approval_without_controller_state_patch_stays_waiting(tmp_path: Path) -> None:

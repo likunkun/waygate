@@ -23,6 +23,14 @@ def reconcile_state(state: dict[str, Any], artifacts_root: Path) -> dict[str, An
         state['status'] = 'blocked'
         state['blockedReason'] = 'objectives not fully covered'
 
+    if (
+        current_step == 'PLAN_CREATED'
+        and state.get('scopeApproved', False)
+        and (not state.get('humanGatesRequired') or state.get('unitPlanAccepted', False))
+    ):
+        state['currentStep'] = 'PLAN_APPROVED'
+        state['lastVerifiedStep'] = 'PLAN_CREATED'
+
     return state
 
 

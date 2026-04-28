@@ -750,7 +750,11 @@ Include a fenced `json` object that the controller can safely apply after human 
 }}
 ```
 
-The JSON must be valid, must list every executable unit, and every objectiveCoverage unit id must exist in units.
+The JSON must be valid and `units` must list every executable unit to run next.
+Every unfinished `partial` objectiveCoverage unit id must exist in `units`.
+Completed existing unit ids may remain outside `units` when they are marked `covered` elsewhere in objectiveCoverage; this is allowed for rollup objectives that reference both completed and remaining work.
+Do not re-add already covered legacy units to `units` unless they must execute again.
+If replacing a synthetic target unit with smaller executable units, remove the synthetic target unit id from partial objectiveCoverage or map that objective to the new executable unit ids.
 
 ## Human Review Checklist
 
