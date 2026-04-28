@@ -122,6 +122,59 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert 'Implement this unit.' in prompt
 
 
+def test_tmux_claude_runner_pastes_short_dispatch_that_points_to_full_prompt(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit with a long body.' * 500)
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "tmux finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    dispatch_path = result.run_dir / 'dispatch.md'
+    assert result.status == 'done'
+    assert result.prompt_path.name == 'prompt.md'
+    assert dispatch_path.exists()
+    dispatch_text = dispatch_path.read_text(encoding='utf-8')
+    assert len(dispatch_text) < 2000
+    assert f'PROMPT_FILE: {result.prompt_path}' in dispatch_text
+    assert f'DONE_FILE: {result.done_path}' in dispatch_text
+    assert f'RUN_ID: {result.run_dir.name}' in dispatch_text
+    assert 'Read PROMPT_FILE first' in dispatch_text
+    full_prompt = result.prompt_path.read_text(encoding='utf-8')
+    assert 'Implement this unit with a long body.' in full_prompt
+    log = tmux_log.read_text(encoding='utf-8')
+    assert f'load-buffer {dispatch_path}' in log
+    assert f'load-buffer {result.prompt_path}' not in log
+
+
 def test_tmux_claude_runner_clears_claude_session_before_dispatch(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -163,7 +216,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not 
     assert log_lines[:3] == [
         'send-keys -t 1.2 C-u',
         'send-keys -t 1.2 /clear C-m',
-        f'load-buffer {result.prompt_path}',
+        f'load-buffer {result.run_dir / "dispatch.md"}',
     ]
 
 

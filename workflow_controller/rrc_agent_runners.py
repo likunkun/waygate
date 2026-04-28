@@ -102,12 +102,21 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     done_path = run_dir / 'done.json'
     events_path = run_dir / 'events.log'
     runner_prompt_path = run_dir / 'prompt.md'
+    dispatch_prompt_path = run_dir / 'dispatch.md'
     runner_prompt_path.write_text(
         _render_tmux_prompt(
             original_prompt=request.prompt_path.read_text(encoding='utf-8'),
             done_path=done_path,
             workspace_dir=request.workspace_dir,
             unit_id=request.unit_id,
+            run_id=run_id,
+        ),
+        encoding='utf-8',
+    )
+    dispatch_prompt_path.write_text(
+        _render_tmux_dispatch_prompt(
+            prompt_path=runner_prompt_path,
+            done_path=done_path,
             run_id=run_id,
         ),
         encoding='utf-8',
@@ -127,7 +136,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
             [*tmux_command, 'send-keys', '-t', request.tmux_target, '/clear', 'C-m'],
         ]
     dispatch_commands = [
-        [*tmux_command, 'load-buffer', str(runner_prompt_path)],
+        [*tmux_command, 'load-buffer', str(dispatch_prompt_path)],
         [*tmux_command, 'paste-buffer', '-t', request.tmux_target],
         [*tmux_command, 'send-keys', '-t', request.tmux_target, 'C-m'],
     ]
@@ -339,6 +348,22 @@ If blocked, write DONE_FILE as JSON:
 Original task:
 
 {original_prompt}
+"""
+
+
+def _render_tmux_dispatch_prompt(prompt_path: Path, done_path: Path, run_id: str) -> str:
+    return f"""workflow-controller dispatch.
+
+PROMPT_FILE: {prompt_path}
+RUN_ID: {run_id}
+DONE_FILE: {done_path}
+
+Read PROMPT_FILE first, then execute the complete task described there.
+Do not infer the task from previous conversation or terminal output.
+When finished, write DONE_FILE as JSON with the exact RUN_ID:
+{{"status":"done","summary":"<short summary>","run_id":"{run_id}"}}
+If blocked, write:
+{{"status":"blocked","summary":"<exact blocker>","run_id":"{run_id}"}}
 """
 
 
