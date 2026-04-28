@@ -7,6 +7,7 @@ from pathlib import Path
 
 from workflow_controller.rrc_agent_runners import (
     RunnerRequest,
+    _tmux_idle_poll_seconds,
     _tmux_pane_looks_idle,
     make_runner,
     run_agent_backend,
@@ -407,6 +408,14 @@ raise SystemExit(0)
     assert elapsed < 1.0
     assert result.done_path is not None
     assert str(result.done_path) in result.stderr
+
+
+def test_tmux_claude_runner_disables_mid_run_idle_detection_by_default(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv('RRC_TMUX_IDLE_POLL_SECONDS', raising=False)
+
+    assert _tmux_idle_poll_seconds() == 0.0
 
 
 def test_tmux_idle_detection_accepts_claude_prompt_with_insert_status() -> None:
