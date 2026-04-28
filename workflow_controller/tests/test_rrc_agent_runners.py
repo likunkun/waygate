@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import stat
+import time
 from pathlib import Path
 
 from workflow_controller.rrc_agent_runners import (
     RunnerRequest,
+    _tmux_pane_looks_idle,
     make_runner,
     run_agent_backend,
 )
@@ -118,6 +120,51 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert 'DONE_FILE:' in prompt
     assert 'RUN_ID:' in prompt
     assert 'Implement this unit.' in prompt
+
+
+def test_tmux_claude_runner_clears_claude_session_before_dispatch(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not in sys.argv:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "tmux finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    log_lines = tmux_log.read_text(encoding='utf-8').splitlines()
+    assert log_lines[:3] == [
+        'send-keys -t 1.2 C-u',
+        'send-keys -t 1.2 /clear C-m',
+        f'load-buffer {result.prompt_path}',
+    ]
 
 
 def test_tmux_claude_runner_rejects_done_signal_from_wrong_run_id(tmp_path: Path) -> None:
@@ -264,6 +311,60 @@ raise SystemExit(0)
     assert 'tmux pane appears idle' in result.stderr
     assert 'Claude finished the work' in result.stderr
     assert result.run_dir.name in result.stderr
+
+
+def test_tmux_claude_runner_fails_fast_when_pane_returns_idle_after_dispatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        """#!/usr/bin/env python3
+import sys
+if sys.argv[1:2] == ["capture-pane"]:
+    print("Claude ignored the new prompt and returned to idle")
+    print("❯")
+raise SystemExit(0)
+""",
+    )
+    monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
+    monkeypatch.setenv('RRC_TMUX_CLEAR_DELAY_SECONDS', '0')
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-idle-fast',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=2,
+    )
+
+    started = time.monotonic()
+    result = run_agent_backend(request)
+    elapsed = time.monotonic() - started
+
+    assert result.status == 'agent_idle_without_done'
+    assert elapsed < 1.0
+    assert result.done_path is not None
+    assert str(result.done_path) in result.stderr
+
+
+def test_tmux_idle_detection_accepts_claude_prompt_with_insert_status() -> None:
+    pane_tail = """
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on (shift+tab to cycle)
+"""
+
+    assert _tmux_pane_looks_idle(pane_tail) is True
 
 
 def test_make_runner_maps_state_to_backend() -> None:

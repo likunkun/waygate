@@ -13,6 +13,9 @@ from typing import Any
 
 
 DEFAULT_TMUX_SUBMIT_DELAY_SECONDS = 0.5
+DEFAULT_TMUX_CLEAR_DELAY_SECONDS = 0.5
+DEFAULT_TMUX_IDLE_GRACE_SECONDS = 8.0
+DEFAULT_TMUX_IDLE_POLL_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -117,11 +120,18 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
         'RRC_RUN_DIR': str(run_dir),
         'RRC_RUN_ID': run_id,
     }
-    commands = [
+    clear_commands = []
+    if _tmux_clear_before_dispatch_enabled():
+        clear_commands = [
+            [*tmux_command, 'send-keys', '-t', request.tmux_target, 'C-u'],
+            [*tmux_command, 'send-keys', '-t', request.tmux_target, '/clear', 'C-m'],
+        ]
+    dispatch_commands = [
         [*tmux_command, 'load-buffer', str(runner_prompt_path)],
         [*tmux_command, 'paste-buffer', '-t', request.tmux_target],
         [*tmux_command, 'send-keys', '-t', request.tmux_target, 'C-m'],
     ]
+    commands = [*clear_commands, *dispatch_commands]
 
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
@@ -149,7 +159,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
             return RunnerResult(
                 backend='tmux-claude',
                 status='failed',
-                command=commands[-1],
+                command=dispatch_commands[-1],
                 returncode=completed.returncode,
                 stdout=''.join(stdout_parts),
                 stderr=''.join(stderr_parts),
@@ -157,7 +167,14 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                 prompt_path=runner_prompt_path,
                 done_path=done_path,
             )
-        if command == commands[1]:
+        if clear_commands and command == clear_commands[-1]:
+            delay_seconds = _tmux_clear_delay_seconds()
+            _append_event(events_path, {
+                'event': 'tmux_clear_delay',
+                'seconds': delay_seconds,
+            })
+            time.sleep(delay_seconds)
+        if command == dispatch_commands[1]:
             delay_seconds = _tmux_submit_delay_seconds()
             _append_event(events_path, {
                 'event': 'tmux_submit_delay',
@@ -166,6 +183,8 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
             time.sleep(delay_seconds)
 
     deadline = time.monotonic() + request.timeout_seconds
+    next_idle_check = time.monotonic() + _tmux_idle_grace_seconds()
+    idle_poll_seconds = _tmux_idle_poll_seconds()
     while time.monotonic() < deadline:
         if done_path.exists():
             payload = _read_done_payload(done_path)
@@ -182,7 +201,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                 return RunnerResult(
                     backend='tmux-claude',
                     status='invalid_done_file',
-                    command=commands[-1],
+                    command=dispatch_commands[-1],
                     returncode=1,
                     stdout=''.join(stdout_parts),
                     stderr=''.join(stderr_parts) + message,
@@ -207,7 +226,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                 return RunnerResult(
                     backend='tmux-claude',
                     status='done_file_wrong_run',
-                    command=commands[-1],
+                    command=dispatch_commands[-1],
                     returncode=1,
                     stdout=''.join(stdout_parts),
                     stderr=''.join(stderr_parts) + message,
@@ -221,7 +240,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
             return RunnerResult(
                 backend='tmux-claude',
                 status=status,
-                command=commands[-1],
+                command=dispatch_commands[-1],
                 returncode=0 if status == 'done' else 1,
                 stdout=''.join(stdout_parts),
                 stderr=''.join(stderr_parts),
@@ -230,6 +249,38 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                 done_path=done_path,
                 done_payload=payload,
             )
+        now = time.monotonic()
+        if idle_poll_seconds > 0 and now >= next_idle_check:
+            pane_tail = _capture_tmux_pane(
+                tmux_command=tmux_command,
+                tmux_target=request.tmux_target,
+                workspace_dir=request.workspace_dir,
+                env=env,
+            )
+            if _tmux_pane_looks_idle(pane_tail):
+                if pane_tail:
+                    (run_dir / 'tmux-pane-tail.txt').write_text(pane_tail, encoding='utf-8')
+                _append_event(events_path, {
+                    'event': 'agent_idle_without_done',
+                    'pane_tail_path': str(run_dir / 'tmux-pane-tail.txt') if pane_tail else None,
+                })
+                return RunnerResult(
+                    backend='tmux-claude',
+                    status='agent_idle_without_done',
+                    command=dispatch_commands[-1],
+                    returncode=124,
+                    stdout=''.join(stdout_parts),
+                    stderr=''.join(stderr_parts) + _tmux_timeout_message(
+                        done_path=done_path,
+                        run_id=run_id,
+                        pane_tail=pane_tail,
+                        pane_is_idle=True,
+                    ),
+                    run_dir=run_dir,
+                    prompt_path=runner_prompt_path,
+                    done_path=done_path,
+                )
+            next_idle_check = now + idle_poll_seconds
         time.sleep(0.2)
 
     pane_tail = _capture_tmux_pane(
@@ -255,7 +306,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     return RunnerResult(
         backend='tmux-claude',
         status=status,
-        command=commands[-1],
+        command=dispatch_commands[-1],
         returncode=124 if last_returncode == 0 else last_returncode,
         stdout=''.join(stdout_parts),
         stderr=''.join(stderr_parts) + timeout_message,
@@ -326,13 +377,36 @@ def _tmux_command(agent_command: str) -> list[str]:
 
 
 def _tmux_submit_delay_seconds() -> float:
-    raw_value = os.environ.get('RRC_TMUX_SUBMIT_DELAY_SECONDS')
+    return _env_float('RRC_TMUX_SUBMIT_DELAY_SECONDS', DEFAULT_TMUX_SUBMIT_DELAY_SECONDS)
+
+
+def _tmux_clear_before_dispatch_enabled() -> bool:
+    raw_value = os.environ.get('RRC_TMUX_CLEAR_BEFORE_DISPATCH')
     if raw_value is None:
-        return DEFAULT_TMUX_SUBMIT_DELAY_SECONDS
+        return True
+    return raw_value.strip().lower() not in {'0', 'false', 'no', 'off'}
+
+
+def _tmux_clear_delay_seconds() -> float:
+    return _env_float('RRC_TMUX_CLEAR_DELAY_SECONDS', DEFAULT_TMUX_CLEAR_DELAY_SECONDS)
+
+
+def _tmux_idle_grace_seconds() -> float:
+    return _env_float('RRC_TMUX_IDLE_GRACE_SECONDS', DEFAULT_TMUX_IDLE_GRACE_SECONDS)
+
+
+def _tmux_idle_poll_seconds() -> float:
+    return _env_float('RRC_TMUX_IDLE_POLL_SECONDS', DEFAULT_TMUX_IDLE_POLL_SECONDS)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
     try:
         return max(0.0, float(raw_value))
     except ValueError:
-        return DEFAULT_TMUX_SUBMIT_DELAY_SECONDS
+        return default
 
 
 def _uses_stdin_prompt(command: list[str]) -> bool:
@@ -376,6 +450,9 @@ def _tmux_pane_looks_idle(pane_tail: str) -> bool:
         return False
     last_line = lines[-1]
     if re.search(r'(^|\s)(❯|>|[$#])\s*$', last_line):
+        return True
+    tail_lines = lines[-8:]
+    if any(re.search(r'(^|\s)(❯|>|[$#])\s*$', line) for line in tail_lines):
         return True
     lowered_tail = pane_tail.lower()
     return 'no active conversation' in lowered_tail or 'press enter to continue' in lowered_tail
