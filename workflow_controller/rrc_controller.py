@@ -464,6 +464,12 @@ class RalphRefinerController:
             )
 
     def run_once(self) -> dict[str, Any]:
+        return self._run_once()
+
+    def _run_once(
+        self,
+        verification_progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         state = self.store.load_state()
         state['autoApprove'] = self.auto_approve or state.get('autoApprove', False)
         state = reconcile_state(state, self.artifacts_dir)
@@ -654,7 +660,12 @@ class RalphRefinerController:
             return state
 
         if action == 'run_verifier':
-            run_verifier(state, unit_dir, dry_run=self.dry_run)
+            run_verifier(
+                state,
+                unit_dir,
+                dry_run=self.dry_run,
+                progress_callback=verification_progress_callback,
+            )
             verification = validate_verification_verdict(unit_dir / 'verification.json')
             if verification['passed']:
                 _clear_last_failure(state)
@@ -805,7 +816,15 @@ class RalphRefinerController:
             if verbose:
                 output_func(f'[执行] {ACTION_LABELS.get(action, action)}...')
             started_at = time.monotonic()
-            state = self.run_once()
+            verification_progress_callback = (
+                _verification_progress_printer(output_func, color_enabled)
+                if action == 'run_verifier'
+                else None
+            )
+            if verification_progress_callback is not None and _uses_default_run_once(self):
+                state = self._run_once(verification_progress_callback=verification_progress_callback)
+            else:
+                state = self.run_once()
             elapsed_seconds = time.monotonic() - started_at
             steps += 1
             if compact_reporter is not None:
@@ -953,6 +972,46 @@ class RalphRefinerController:
 
 def _gate_reason_label(reason: str) -> str:
     return GATE_REASON_LABELS.get(reason, reason)
+
+
+def _verification_progress_printer(
+    output_func: Callable[[str], None],
+    color_enabled: bool,
+) -> Callable[[dict[str, Any]], None]:
+    def print_event(event: dict[str, Any]) -> None:
+        event_type = event.get('event')
+        if event_type == 'verification_started':
+            output_func(
+                _paint('[验证]', 'cyan', color_enabled)
+                + f" 开始 {event.get('total', 0)} 个命令"
+            )
+            return
+        if event_type == 'verification_command_started':
+            output_func(
+                _paint('[验证]', 'cyan', color_enabled)
+                + f" ... {event.get('index')}/{event.get('total')} "
+                + _short_command(str(event.get('command') or ''))
+            )
+            return
+        if event_type == 'verification_command_finished':
+            status = '通过' if event.get('ok') else '失败'
+            style = 'green' if event.get('ok') else 'red'
+            output_func(
+                _paint('[验证]', 'cyan', color_enabled)
+                + f" {_paint(status, style, color_enabled)} {event.get('index')}/{event.get('total')}"
+                + f" exit={event.get('returncode')} 用时 {_format_duration(float(event.get('elapsed_seconds') or 0))}"
+            )
+            return
+        if event_type == 'verification_finished':
+            status = '通过' if event.get('passed') else '未通过'
+            style = 'green' if event.get('passed') else 'red'
+            output_func(_paint('[验证]', 'cyan', color_enabled) + f" 完成 {_paint(status, style, color_enabled)}")
+
+    return print_event
+
+
+def _uses_default_run_once(controller: RalphRefinerController) -> bool:
+    return getattr(controller.run_once, '__func__', None) is RalphRefinerController.run_once
 
 
 def _record_or_block_repeated_failure(
@@ -1174,7 +1233,7 @@ class _CompactDriveReporter:
 
 def _compact_roadmap(state: dict[str, Any], *, color_enabled: bool = False) -> str:
     unit_id = str(state.get('currentUnitId') or '-')
-    units = [unit for unit in state.get('units') or [] if isinstance(unit, dict)]
+    units = _display_units_for_state(state)
     unit_ids = [str(unit.get('id')) for unit in units]
     total = len(units) or 1
     try:
@@ -1196,6 +1255,31 @@ def _compact_roadmap(state: dict[str, Any], *, color_enabled: bool = False) -> s
         f"          {_paint('当前', 'cyan', color_enabled)}   {_paint(str(now), 'yellow', color_enabled) if now != '-' else now}\n"
         f"          {_paint('剩余', 'cyan', color_enabled)}   {_paint(str(remaining_after), 'dim', color_enabled)} 个单元"
     )
+
+
+def _display_units_for_state(state: dict[str, Any]) -> list[dict[str, Any]]:
+    units = [unit for unit in state.get('units') or [] if isinstance(unit, dict)]
+    requested = str(state.get('requestedOutcome') or '').strip().lower()
+    if not requested:
+        return units
+
+    target_unit_ids: set[str] = set()
+    for coverage in state.get('objectiveCoverage') or []:
+        objective = str(coverage.get('objective') or '').lower()
+        if requested and requested in objective:
+            target_unit_ids.update(str(unit_id) for unit_id in coverage.get('units') or [])
+
+    if not target_unit_ids:
+        return units
+
+    target_units = [
+        unit for unit in units
+        if str(unit.get('id')) in target_unit_ids
+    ]
+    current_unit_id = str(state.get('currentUnitId') or '')
+    if target_units and any(str(unit.get('id')) == current_unit_id for unit in target_units):
+        return target_units
+    return units
 
 
 def _stage_for_state(state: dict[str, Any]) -> str | None:
@@ -1227,6 +1311,13 @@ def _format_duration(seconds: float) -> str:
     if minutes:
         return f'{minutes}m{seconds:02d}s'
     return f'{seconds}s'
+
+
+def _short_command(command: str, max_chars: int = 120) -> str:
+    normalized = ' '.join(command.split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - 3] + '...'
 
 
 def _color_enabled(color_mode: str) -> bool:

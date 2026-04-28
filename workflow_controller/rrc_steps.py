@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from workflow_controller.rrc_agent_runners import RunnerRequest, make_runner, run_agent_backend
 from workflow_controller.rrc_human_gates import (
@@ -884,7 +884,12 @@ def run_reviewer(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -
     return StepResult(summary='review passed' if not issues else 'review failed', outputs=['review.json'])
 
 
-def run_verifier(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> StepResult:
+def run_verifier(
+    state: dict[str, Any],
+    unit_dir: Path,
+    dry_run: bool = False,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> StepResult:
     if dry_run:
         return _write_json_result(
             unit_dir / 'verification.json',
@@ -902,7 +907,11 @@ def run_verifier(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -
     commands = verification_commands_for_state(state)
     if workspace_path and commands:
         unit_dir.mkdir(parents=True, exist_ok=True)
-        results = run_verification_commands(state, Path(workspace_path))
+        results = run_verification_commands(
+            state,
+            Path(workspace_path),
+            progress_callback=progress_callback,
+        )
         issues = [
             _issue('verification_command_failed', f"Command failed: {result['command']}")
             for result in results

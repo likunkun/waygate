@@ -689,3 +689,39 @@ def test_run_verifier_injects_unit_verification_env_without_inlining_it_in_comma
     verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
     assert verification['passed'] is True
     assert verification['results'][0]['env_keys'] == ['DATABASE_URL']
+
+
+def test_run_verifier_emits_progress_events_on_verification_state_changes(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_commands': [
+                    "python -c \"print('first')\"",
+                    "python -c \"print('second')\"",
+                ],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+    events: list[dict] = []
+
+    result = run_verifier(state, unit_dir, dry_run=False, progress_callback=events.append)
+
+    assert result.summary == 'verification passed'
+    assert [event['event'] for event in events] == [
+        'verification_started',
+        'verification_command_started',
+        'verification_command_finished',
+        'verification_command_started',
+        'verification_command_finished',
+        'verification_finished',
+    ]
+    assert events[1]['index'] == 1
+    assert events[1]['total'] == 2
+    assert events[2]['returncode'] == 0
+    assert events[-1]['passed'] is True

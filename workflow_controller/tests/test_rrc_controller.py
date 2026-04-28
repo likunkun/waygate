@@ -198,6 +198,88 @@ def test_drive_compact_output_shows_unit_roadmap_and_attempt_summary(tmp_path: P
     assert '[执行]' not in rendered
 
 
+def test_compact_output_counts_units_for_requested_target_not_historical_units(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'v2-1-first',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V2.1',
+            'feasibleOutcome': 'V2.1',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'V2.0 historical objective', 'units': ['old-1'], 'status': 'covered'},
+                {'objective': 'V2.0 another historical objective', 'units': ['old-2'], 'status': 'covered'},
+                {'objective': 'V2.1 first objective', 'units': ['v2-1-first'], 'status': 'partial'},
+                {'objective': 'V2.1 second objective', 'units': ['v2-1-second'], 'status': 'partial'},
+                {'objective': 'V2.1 third objective', 'units': ['v2-1-third'], 'status': 'partial'},
+                {'objective': 'V2.1 fourth objective', 'units': ['v2-1-fourth'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'v2-1-first', 'passes': False},
+                {'id': 'v2-1-second', 'passes': False},
+                {'id': 'v2-1-third', 'passes': False},
+                {'id': 'v2-1-fourth', 'passes': False},
+                {'id': 'old-1', 'passes': True},
+                {'id': 'old-2', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    output: list[str] = []
+
+    controller.drive(max_steps=0, output_func=output.append, timestamp_output=False)
+
+    rendered = '\n'.join(output)
+    assert '单元   1/4  v2-1-first' in rendered
+    assert '单元   1/6  v2-1-first' not in rendered
+
+
+def test_drive_prints_verification_state_change_markers(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'VERIFY_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'workspacePath': str(workspace),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'Delivery',
+                    'passes': False,
+                    'verification_commands': ["python -c \"print('verified')\""],
+                },
+            ],
+        },
+        force=True,
+    )
+    output: list[str] = []
+
+    controller.drive(max_steps=1, output_func=output.append, timestamp_output=False)
+
+    rendered = '\n'.join(output)
+    assert '[验证] 开始 1 个命令' in rendered
+    assert '[验证] ... 1/1 python -c' in rendered
+    assert '[验证] 通过 1/1 exit=0' in rendered
+    assert '[验证] 完成 通过' in rendered
+
+
 def test_drive_compact_output_groups_failed_attempt_and_retry(tmp_path: Path, monkeypatch) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)

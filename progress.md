@@ -26,6 +26,21 @@
   - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_unit_plan_approval_rejects_playwright_command_without_database_env -q`
   - `python -m pytest workflow_controller/tests -q` -> `76 passed in 19.91s`
 
+### 阶段 6：控制器运行可见性优化
+- **状态：** complete
+- 开始时间：2026-04-28
+- 背景：
+  - Claude 写入 `done.json` 后，controller 会继续执行自己的 verifier。
+  - verifier 使用捕获输出，长 Playwright 命令运行时终端没有新日志，容易误判为 controller 没反应。
+  - 紧凑输出将历史 covered units 纳入分母，导致 V2.1 显示为 `1/10`，实际当前目标只有 4 个单元。
+- 已完成：
+  - verifier 仅在状态变化时输出标志：验证开始、每条命令开始、每条命令结束、验证完成。
+  - 不做 30 秒 heartbeat，不刷命令 stdout/stderr，避免输出噪声。
+  - 紧凑 roadmap 对当前 requestedOutcome 优先按目标相关 objectiveCoverage 计算单元进度，V2.1 显示为 `1/4`、`2/4`。
+- 已验证：
+  - `python -m pytest workflow_controller/tests -q` -> `79 passed in 21.05s`
+  - 实际运行目录新增行为测试 -> `3 passed in 1.40s`
+
 ### 阶段 1：运行问题修复
 - **状态：** complete
 - 执行的操作：

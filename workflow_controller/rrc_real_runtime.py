@@ -5,10 +5,11 @@ import os
 import re
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from workflow_controller.rrc_agent_runners import RunnerRequest, make_runner, run_agent_backend
 
@@ -413,30 +414,85 @@ def verification_env_for_state(state: dict[str, Any]) -> dict[str, str]:
     return env
 
 
-def run_verification_commands(state: dict[str, Any], workspace_dir: Path) -> list[dict[str, Any]]:
+def run_verification_commands(
+    state: dict[str, Any],
+    workspace_dir: Path,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     verification_env = verification_env_for_state(state)
     env = {**os.environ, **verification_env} if verification_env else None
-    for command in verification_commands_for_state(state):
-        completed = subprocess.run(
-            command,
-            cwd=workspace_dir,
-            shell=True,
-            text=True,
-            capture_output=True,
-            timeout=int(state.get('verificationTimeoutSeconds') or 1800),
-            check=False,
-            env=env,
-        )
-        results.append({
+    commands = verification_commands_for_state(state)
+    total = len(commands)
+    timeout_seconds = int(state.get('verificationTimeoutSeconds') or 1800)
+    _emit_progress(progress_callback, {
+        'event': 'verification_started',
+        'total': total,
+        'env_keys': sorted(verification_env),
+    })
+    for index, command in enumerate(commands, start=1):
+        _emit_progress(progress_callback, {
+            'event': 'verification_command_started',
+            'index': index,
+            'total': total,
             'command': command,
-            'returncode': completed.returncode,
-            'ok': completed.returncode == 0,
-            'stdout': completed.stdout,
-            'stderr': completed.stderr,
-            'env_keys': sorted(verification_env),
         })
+        started_at = time.monotonic()
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=workspace_dir,
+                shell=True,
+                text=True,
+                capture_output=True,
+                timeout=timeout_seconds,
+                check=False,
+                env=env,
+            )
+            result = {
+                'command': command,
+                'returncode': completed.returncode,
+                'ok': completed.returncode == 0,
+                'stdout': completed.stdout,
+                'stderr': completed.stderr,
+                'env_keys': sorted(verification_env),
+                'elapsed_seconds': round(time.monotonic() - started_at, 3),
+            }
+        except subprocess.TimeoutExpired as exc:
+            result = {
+                'command': command,
+                'returncode': 124,
+                'ok': False,
+                'stdout': exc.stdout or '',
+                'stderr': exc.stderr or f'Command timed out after {timeout_seconds} seconds',
+                'env_keys': sorted(verification_env),
+                'elapsed_seconds': round(time.monotonic() - started_at, 3),
+                'timed_out': True,
+            }
+        results.append(result)
+        _emit_progress(progress_callback, {
+            'event': 'verification_command_finished',
+            'index': index,
+            'total': total,
+            'command': command,
+            'returncode': result['returncode'],
+            'ok': result['ok'],
+            'elapsed_seconds': result['elapsed_seconds'],
+        })
+    _emit_progress(progress_callback, {
+        'event': 'verification_finished',
+        'total': total,
+        'passed': all(result.get('ok') for result in results),
+    })
     return results
+
+
+def _emit_progress(
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    event: dict[str, Any],
+) -> None:
+    if progress_callback is not None:
+        progress_callback(event)
 
 
 def _extract_bullet_value(block: str, key: str) -> str | None:
