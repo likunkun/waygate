@@ -252,6 +252,57 @@ def test_drive_compact_output_groups_failed_attempt_and_retry(tmp_path: Path, mo
     assert '原因 验证未通过' in rendered
 
 
+def test_repeated_verification_failure_blocks_before_another_retry(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'VERIFY_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'Delivery',
+                    'passes': False,
+                    'verification_commands': [
+                        'python -c "import sys; print(\'DATABASE_URL missing\'); sys.exit(1)"',
+                    ],
+                },
+            ],
+        },
+        force=True,
+    )
+
+    first = controller.run_once()
+
+    assert first['status'] == 'active'
+    assert first['currentStep'] == 'EXECUTE_UNIT'
+    assert first['lastFailure']['stage'] == 'VERIFY_UNIT'
+    assert first['lastFailure']['count'] == 1
+
+    first['currentStep'] = 'VERIFY_UNIT'
+    controller.store.save_state(first)
+
+    second = controller.run_once()
+
+    assert second['status'] == 'blocked'
+    assert second['currentStep'] == 'VERIFY_UNIT'
+    assert second['lastFailure']['count'] == 2
+    assert 'Repeated VERIFY_UNIT failure' in second['blockedReason']
+    assert 'DATABASE_URL missing' in second['blockedReason']
+
+
 def test_drive_verbose_output_keeps_raw_progress_lines(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     init_result = run_rrc('init', '--state-dir', str(state_dir), '--auto-approve')

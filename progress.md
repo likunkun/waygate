@@ -2,6 +2,30 @@
 
 ## 会话：2026-04-28
 
+### 阶段 5：控制器可靠性增强
+- **状态：** complete
+- 开始时间：2026-04-28
+- 目标：
+  - 防止同一 verification/review/builder timeout 死循环。
+  - 防止 tmux Claude 写错旧 run 的 done.json。
+  - 将验证环境从命令字符串中抽离为 `verification_env`。
+  - 在 Unit Plan approval 阶段预检明显不可运行的验证配置。
+  - 改善 timeout/idle 诊断信息。
+- 计划测试：
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q`
+- 已完成：
+  - 重复 verification/review 失败会按 unit/stage/fingerprint 计数；默认第一次返工，第二次相同失败直接 `blocked`。
+  - tmux runner 为每个 run 注入 `RRC_RUN_ID`，prompt 要求 `done.json` 携带 `run_id`，控制器拒绝 wrong-run done signal。
+  - verifier 支持 state/unit 级 `verification_env`/`verificationEnv`，运行时注入 subprocess，artifact 只记录 env key。
+  - Unit Plan approval 会拒绝明显缺 `verification_env` 的 Playwright/E2E/Prisma 验证命令，并在 drafter prompt 中提示填写 `verification_env`。
+  - tmux timeout 现在区分普通 timeout、idle-without-done、wrong-run done signal、invalid done.json，并保存 pane tail。
+- 已验证：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_repeated_verification_failure_blocks_before_another_retry -q`
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q`
+  - `python -m pytest workflow_controller/tests/test_rrc_real_runtime.py::test_run_verifier_injects_unit_verification_env_without_inlining_it_in_command -q`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_unit_plan_approval_rejects_playwright_command_without_database_env -q`
+  - `python -m pytest workflow_controller/tests -q` -> `76 passed in 19.91s`
+
 ### 阶段 1：运行问题修复
 - **状态：** complete
 - 执行的操作：
@@ -60,7 +84,7 @@
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
 |------|------|---------|---------|------|
-| 新工作区单元测试 | `python -m pytest workflow_controller/tests -q` | 全部通过 | `69 passed in 17.69s` | 通过 |
+| 新工作区单元测试 | `python -m pytest workflow_controller/tests -q` | 全部通过 | `76 passed in 19.91s` | 通过 |
 | Git 工作区状态 | `git status --short` | 无未提交变更 | 计划文件提交后无输出 | 通过 |
 | Worktree 注册 | `git --git-dir=~/works/ai-works/.git worktree list` | 出现 `workflow-controller` | 已注册 `workflow-controller` worktree | 通过 |
 

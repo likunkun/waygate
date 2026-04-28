@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -94,6 +95,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
 
     run_dir = _new_run_dir(request.artifact_dir, request.unit_id)
     run_dir.mkdir(parents=True, exist_ok=True)
+    run_id = run_dir.name
     done_path = run_dir / 'done.json'
     events_path = run_dir / 'events.log'
     runner_prompt_path = run_dir / 'prompt.md'
@@ -103,6 +105,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
             done_path=done_path,
             workspace_dir=request.workspace_dir,
             unit_id=request.unit_id,
+            run_id=run_id,
         ),
         encoding='utf-8',
     )
@@ -112,6 +115,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
         **os.environ,
         'RRC_RUN_DONE_FILE': str(done_path),
         'RRC_RUN_DIR': str(run_dir),
+        'RRC_RUN_ID': run_id,
     }
     commands = [
         [*tmux_command, 'load-buffer', str(runner_prompt_path)],
@@ -165,6 +169,53 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     while time.monotonic() < deadline:
         if done_path.exists():
             payload = _read_done_payload(done_path)
+            if payload.get('status') == 'invalid_done_file':
+                message = (
+                    f'DONE_FILE {done_path} is invalid: {payload.get("summary")}. '
+                    'Rewrite it as a JSON object like '
+                    f'{{"status":"done","summary":"<short summary>","run_id":"{run_id}"}}.'
+                )
+                _append_event(events_path, {
+                    'event': 'invalid_done_file',
+                    'summary': payload.get('summary'),
+                })
+                return RunnerResult(
+                    backend='tmux-claude',
+                    status='invalid_done_file',
+                    command=commands[-1],
+                    returncode=1,
+                    stdout=''.join(stdout_parts),
+                    stderr=''.join(stderr_parts) + message,
+                    run_dir=run_dir,
+                    prompt_path=runner_prompt_path,
+                    done_path=done_path,
+                    done_payload=payload,
+                )
+            actual_run_id = payload.get('run_id')
+            if actual_run_id != run_id:
+                message = (
+                    f'DONE_FILE {done_path} has wrong run_id. '
+                    f'expected run_id={run_id!r}, actual run_id={actual_run_id!r}. '
+                    'This usually means an older tmux agent wrote a stale completion signal; '
+                    'rerun the current controller step after clearing the pane or ensuring Claude uses the latest prompt.'
+                )
+                _append_event(events_path, {
+                    'event': 'done_file_wrong_run',
+                    'expected_run_id': run_id,
+                    'actual_run_id': actual_run_id,
+                })
+                return RunnerResult(
+                    backend='tmux-claude',
+                    status='done_file_wrong_run',
+                    command=commands[-1],
+                    returncode=1,
+                    stdout=''.join(stdout_parts),
+                    stderr=''.join(stderr_parts) + message,
+                    run_dir=run_dir,
+                    prompt_path=runner_prompt_path,
+                    done_path=done_path,
+                    done_payload=payload,
+                )
             status = str(payload.get('status') or 'done')
             _append_event(events_path, {'event': 'done_signal_seen', 'status': status})
             return RunnerResult(
@@ -181,15 +232,29 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
             )
         time.sleep(0.2)
 
-    _append_event(events_path, {'event': 'timeout'})
-    timeout_message = (
-        f'tmux-claude timed out waiting for DONE_FILE: {done_path}. '
-        'If the agent finished in the pane, ask it to write done.json there, '
-        'or write done.json manually with {"status":"done","summary":"<short summary>"} and rerun the controller.'
+    pane_tail = _capture_tmux_pane(
+        tmux_command=tmux_command,
+        tmux_target=request.tmux_target,
+        workspace_dir=request.workspace_dir,
+        env=env,
+    )
+    if pane_tail:
+        (run_dir / 'tmux-pane-tail.txt').write_text(pane_tail, encoding='utf-8')
+    pane_is_idle = _tmux_pane_looks_idle(pane_tail)
+    status = 'agent_idle_without_done' if pane_is_idle else 'timeout'
+    _append_event(events_path, {
+        'event': status,
+        'pane_tail_path': str(run_dir / 'tmux-pane-tail.txt') if pane_tail else None,
+    })
+    timeout_message = _tmux_timeout_message(
+        done_path=done_path,
+        run_id=run_id,
+        pane_tail=pane_tail,
+        pane_is_idle=pane_is_idle,
     )
     return RunnerResult(
         backend='tmux-claude',
-        status='timeout',
+        status=status,
         command=commands[-1],
         returncode=124 if last_returncode == 0 else last_returncode,
         stdout=''.join(stdout_parts),
@@ -200,18 +265,25 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     )
 
 
-def _render_tmux_prompt(original_prompt: str, done_path: Path, workspace_dir: Path, unit_id: str) -> str:
+def _render_tmux_prompt(
+    original_prompt: str,
+    done_path: Path,
+    workspace_dir: Path,
+    unit_id: str,
+    run_id: str,
+) -> str:
     return f"""You are being controlled by workflow-controller through a tmux pane.
 
 Workspace: {workspace_dir}
 Unit id: {unit_id}
+RUN_ID: {run_id}
 DONE_FILE: {done_path}
 
 Execute the task below in the workspace. When finished, write DONE_FILE as JSON:
-{{"status": "done", "summary": "<short summary>"}}
+{{"status": "done", "summary": "<short summary>", "run_id": "{run_id}"}}
 
 If blocked, write DONE_FILE as JSON:
-{{"status": "blocked", "summary": "<exact blocker>"}}
+{{"status": "blocked", "summary": "<exact blocker>", "run_id": "{run_id}"}}
 
 Original task:
 
@@ -273,6 +345,68 @@ def _new_run_dir(artifact_dir: Path, unit_id: str) -> Path:
     return artifact_dir / 'runs' / f'{unit_id}-{timestamp}'
 
 
+def _capture_tmux_pane(
+    *,
+    tmux_command: list[str],
+    tmux_target: str,
+    workspace_dir: Path,
+    env: dict[str, str],
+) -> str:
+    command = [*tmux_command, 'capture-pane', '-t', tmux_target, '-p', '-S', '-80']
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=workspace_dir,
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f'Unable to capture tmux pane: {exc}'
+    if completed.returncode != 0:
+        return '\n'.join(part for part in (completed.stdout, completed.stderr) if part).strip()
+    return completed.stdout.strip()
+
+
+def _tmux_pane_looks_idle(pane_tail: str) -> bool:
+    lines = [line.strip() for line in pane_tail.splitlines() if line.strip()]
+    if not lines:
+        return False
+    last_line = lines[-1]
+    if re.search(r'(^|\s)(❯|>|[$#])\s*$', last_line):
+        return True
+    lowered_tail = pane_tail.lower()
+    return 'no active conversation' in lowered_tail or 'press enter to continue' in lowered_tail
+
+
+def _tmux_timeout_message(*, done_path: Path, run_id: str, pane_tail: str, pane_is_idle: bool) -> str:
+    idle_hint = ''
+    if pane_is_idle:
+        idle_hint = (
+            ' The tmux pane appears idle without the completion file, so the agent likely stopped '
+            'or returned to the prompt before writing DONE_FILE.'
+        )
+    pane_hint = ''
+    if pane_tail:
+        pane_hint = f'\n\nLast captured tmux pane output:\n{_tail_text(pane_tail, max_chars=4000)}'
+    return (
+        f'tmux-claude timed out waiting for DONE_FILE: {done_path} (run_id={run_id}).'
+        f'{idle_hint} '
+        'If the agent finished in the pane, ask it to write done.json there, '
+        'or write done.json manually with '
+        f'{{"status":"done","summary":"<short summary>","run_id":"{run_id}"}} and rerun the controller.'
+        f'{pane_hint}'
+    )
+
+
+def _tail_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f'... truncated ...\n{text[-max_chars:]}'
+
+
 def _append_event(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     event = {'ts': datetime.now(timezone.utc).isoformat(), **payload}
@@ -284,5 +418,5 @@ def _read_done_payload(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding='utf-8'))
     except json.JSONDecodeError:
-        return {'status': 'failed', 'summary': 'done.json is not valid JSON'}
-    return payload if isinstance(payload, dict) else {'status': 'failed', 'summary': 'done.json is not an object'}
+        return {'status': 'invalid_done_file', 'summary': 'done.json is not valid JSON'}
+    return payload if isinstance(payload, dict) else {'status': 'invalid_done_file', 'summary': 'done.json is not an object'}

@@ -345,7 +345,7 @@ from pathlib import Path
 if sys.argv[1:2] == ["paste-buffer"]:
     Path("tmux-builder-output.txt").write_text("tmux change\\n", encoding="utf-8")
     Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-        json.dumps({"status": "done", "summary": "builder done"}),
+        json.dumps({"status": "done", "summary": "builder done", "run_id": os.environ["RRC_RUN_ID"]}),
         encoding="utf-8",
     )
 """,
@@ -398,7 +398,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
         raise SystemExit(1)
     Path("builder-output.txt").write_text("built from approved gates\\n", encoding="utf-8")
     Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-        json.dumps({"status": "done", "summary": "builder used approved gates"}),
+        json.dumps({"status": "done", "summary": "builder used approved gates", "run_id": os.environ["RRC_RUN_ID"]}),
         encoding="utf-8",
     )
 """,
@@ -536,7 +536,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-            json.dumps({"status": "done", "summary": "requirements generated"}),
+            json.dumps({"status": "done", "summary": "requirements generated", "run_id": os.environ["RRC_RUN_ID"]}),
             encoding="utf-8",
         )
         raise SystemExit(0)
@@ -575,7 +575,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-            json.dumps({"status": "done", "summary": "unit plan generated"}),
+            json.dumps({"status": "done", "summary": "unit plan generated", "run_id": os.environ["RRC_RUN_ID"]}),
             encoding="utf-8",
         )
         raise SystemExit(0)
@@ -658,3 +658,34 @@ def test_run_verifier_executes_verification_commands_in_workspace_and_records_re
     assert verification['passed'] is True
     assert verification['results'][0]['returncode'] == 0
     assert 'verified' in verification['results'][0]['stdout']
+
+
+def test_run_verifier_injects_unit_verification_env_without_inlining_it_in_command(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_env': {
+                    'DATABASE_URL': 'sqlite:///unit-test.db',
+                },
+                'verification_commands': [
+                    "python -c \"import os; from pathlib import Path; "
+                    "Path('database-url.txt').write_text(os.environ['DATABASE_URL'], encoding='utf-8'); "
+                    "print(os.environ['DATABASE_URL'])\"",
+                ],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    assert (workspace / 'database-url.txt').read_text(encoding='utf-8') == 'sqlite:///unit-test.db'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['passed'] is True
+    assert verification['results'][0]['env_keys'] == ['DATABASE_URL']

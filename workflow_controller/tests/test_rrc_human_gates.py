@@ -145,7 +145,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
         encoding="utf-8",
     )
     Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-        json.dumps({"status": "done", "summary": "requirements generated"}),
+        json.dumps({"status": "done", "summary": "requirements generated", "run_id": os.environ["RRC_RUN_ID"]}),
         encoding="utf-8",
     )
 """,
@@ -217,7 +217,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-            json.dumps({"status": "done", "summary": "requirements generated"}),
+            json.dumps({"status": "done", "summary": "requirements generated", "run_id": os.environ["RRC_RUN_ID"]}),
             encoding="utf-8",
         )
         raise SystemExit(0)
@@ -370,7 +370,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             )
         body_path.write_text(body, encoding="utf-8")
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-            json.dumps({"status": "done", "summary": "draft generated"}),
+            json.dumps({"status": "done", "summary": "draft generated", "run_id": os.environ["RRC_RUN_ID"]}),
             encoding="utf-8",
         )
         raise SystemExit(0)
@@ -756,6 +756,82 @@ def test_unit_plan_approval_enforces_required_test_strategy_layers(tmp_path: Pat
     assert 'e2e' in state['blockedReason'].lower()
 
 
+def test_unit_plan_approval_rejects_playwright_command_without_database_env(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-e2e',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-e2e'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-e2e', 'name': 'E2E delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# Requirements & Acceptance Confirmation
+
+## 4. Test Strategy
+- Playwright E2E tests cover browser delivery.
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        unit_plan_path,
+        """# Unit Plan Confirmation
+
+## Units
+### unit-e2e - E2E delivery
+- Verification commands:
+  - `pnpm exec playwright test tests/e2e/delivery.spec.ts`
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-e2e",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-e2e"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-e2e",
+      "name": "E2E delivery",
+      "passes": false,
+      "verification_commands": ["pnpm exec playwright test tests/e2e/delivery.spec.ts"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'verification_env' in state['blockedReason']
+    assert 'DATABASE_URL' in state['blockedReason']
+
+
 def test_final_acceptance_gate_summarizes_execution_evidence(tmp_path: Path) -> None:
     state = {
         'task_id': 'delivery',
@@ -844,7 +920,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
         )
     body_path.write_text(body, encoding="utf-8")
     Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-        json.dumps({"status": "done", "summary": "draft generated"}),
+        json.dumps({"status": "done", "summary": "draft generated", "run_id": os.environ["RRC_RUN_ID"]}),
         encoding="utf-8",
     )
 """,

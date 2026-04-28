@@ -349,6 +349,7 @@ def prepare_builder_prompt(state: dict[str, Any], approvals_dir: Path, unit_dir:
             unit_plan_content=unit_plan_content,
             original_prompt_path=original_prompt_path,
             original_prompt=original_prompt,
+            previous_failure_feedback=_render_previous_controller_failure_feedback(unit_dir),
         ),
         encoding='utf-8',
     )
@@ -373,6 +374,7 @@ def _render_builder_execution_prompt(
     unit_plan_content: str,
     original_prompt_path: Path,
     original_prompt: str,
+    previous_failure_feedback: str,
 ) -> str:
     unit = _find_unit(state, state.get('currentUnitId'))
     coverage = [
@@ -389,6 +391,16 @@ Final acceptance rejection feedback from the previous attempt:
 ```md
 {final_rejection_feedback}
 ```
+"""
+    previous_failure_section = ''
+    if previous_failure_feedback:
+        previous_failure_section = f"""
+Previous controller failure feedback:
+
+The controller rejected the previous attempt after running its own checks. Treat this as primary debugging context.
+The controller will rerun the approved verification commands exactly; do not mark DONE only because a manually modified command passed.
+
+{previous_failure_feedback}
 """
     return f"""You are executing one approved workflow-controller unit.
 
@@ -430,6 +442,7 @@ Original Ralph prompt/context: {original_prompt_path}
 {original_prompt}
 ```
 {final_rejection_section}
+{previous_failure_section}
 
 Builder rules:
 - Implement the shortest verifiable path for the current unit only.
@@ -438,6 +451,94 @@ Builder rules:
 - Preserve already accepted work.
 - Leave clear evidence for the verifier.
 """
+
+
+def _render_previous_controller_failure_feedback(unit_dir: Path) -> str:
+    sections: list[str] = []
+
+    review = _read_json_object(unit_dir / 'review.json')
+    if review and review.get('passed') is False:
+        sections.append(_format_failed_review_feedback(review))
+
+    verification = _read_json_object(unit_dir / 'verification.json')
+    if verification and verification.get('passed') is False:
+        sections.append(_format_failed_verification_feedback(verification))
+
+    return '\n\n'.join(section for section in sections if section)
+
+
+def _format_failed_review_feedback(review: dict[str, Any]) -> str:
+    issues = review.get('issues') or []
+    issue_lines = '\n'.join(
+        f"- {issue.get('severity', 'unknown')} {issue.get('type', 'issue')}: {issue.get('message', '')}"
+        for issue in issues
+        if isinstance(issue, dict)
+    )
+    if not issue_lines:
+        issue_lines = '- Review failed without structured issues.'
+    return f"""## Previous review failure
+
+Issues:
+{issue_lines}"""
+
+
+def _format_failed_verification_feedback(verification: dict[str, Any]) -> str:
+    issues = verification.get('issues') or []
+    issue_lines = '\n'.join(
+        f"- {issue.get('severity', 'unknown')} {issue.get('type', 'issue')}: {issue.get('message', '')}"
+        for issue in issues
+        if isinstance(issue, dict)
+    )
+    if not issue_lines:
+        issue_lines = '- Verification failed without structured issues.'
+
+    results = [
+        result for result in verification.get('results') or []
+        if isinstance(result, dict) and not result.get('ok')
+    ]
+    result_blocks = '\n\n'.join(_format_failed_command_result(result) for result in results[:3])
+    if len(results) > 3:
+        result_blocks += f'\n\n... {len(results) - 3} additional failed command result(s) omitted.'
+    if not result_blocks:
+        result_blocks = 'No failed command result payload was recorded.'
+
+    return f"""## Previous verification failure
+
+Issues:
+{issue_lines}
+
+Failed command results:
+{result_blocks}"""
+
+
+def _format_failed_command_result(result: dict[str, Any]) -> str:
+    lines = [
+        f"- command: {result.get('command', '')}",
+        f"- returncode: {result.get('returncode')}",
+    ]
+    stdout = _tail_text(str(result.get('stdout') or '').strip())
+    stderr = _tail_text(str(result.get('stderr') or '').strip())
+    if stdout:
+        lines.append(f"- stdout tail:\n```text\n{stdout}\n```")
+    if stderr:
+        lines.append(f"- stderr tail:\n```text\n{stderr}\n```")
+    return '\n'.join(lines)
+
+
+def _tail_text(text: str, max_chars: int = 4000) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f'... truncated ...\n{text[-max_chars:]}'
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _render_ui_design_brief(payload: dict[str, Any]) -> str:
@@ -617,6 +718,7 @@ For every unit, include:
 - Workflow validation level: `fragment` or `closure`
 - Done when
 - Verification commands
+- Verification env for command-only dependencies, such as `DATABASE_URL` for Playwright/E2E database-backed tests
 - Evidence required
 - Risks
 
@@ -639,7 +741,8 @@ Include a fenced `json` object that the controller can safely apply after human 
       "non_goals": ["<non-goal item>"],
       "done_when": ["<observable completion condition>"],
       "workflow_validation_level": "fragment",
-      "verification_commands": ["<command>"]
+      "verification_commands": ["<command>"],
+      "verification_env": {{"DATABASE_URL": "<test database url if required>"}}
     }}
   ],
   "currentUnitNeedsUiDesign": false

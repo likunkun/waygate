@@ -76,7 +76,11 @@ if sys.argv[1:2] == ["paste-buffer"]:
     Path("tmux-output.txt").write_text("changed by tmux\\n", encoding="utf-8")
 if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-        json.dumps({{"status": "done", "summary": "tmux finished"}}),
+        json.dumps({{
+            "status": "done",
+            "summary": "tmux finished",
+            "run_id": os.environ["RRC_RUN_ID"],
+        }}),
         encoding="utf-8",
     )
 """,
@@ -99,6 +103,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert result.status == 'done'
     assert result.returncode == 0
     assert result.done_payload['summary'] == 'tmux finished'
+    assert result.done_payload['run_id'] == result.run_dir.name
     assert (workspace / 'tmux-output.txt').read_text(encoding='utf-8') == 'changed by tmux\n'
     log = tmux_log.read_text(encoding='utf-8')
     assert 'load-buffer' in log
@@ -111,7 +116,83 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert any(event.get('event') == 'tmux_submit_delay' for event in events)
     prompt = result.prompt_path.read_text(encoding='utf-8')
     assert 'DONE_FILE:' in prompt
+    assert 'RUN_ID:' in prompt
     assert 'Implement this unit.' in prompt
+
+
+def test_tmux_claude_runner_rejects_done_signal_from_wrong_run_id(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({"status": "done", "summary": "old run", "run_id": "old-run-id"}),
+        encoding="utf-8",
+    )
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done_file_wrong_run'
+    assert result.returncode == 1
+    assert result.done_payload['run_id'] == 'old-run-id'
+    assert 'expected run_id' in result.stderr
+    assert result.run_dir.name in result.stderr
+
+
+def test_tmux_claude_runner_reports_invalid_done_json_separately(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        """#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text("{not-json", encoding="utf-8")
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'invalid_done_file'
+    assert result.returncode == 1
+    assert 'not valid JSON' in result.stderr
+    assert result.done_payload['status'] == 'invalid_done_file'
 
 
 def test_tmux_claude_timeout_reports_done_file_recovery_path(tmp_path: Path) -> None:
@@ -146,6 +227,43 @@ raise SystemExit(0)
     assert str(result.done_path) in result.stderr
     assert 'DONE_FILE' in result.stderr
     assert 'write done.json' in result.stderr
+
+
+def test_tmux_claude_timeout_reports_idle_pane_without_done_file(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        """#!/usr/bin/env python3
+import sys
+if sys.argv[1:2] == ["capture-pane"]:
+    print("Claude finished the work but did not write done.json")
+    print("❯")
+raise SystemExit(0)
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-idle',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=1,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'agent_idle_without_done'
+    assert result.returncode == 124
+    assert result.done_path is not None
+    assert 'tmux pane appears idle' in result.stderr
+    assert 'Claude finished the work' in result.stderr
+    assert result.run_dir.name in result.stderr
 
 
 def test_make_runner_maps_state_to_backend() -> None:

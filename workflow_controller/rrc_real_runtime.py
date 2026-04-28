@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -394,8 +395,28 @@ def verification_commands_for_state(state: dict[str, Any]) -> list[str]:
     return [str(command) for command in commands if str(command).strip()]
 
 
+def verification_env_for_state(state: dict[str, Any]) -> dict[str, str]:
+    unit = _find_unit(state, state.get('currentUnitId'))
+    env: dict[str, str] = {}
+    for source in (
+        state.get('verification_env'),
+        state.get('verificationEnv'),
+        unit.get('verification_env'),
+        unit.get('verificationEnv'),
+    ):
+        if not isinstance(source, dict):
+            continue
+        for key, value in source.items():
+            key_text = str(key).strip()
+            if key_text and value is not None:
+                env[key_text] = str(value)
+    return env
+
+
 def run_verification_commands(state: dict[str, Any], workspace_dir: Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
+    verification_env = verification_env_for_state(state)
+    env = {**os.environ, **verification_env} if verification_env else None
     for command in verification_commands_for_state(state):
         completed = subprocess.run(
             command,
@@ -405,6 +426,7 @@ def run_verification_commands(state: dict[str, Any], workspace_dir: Path) -> lis
             capture_output=True,
             timeout=int(state.get('verificationTimeoutSeconds') or 1800),
             check=False,
+            env=env,
         )
         results.append({
             'command': command,
@@ -412,6 +434,7 @@ def run_verification_commands(state: dict[str, Any], workspace_dir: Path) -> lis
             'ok': completed.returncode == 0,
             'stdout': completed.stdout,
             'stderr': completed.stderr,
+            'env_keys': sorted(verification_env),
         })
     return results
 

@@ -100,6 +100,28 @@ def validate_unit_plan_test_strategy(
         )
 
 
+def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
+    missing: list[str] = []
+    state_env_keys = _verification_env_keys(state)
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict):
+            continue
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        env_keys = state_env_keys | _verification_env_keys(unit)
+        commands = unit.get('verification_commands') or []
+        for command in commands:
+            command_text = str(command)
+            for required_key in sorted(_required_env_keys_for_verification_command(command_text)):
+                if required_key in env_keys or _command_sets_env(command_text, required_key):
+                    continue
+                missing.append(
+                    f'unit {unit_id} command requires {required_key}; '
+                    f'add {required_key} to verification_env or inline it in the command: {command_text}'
+                )
+    if missing:
+        raise ValueError('unit plan verification_env is incomplete: ' + '; '.join(missing))
+
+
 def extract_unit_plan_state_patch(content: str) -> dict[str, Any]:
     body = gate_body(content)
     heading = re.search(r'(?im)^##+\s+Controller State Patch\s*$', body)
@@ -489,6 +511,29 @@ def _test_layer_is_covered(layer: str, haystack: str) -> bool:
         'e2e': ('e2e', 'end-to-end', 'end to end', 'playwright', 'browser', 'manual acceptance', 'uat'),
     }
     return any(term in haystack for term in coverage_terms[layer])
+
+
+def _verification_env_keys(payload: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for field in ('verification_env', 'verificationEnv'):
+        value = payload.get(field)
+        if isinstance(value, dict):
+            keys.update(str(key).strip() for key in value if str(key).strip())
+    return keys
+
+
+def _required_env_keys_for_verification_command(command: str) -> set[str]:
+    lowered = command.lower()
+    required: set[str] = set()
+    if 'playwright' in lowered or 'prisma' in lowered:
+        required.add('DATABASE_URL')
+    if re.search(r'\bDATABASE_URL\b', command):
+        required.add('DATABASE_URL')
+    return required
+
+
+def _command_sets_env(command: str, key: str) -> bool:
+    return re.search(rf'(?:^|[;&\s])(?:export\s+)?{re.escape(key)}\s*=', command) is not None
 
 
 def _markdown_section(content: str, heading_contains: str) -> str:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 import time
 from datetime import datetime
@@ -16,6 +18,7 @@ from workflow_controller.rrc_human_gates import (
     ensure_unit_plan_gate,
     migrate_unit_plan_gate_to_state_patch,
     validate_unit_plan_test_strategy,
+    validate_unit_plan_verification_environment,
 )
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import build_state_from_ralph, render_target_acceptance_prompt
@@ -83,6 +86,7 @@ WAITING_HUMAN_GATE_STEPS = {
 
 DEFAULT_MAX_AUTOMATIC_STEPS = 2000
 DEFAULT_MAX_NO_PROGRESS_STEPS = 50
+DEFAULT_SAME_FAILURE_MAX_RETRIES = 1
 COLOR_MODES = ('auto', 'always', 'never')
 ANSI_STYLES = {
     'bold': '\033[1m',
@@ -550,6 +554,7 @@ class RalphRefinerController:
                         gate_path,
                         state,
                     )
+                    validate_unit_plan_verification_environment(state)
                 except ValueError as exc:
                     state['unitPlanAccepted'] = False
                     state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
@@ -635,7 +640,16 @@ class RalphRefinerController:
         if action == 'run_reviewer':
             run_reviewer(state, unit_dir, dry_run=self.dry_run)
             review = validate_review_verdict(unit_dir / 'review.json')
-            state['currentStep'] = 'VERIFY_UNIT' if review['passed'] else 'EXECUTE_UNIT'
+            if review['passed']:
+                _clear_last_failure(state)
+                state['currentStep'] = 'VERIFY_UNIT'
+            else:
+                _record_or_block_repeated_failure(
+                    state,
+                    stage='REVIEW_UNIT',
+                    verdict=review,
+                    retry_step='EXECUTE_UNIT',
+                )
             self._save_state(state)
             return state
 
@@ -643,10 +657,16 @@ class RalphRefinerController:
             run_verifier(state, unit_dir, dry_run=self.dry_run)
             verification = validate_verification_verdict(unit_dir / 'verification.json')
             if verification['passed']:
+                _clear_last_failure(state)
                 state['lastVerifiedStep'] = 'VERIFY_UNIT'
                 state['currentStep'] = 'UNIT_COMPLETE'
             else:
-                state['currentStep'] = 'EXECUTE_UNIT'
+                _record_or_block_repeated_failure(
+                    state,
+                    stage='VERIFY_UNIT',
+                    verdict=verification,
+                    retry_step='EXECUTE_UNIT',
+                )
             self._save_state(state)
             return state
 
@@ -933,6 +953,141 @@ class RalphRefinerController:
 
 def _gate_reason_label(reason: str) -> str:
     return GATE_REASON_LABELS.get(reason, reason)
+
+
+def _record_or_block_repeated_failure(
+    state: dict[str, Any],
+    *,
+    stage: str,
+    verdict: dict[str, Any],
+    retry_step: str,
+) -> None:
+    unit_id = str(state.get('currentUnitId') or '')
+    fingerprint, details = _failure_fingerprint(stage, verdict)
+    previous = state.get('lastFailure') if isinstance(state.get('lastFailure'), dict) else {}
+    previous = previous or {}
+    count = 1
+    if (
+        previous.get('unit_id') == unit_id
+        and previous.get('stage') == stage
+        and previous.get('fingerprint') == fingerprint
+    ):
+        count = int(previous.get('count') or 0) + 1
+
+    summary = _failure_summary(stage, details)
+    state['lastFailure'] = {
+        'unit_id': unit_id,
+        'stage': stage,
+        'fingerprint': fingerprint,
+        'count': count,
+        'summary': summary,
+        'details': details,
+    }
+
+    max_retries = _same_failure_max_retries(state)
+    if count > max_retries:
+        state['status'] = 'blocked'
+        state['currentStep'] = stage
+        state['blockedReason'] = (
+            f'Repeated {stage} failure for {unit_id or "unknown unit"} '
+            f'({count} consecutive occurrences; limit {max_retries}). {summary}'
+        )
+        return
+
+    state['status'] = 'active'
+    state['currentStep'] = retry_step
+    state['blockedReason'] = None
+
+
+def _clear_last_failure(state: dict[str, Any]) -> None:
+    state.pop('lastFailure', None)
+    if state.get('status') != 'blocked':
+        state['blockedReason'] = None
+
+
+def _same_failure_max_retries(state: dict[str, Any]) -> int:
+    raw_value = state.get('sameFailureMaxRetries', DEFAULT_SAME_FAILURE_MAX_RETRIES)
+    try:
+        return max(0, int(raw_value))
+    except (TypeError, ValueError):
+        return DEFAULT_SAME_FAILURE_MAX_RETRIES
+
+
+def _failure_fingerprint(stage: str, verdict: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    details: dict[str, Any] = {'stage': stage}
+    issues = _issue_details(verdict)
+    if issues:
+        details['issues'] = issues
+
+    if stage == 'VERIFY_UNIT':
+        failed_results = [
+            result for result in verdict.get('results') or []
+            if isinstance(result, dict) and not result.get('ok')
+        ]
+        if failed_results:
+            first = failed_results[0]
+            details.update({
+                'command': str(first.get('command') or ''),
+                'returncode': first.get('returncode'),
+                'stdout_tail': _text_tail(str(first.get('stdout') or '')),
+                'stderr_tail': _text_tail(str(first.get('stderr') or '')),
+            })
+        else:
+            details['commands'] = [str(command) for command in verdict.get('commands') or []]
+    elif stage == 'REVIEW_UNIT':
+        details['reviewer'] = verdict.get('reviewer')
+    else:
+        details['verdict'] = verdict
+
+    fingerprint_source = json.dumps(details, ensure_ascii=False, sort_keys=True)
+    fingerprint = hashlib.sha256(fingerprint_source.encode('utf-8')).hexdigest()
+    return fingerprint, details
+
+
+def _issue_details(verdict: dict[str, Any]) -> list[dict[str, str]]:
+    details: list[dict[str, str]] = []
+    for issue in verdict.get('issues') or []:
+        if not isinstance(issue, dict):
+            continue
+        details.append({
+            'type': str(issue.get('type') or ''),
+            'message': _text_tail(str(issue.get('message') or ''), max_chars=500),
+        })
+    return details
+
+
+def _failure_summary(stage: str, details: dict[str, Any]) -> str:
+    if stage == 'VERIFY_UNIT':
+        command = details.get('command')
+        returncode = details.get('returncode')
+        stdout_tail = str(details.get('stdout_tail') or '').strip()
+        stderr_tail = str(details.get('stderr_tail') or '').strip()
+        parts = []
+        if command:
+            parts.append(f'command `{command}`')
+        if returncode is not None:
+            parts.append(f'exit {returncode}')
+        if stderr_tail:
+            parts.append(f'stderr tail: {stderr_tail}')
+        if stdout_tail:
+            parts.append(f'stdout tail: {stdout_tail}')
+        if parts:
+            return '; '.join(parts)
+    issues = details.get('issues') or []
+    if issues:
+        rendered = '; '.join(
+            f"{issue.get('type')}: {issue.get('message')}"
+            for issue in issues[:3]
+        )
+        return rendered or f'{stage} failed'
+    return f'{stage} failed'
+
+
+def _text_tail(text: str, max_chars: int = 1000) -> str:
+    normalized = '\n'.join(line.rstrip() for line in text.strip().splitlines() if line.strip())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[-max_chars:]
 
 
 class _CompactDriveReporter:

@@ -103,3 +103,66 @@ def test_prepare_builder_prompt_includes_final_acceptance_rejection_feedback(tmp
     prompt = prompt_path.read_text(encoding='utf-8')
     assert 'Final acceptance rejection feedback' in prompt
     assert 'import preview is missing retry state' in prompt
+
+
+def test_prepare_builder_prompt_includes_previous_verification_failure_feedback(tmp_path: Path) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    unit_dir = tmp_path / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    original_prompt = tmp_path / 'current-prompt.md'
+    original_prompt.write_text('Original context.', encoding='utf-8')
+
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    write_gate_file(requirements_path, '# Requirements & Acceptance Confirmation\n\nApproved requirement.\n')
+    approve_gate_file(requirements_path, actor='tester')
+    unit_plan_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(unit_plan_path, '# Unit Plan Confirmation\n\nApproved plan.\n')
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    (unit_dir / 'verification.json').write_text(
+        json.dumps({
+            'unit_id': 'unit-01',
+            'passed': False,
+            'issues': [
+                {
+                    'severity': 'high',
+                    'type': 'verification_command_failed',
+                    'message': 'Command failed: pnpm exec playwright test',
+                }
+            ],
+            'results': [
+                {
+                    'command': 'pnpm exec playwright test',
+                    'returncode': 1,
+                    'ok': False,
+                    'stdout': 'Running 61 tests\nPrismaClientInitializationError\n',
+                    'stderr': 'error: Environment variable not found: DATABASE_URL.\n',
+                }
+            ],
+        }),
+        encoding='utf-8',
+    )
+
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'humanGatesRequired': True,
+        'workspacePath': str(tmp_path),
+        'promptPath': str(original_prompt),
+        'requestedOutcome': 'usable-system',
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+        ],
+    }
+
+    prompt_path = prepare_builder_prompt(state, approvals_dir, unit_dir)
+
+    assert prompt_path is not None
+    prompt = prompt_path.read_text(encoding='utf-8')
+    assert 'Previous controller failure feedback' in prompt
+    assert 'pnpm exec playwright test' in prompt
+    assert 'returncode: 1' in prompt
+    assert 'Environment variable not found: DATABASE_URL' in prompt

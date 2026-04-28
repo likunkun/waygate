@@ -90,7 +90,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-            json.dumps({"status": "done", "summary": "requirements generated"}),
+            json.dumps({"status": "done", "summary": "requirements generated", "run_id": os.environ["RRC_RUN_ID"]}),
             encoding="utf-8",
         )
         raise SystemExit(0)
@@ -131,13 +131,13 @@ if sys.argv[1:2] == ["paste-buffer"]:
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-            json.dumps({"status": "done", "summary": "unit plan generated"}),
+            json.dumps({"status": "done", "summary": "unit plan generated", "run_id": os.environ["RRC_RUN_ID"]}),
             encoding="utf-8",
         )
         raise SystemExit(0)
     Path("delivery.txt").write_text("ready\\n", encoding="utf-8")
     Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-        json.dumps({"status": "done", "summary": "delivery artifact created"}),
+        json.dumps({"status": "done", "summary": "delivery artifact created", "run_id": os.environ["RRC_RUN_ID"]}),
         encoding="utf-8",
     )
 """,

@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-基线已建立，等待下一项开发任务。
+已完成 workflow-controller 可靠性增强：重复失败硬阻断、run_id 防串线、verification_env、Unit Plan 预检和 timeout 诊断。
 
 ## 各阶段
 
@@ -52,11 +52,20 @@
 - **状态：** complete
 
 ### 阶段 6：后续开发
-- [ ] 根据下一项用户需求继续实现
-- [ ] 每次阶段完成后更新 `progress.md`
-- [ ] 重大决策或已知限制更新 `findings.md`
-- [ ] 计划变化时更新 `task_plan.md`
-- **状态：** pending
+- [x] 根据下一项用户需求继续实现
+- [x] 每次阶段完成后更新 `progress.md`
+- [x] 重大决策或已知限制更新 `findings.md`
+- [x] 计划变化时更新 `task_plan.md`
+- **状态：** in_progress
+
+### 阶段 7：控制器可靠性增强
+- [x] 重复失败硬阻断：同一 unit/stage/fingerprint 连续失败后 block
+- [x] run_id 防串线：DONE_FILE 必须包含并匹配当前 run_id
+- [x] verification_env 机制：unit/state 环境变量统一注入 verifier
+- [x] Unit Plan approval 预检：拒绝明显缺环境的验证计划
+- [x] timeout/idle 诊断：区分 idle、无输出、wrong run、invalid done
+- [x] 完整测试通过
+- **状态：** complete
 
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。
