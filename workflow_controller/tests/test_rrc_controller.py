@@ -1343,6 +1343,66 @@ def test_reject_final_acceptance_requires_human_routing_checkbox(tmp_path: Path)
     assert state['units'][0]['passes'] is True
 
 
+def test_drive_prompts_for_final_acceptance_rejection_route_when_unselected(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'final-acceptance.md'
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
+        'Reviewer note: button copy is wrong.\n',
+        encoding='utf-8',
+    )
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--max-steps',
+        '0',
+        input_text='r\n3\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '[验收路由] 请选择最终验收不通过后的流向：' in result.stdout
+    assert '3  实现返工 -> Builder' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state['finalAcceptanceRejectionRoute'] == 'implementation'
+    content = gate_path.read_text(encoding='utf-8')
+    assert '- [x] Implementation rework:' in content
+    assert 'Reviewer note: button copy is wrong.' in content
+
+
 def test_reject_final_acceptance_routes_to_unit_plan_revision(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)

@@ -1061,6 +1061,12 @@ class RalphRefinerController:
                 output_func(f"[修订] 已重新生成 {gate_info['label']}，请重新阅读确认。")
                 return True
             if choice in {'r', 'reject', 'rework'} and gate_info.get('can_rework'):
+                if not _ensure_final_acceptance_rejection_route_from_prompt(
+                    Path(gate_info['path']),
+                    input_func,
+                    output_func,
+                ):
+                    return False
                 self.reject_final_acceptance_gate()
                 route = self.store.load_state().get('finalAcceptanceRejectionRoute')
                 message = FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES.get(
@@ -1100,6 +1106,75 @@ def _final_acceptance_rejection_route(content: str) -> str:
         if route in selected:
             return route
     raise ValueError('Final acceptance rejection routing selected an unknown option.')
+
+
+def _ensure_final_acceptance_rejection_route_from_prompt(
+    gate_path: Path,
+    input_func: Callable[[str], str],
+    output_func: Callable[[str], None],
+) -> bool:
+    try:
+        _final_acceptance_rejection_route(gate_path.read_text(encoding='utf-8'))
+        return True
+    except ValueError:
+        pass
+
+    output_func('[验收路由] 请选择最终验收不通过后的流向：')
+    output_func('  1  需求变更 -> Requirements')
+    output_func('  2  Unit Plan 问题 -> Unit Plan')
+    output_func('  3  实现返工 -> Builder')
+    output_func('  4  阻塞/资料环境问题 -> Blocked')
+    output_func('  q  取消')
+    route_by_choice = {
+        '1': 'requirements',
+        'requirements': 'requirements',
+        'requirement': 'requirements',
+        'req': 'requirements',
+        '需求': 'requirements',
+        '需求变更': 'requirements',
+        '2': 'unit_plan',
+        'unit': 'unit_plan',
+        'unit-plan': 'unit_plan',
+        'unit_plan': 'unit_plan',
+        'plan': 'unit_plan',
+        '计划': 'unit_plan',
+        '3': 'implementation',
+        'implementation': 'implementation',
+        'impl': 'implementation',
+        'builder': 'implementation',
+        '实现': 'implementation',
+        '实现返工': 'implementation',
+        '4': 'blocked',
+        'blocked': 'blocked',
+        'block': 'blocked',
+        '阻塞': 'blocked',
+    }
+    while True:
+        try:
+            choice = input_func('route> ').strip().lower()
+        except EOFError:
+            output_func('[退出] 未收到验收路由，已停止在人工确认点。')
+            return False
+        if choice in {'q', 'quit', 'exit'}:
+            output_func('[退出] 已取消最终验收返工。')
+            return False
+        route = route_by_choice.get(choice)
+        if route:
+            _write_final_acceptance_rejection_route(gate_path, route)
+            output_func(f"[验收路由] 已选择：{FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS[route]}")
+            return True
+        output_func('[提示] 请输入 1 / 2 / 3 / 4 / q。')
+
+
+def _write_final_acceptance_rejection_route(gate_path: Path, route: str) -> None:
+    if route not in FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS:
+        raise ValueError(f'Unknown final acceptance rejection route: {route}')
+    content = gate_path.read_text(encoding='utf-8')
+    for candidate, label in FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS.items():
+        checked = 'x' if candidate == route else ' '
+        pattern = rf'^(\s*[-*]\s*)\[[ xX]\](\s*{re.escape(label)}\s*:.*)$'
+        content = re.sub(pattern, rf'\1[{checked}]\2', content, flags=re.MULTILINE)
+    gate_path.write_text(content, encoding='utf-8')
 
 
 def _verification_progress_printer(
