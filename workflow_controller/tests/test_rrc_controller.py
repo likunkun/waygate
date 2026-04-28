@@ -305,7 +305,7 @@ def test_drive_prints_compact_verification_failure_reason(tmp_path: Path) -> Non
                     'name': 'Delivery',
                     'passes': False,
                     'verification_commands': [
-                        "python -c \"import sys; print('error: Environment variable not found: DATABASE_URL'); sys.exit(1)\"",
+                        "DATABASE_URL=file:test.db python -c \"import sys; print('error: Environment variable not found: DATABASE_URL'); sys.exit(1)\"",
                     ],
                 },
             ],
@@ -400,7 +400,7 @@ def test_repeated_verification_failure_blocks_before_another_retry(tmp_path: Pat
                     'name': 'Delivery',
                     'passes': False,
                     'verification_commands': [
-                        'python -c "import sys; print(\'DATABASE_URL missing\'); sys.exit(1)"',
+                        'python -c "import sys; print(\'runtime database missing\'); sys.exit(1)"',
                     ],
                 },
             ],
@@ -424,7 +424,48 @@ def test_repeated_verification_failure_blocks_before_another_retry(tmp_path: Pat
     assert second['currentStep'] == 'VERIFY_UNIT'
     assert second['lastFailure']['count'] == 2
     assert 'Repeated VERIFY_UNIT failure' in second['blockedReason']
-    assert 'DATABASE_URL missing' in second['blockedReason']
+    assert 'runtime database missing' in second['blockedReason']
+
+
+def test_verifier_blocks_when_required_database_url_cannot_be_inferred(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'VERIFY_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'Delivery',
+                    'passes': False,
+                    'verification_commands': [
+                        'pnpm exec playwright test e2e/tests/delivery.spec.ts --workers=1',
+                    ],
+                },
+            ],
+        },
+        force=True,
+    )
+
+    state = controller.run_once()
+
+    assert state['status'] == 'blocked'
+    assert state['currentStep'] == 'VERIFY_UNIT'
+    assert 'verification environment is incomplete' in state['blockedReason']
+    assert 'DATABASE_URL' in state['blockedReason']
+    assert state['nextAllowedActions'] == []
 
 
 def test_drive_verbose_output_keeps_raw_progress_lines(tmp_path: Path) -> None:

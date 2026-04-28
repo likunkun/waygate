@@ -55,6 +55,21 @@
   - `python -m pytest workflow_controller/tests -q` -> `80 passed in 19.99s`
   - 实际运行目录失败摘要测试 -> `1 passed in 1.15s`
 
+### 阶段 8：旧 Session 验证环境自动修复
+- **状态：** complete
+- 开始时间：2026-04-28
+- 背景：
+  - 同类 `DATABASE_URL` 缺失问题已第二次出现，上一次靠手工修改 session 收场。
+  - 新 Unit Plan approval 预检无法覆盖已经批准的旧 session。
+- 已完成：
+  - verifier 运行前会检查 verification command 所需环境。
+  - 对 Playwright/Prisma/显式 `DATABASE_URL` 命令，若 state/unit 未配置 `DATABASE_URL`，会尝试从 `executionWorkspacePath/prisma/dev.db` 或 `workspacePath/prisma/dev.db` 自动推导。
+  - 推导成功会写入 state-level `verification_env` 和 `verification_env_inferred`，后续验证复用，不需要手改 session。
+  - 推导失败会直接 `blocked`，提示 `verification environment is incomplete`，不会回 Builder 重试。
+- 已验证：
+  - `python -m pytest workflow_controller/tests -q` -> `82 passed in 20.37s`
+  - 实际运行目录新增验证环境测试 -> `2 passed in 1.33s`
+
 ### 阶段 1：运行问题修复
 - **状态：** complete
 - 执行的操作：

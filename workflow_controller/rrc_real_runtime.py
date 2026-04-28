@@ -26,6 +26,10 @@ class AgentRunResult:
     done_payload: dict[str, Any] | None = None
 
 
+class VerificationEnvironmentError(RuntimeError):
+    pass
+
+
 def build_state_from_ralph(
     workspace_dir: Path,
     agent_command: str = 'claude',
@@ -414,13 +418,42 @@ def verification_env_for_state(state: dict[str, Any]) -> dict[str, str]:
     return env
 
 
+def ensure_verification_env_for_state(state: dict[str, Any], workspace_dir: Path) -> dict[str, str]:
+    env = verification_env_for_state(state)
+    inferred: dict[str, str] = {}
+    missing: list[str] = []
+    for command in verification_commands_for_state(state):
+        for key in sorted(_required_env_keys_for_verification_command(command)):
+            if key in env or _command_sets_env(command, key):
+                continue
+            inferred_value = _infer_verification_env_value(key, workspace_dir)
+            if inferred_value:
+                state_env = state.setdefault('verification_env', {})
+                if isinstance(state_env, dict):
+                    state_env[key] = inferred_value
+                inferred_state = state.setdefault('verification_env_inferred', {})
+                if isinstance(inferred_state, dict):
+                    inferred_state[key] = inferred_value
+                env[key] = inferred_value
+                inferred[key] = inferred_value
+            else:
+                missing.append(f'{key} for `{command}`')
+    if missing:
+        raise VerificationEnvironmentError(
+            'verification environment is incomplete: '
+            + '; '.join(missing)
+            + '. Add verification_env or inline the variable in the verification command.'
+        )
+    return env
+
+
 def run_verification_commands(
     state: dict[str, Any],
     workspace_dir: Path,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    verification_env = verification_env_for_state(state)
+    verification_env = ensure_verification_env_for_state(state, workspace_dir)
     env = {**os.environ, **verification_env} if verification_env else None
     commands = verification_commands_for_state(state)
     total = len(commands)
@@ -485,6 +518,29 @@ def run_verification_commands(
         'passed': all(result.get('ok') for result in results),
     })
     return results
+
+
+def _required_env_keys_for_verification_command(command: str) -> set[str]:
+    lowered = command.lower()
+    required: set[str] = set()
+    if 'playwright' in lowered or 'prisma' in lowered:
+        required.add('DATABASE_URL')
+    if re.search(r'\bDATABASE_URL\b', command):
+        required.add('DATABASE_URL')
+    return required
+
+
+def _command_sets_env(command: str, key: str) -> bool:
+    return re.search(rf'(?:^|[;&\s])(?:export\s+)?{re.escape(key)}\s*=', command) is not None
+
+
+def _infer_verification_env_value(key: str, workspace_dir: Path) -> str | None:
+    if key != 'DATABASE_URL':
+        return None
+    candidate = workspace_dir / 'prisma' / 'dev.db'
+    if candidate.exists():
+        return f'file:{candidate}'
+    return None
 
 
 def _emit_progress(

@@ -691,6 +691,37 @@ def test_run_verifier_injects_unit_verification_env_without_inlining_it_in_comma
     assert verification['results'][0]['env_keys'] == ['DATABASE_URL']
 
 
+def test_run_verifier_infers_database_url_for_legacy_playwright_session(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    (workspace / 'prisma').mkdir(parents=True)
+    (workspace / 'prisma' / 'dev.db').write_text('', encoding='utf-8')
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_commands': [
+                    "python -c \"import os; from pathlib import Path; "
+                    "Path('inferred-db-url.txt').write_text(os.environ['DATABASE_URL'], encoding='utf-8')\" "
+                    "# playwright",
+                ],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    expected = f"file:{workspace / 'prisma' / 'dev.db'}"
+    assert result.summary == 'verification passed'
+    assert state['verification_env']['DATABASE_URL'] == expected
+    assert state['verification_env_inferred']['DATABASE_URL'] == expected
+    assert (workspace / 'inferred-db-url.txt').read_text(encoding='utf-8') == expected
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['results'][0]['env_keys'] == ['DATABASE_URL']
+
+
 def test_run_verifier_emits_progress_events_on_verification_state_changes(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()

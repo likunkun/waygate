@@ -84,6 +84,15 @@
 - [x] 测试通过
 - **状态：** complete
 
+### 阶段 10：旧 Session 验证环境自动修复
+- [x] verifier 前置检查 Playwright/Prisma/DATABASE_URL 环境需求
+- [x] 可从 `prisma/dev.db` 推导时自动写入 `verification_env.DATABASE_URL`
+- [x] 推导来源写入 `verification_env_inferred`
+- [x] 推导失败时直接 `blocked`，不回 Builder 重试
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 测试通过
+- **状态：** complete
+
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。
 2. 是否需要为新工作区补充独立的打包配置、入口脚本或 CI，后续按开发需要决定。

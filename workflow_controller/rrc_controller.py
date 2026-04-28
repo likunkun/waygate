@@ -22,7 +22,11 @@ from workflow_controller.rrc_human_gates import (
     validate_unit_plan_verification_environment,
 )
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
-from workflow_controller.rrc_real_runtime import build_state_from_ralph, render_target_acceptance_prompt
+from workflow_controller.rrc_real_runtime import (
+    VerificationEnvironmentError,
+    build_state_from_ralph,
+    render_target_acceptance_prompt,
+)
 from workflow_controller.rrc_state_store import StateStore
 from workflow_controller.rrc_validators import (
     compute_next_allowed_action,
@@ -661,12 +665,24 @@ class RalphRefinerController:
             return state
 
         if action == 'run_verifier':
-            run_verifier(
-                state,
-                unit_dir,
-                dry_run=self.dry_run,
-                progress_callback=verification_progress_callback,
-            )
+            try:
+                run_verifier(
+                    state,
+                    unit_dir,
+                    dry_run=self.dry_run,
+                    progress_callback=verification_progress_callback,
+                )
+            except VerificationEnvironmentError as exc:
+                state['status'] = 'blocked'
+                state['currentStep'] = 'VERIFY_UNIT'
+                state['blockedReason'] = str(exc)
+                self.store.append_event('verification_environment_blocked', {
+                    'task_id': state.get('task_id'),
+                    'unit_id': state.get('currentUnitId'),
+                    'reason': str(exc),
+                })
+                self._save_state(state)
+                return state
             verification = validate_verification_verdict(unit_dir / 'verification.json')
             if verification['passed']:
                 _clear_last_failure(state)
