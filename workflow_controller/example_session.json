@@ -1,0 +1,29 @@
+{
+  "task_id": "demo-login-flow",
+  "currentUnitId": "unit-01",
+  "currentStep": "PLAN_CREATED",
+  "lastVerifiedStep": "PLAN_CREATED",
+  "status": "active",
+  "requestedOutcome": "usable-system",
+  "feasibleOutcome": "usable-system",
+  "scopeApproved": false,
+  "currentUnitNeedsUiDesign": false,
+  "objectiveCoverage": [
+    {
+      "objective": "用户可以完成登录流程",
+      "units": ["unit-01"],
+      "status": "partial"
+    }
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "passes": false
+    }
+  ],
+  "nextAllowedActions": [
+    "require_scope_approval"
+  ],
+  "blockedReason": null,
+  "updatedAt": "2026-04-26T00:00:00+00:00"
+}
