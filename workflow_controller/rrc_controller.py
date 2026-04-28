@@ -17,6 +17,7 @@ from workflow_controller.rrc_human_gates import (
     ensure_final_acceptance_gate,
     ensure_requirements_gate,
     ensure_unit_plan_gate,
+    gate_body,
     migrate_unit_plan_gate_to_state_patch,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,
@@ -142,6 +143,25 @@ HUMAN_GATE_LABELS = {
     'requirements': '需求与验收',
     'unit-plan': 'Unit Plan',
     'final-acceptance': '最终验收',
+}
+
+FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS = {
+    'requirements': 'Requirements revision',
+    'unit_plan': 'Unit plan revision',
+    'implementation': 'Implementation rework',
+    'blocked': 'Blocked',
+}
+FINAL_ACCEPTANCE_REJECTION_ROUTE_PRIORITY = (
+    'requirements',
+    'unit_plan',
+    'implementation',
+    'blocked',
+)
+FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES = {
+    'requirements': '最终验收未通过，已回到需求变更流程。',
+    'unit_plan': '最终验收未通过，已回到 Unit Plan 修订流程。',
+    'implementation': '最终验收未通过，已回到 Builder。',
+    'blocked': '最终验收未通过，已阻塞等待人工处理。',
 }
 
 GATE_REASON_LABELS = {
@@ -276,22 +296,88 @@ class RalphRefinerController:
             raise ValueError('Final acceptance can only be rejected at WAITING_FINAL_ACCEPTANCE')
 
         gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
-        state['finalAcceptanceRejectionFeedback'] = gate_path.read_text(encoding='utf-8')
+        rejection_feedback = gate_path.read_text(encoding='utf-8')
+        route = _final_acceptance_rejection_route(rejection_feedback)
+        state['finalAcceptanceRejectionFeedback'] = rejection_feedback
+        state['finalAcceptanceRejectionRoute'] = route
         state['finalAcceptanceRejectionCount'] = int(state.get('finalAcceptanceRejectionCount') or 0) + 1
         state['finalAcceptanceAccepted'] = False
         state.pop('finalAcceptanceAcceptedHash', None)
         state.pop('finalAcceptanceAcceptedBy', None)
         state['blockedReason'] = None
         state['status'] = 'active'
-        self._mark_current_unit_incomplete(state)
-        state['currentStep'] = 'EXECUTE_UNIT'
+        if route == 'requirements':
+            self._mark_current_unit_incomplete(state)
+            self._route_final_acceptance_rejection_to_requirements(state, rejection_feedback)
+        elif route == 'unit_plan':
+            self._mark_current_unit_incomplete(state)
+            self._route_final_acceptance_rejection_to_unit_plan(state, rejection_feedback)
+        elif route == 'implementation':
+            self._mark_current_unit_incomplete(state)
+            state['currentStep'] = 'EXECUTE_UNIT'
+        elif route == 'blocked':
+            state['status'] = 'blocked'
+            state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
+            state['blockedReason'] = 'Final acceptance rejected as blocked; resolve the environment, data, access, or evidence issue before continuing.'
         self.store.append_event('final_acceptance_rejected', {
             'task_id': state.get('task_id'),
             'path': str(gate_path),
             'revision_count': state.get('finalAcceptanceRejectionCount'),
+            'route': route,
         })
         self._save_state(state)
         return gate_path
+
+    def _route_final_acceptance_rejection_to_requirements(
+        self,
+        state: dict[str, Any],
+        rejection_feedback: str,
+    ) -> None:
+        state['requirementsRevisionFeedback'] = rejection_feedback
+        state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
+        state['requirementsAccepted'] = False
+        state['unitPlanAccepted'] = False
+        state.pop('requirementsAcceptedHash', None)
+        state.pop('requirementsAcceptedBy', None)
+        state.pop('unitPlanAcceptedHash', None)
+        state.pop('unitPlanAcceptedBy', None)
+        state['requirementsDraftGenerated'] = False
+        state['unitPlanDraftGenerated'] = False
+        (self.approvals_dir / 'unit-plan.md').unlink(missing_ok=True)
+
+        run_requirements_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)
+        validate_required_artifacts(
+            self.artifacts_dir / 'requirements-draft',
+            ['requirements-draft-summary.json', 'requirements-body.md'],
+        )
+        validate_required_artifacts(self.approvals_dir, ['requirements-and-acceptance.md'])
+
+        state.pop('requirementsRevisionFeedback', None)
+        state['requirementsDraftGenerated'] = True
+        state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+
+    def _route_final_acceptance_rejection_to_unit_plan(
+        self,
+        state: dict[str, Any],
+        rejection_feedback: str,
+    ) -> None:
+        state['unitPlanRevisionFeedback'] = rejection_feedback
+        state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
+        state['unitPlanAccepted'] = False
+        state.pop('unitPlanAcceptedHash', None)
+        state.pop('unitPlanAcceptedBy', None)
+        state['unitPlanDraftGenerated'] = False
+
+        run_unit_plan_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)
+        validate_required_artifacts(
+            self.artifacts_dir / 'unit-plan-draft',
+            ['unit-plan-draft-summary.json', 'unit-plan-body.md'],
+        )
+        validate_required_artifacts(self.approvals_dir, ['unit-plan.md'])
+
+        state.pop('unitPlanRevisionFeedback', None)
+        state['unitPlanDraftGenerated'] = True
+        state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
 
     def _mark_current_unit_incomplete(self, state: dict[str, Any]) -> None:
         current_unit_id = state.get('currentUnitId')
@@ -976,7 +1062,12 @@ class RalphRefinerController:
                 return True
             if choice in {'r', 'reject', 'rework'} and gate_info.get('can_rework'):
                 self.reject_final_acceptance_gate()
-                output_func('[返工] 最终验收未通过，已回到 Builder。')
+                route = self.store.load_state().get('finalAcceptanceRejectionRoute')
+                message = FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES.get(
+                    str(route),
+                    '最终验收未通过，已按人工路由处理。',
+                )
+                output_func(f'[返工] {message}')
                 return True
             if choice in {'p', 'path'}:
                 output_func(f"  文件：{gate_info['path']}")
@@ -989,6 +1080,26 @@ class RalphRefinerController:
 
 def _gate_reason_label(reason: str) -> str:
     return GATE_REASON_LABELS.get(reason, reason)
+
+
+def _final_acceptance_rejection_route(content: str) -> str:
+    body = gate_body(content)
+    selected: set[str] = set()
+    for route, label in FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS.items():
+        pattern = rf'^\s*[-*]\s*\[[xX]\]\s*{re.escape(label)}\s*:'
+        if re.search(pattern, body, flags=re.MULTILINE):
+            selected.add(route)
+
+    if not selected:
+        raise ValueError(
+            'Final acceptance rejection routing must select one option in the '
+            'Rejection Routing checklist before rejecting final acceptance.'
+        )
+
+    for route in FINAL_ACCEPTANCE_REJECTION_ROUTE_PRIORITY:
+        if route in selected:
+            return route
+    raise ValueError('Final acceptance rejection routing selected an unknown option.')
 
 
 def _verification_progress_printer(

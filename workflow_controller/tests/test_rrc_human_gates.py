@@ -877,6 +877,11 @@ def test_final_acceptance_gate_summarizes_execution_evidence(tmp_path: Path) -> 
     assert '`pytest tests/test_delivery.py -q` -> passed' in content
     assert '`src/delivery.py`' in content
     assert 'Review: passed' in content
+    assert '## Rejection Routing' in content
+    assert '- [ ] Requirements revision:' in content
+    assert '- [ ] Unit plan revision:' in content
+    assert '- [ ] Implementation rework:' in content
+    assert '- [ ] Blocked:' in content
 
 
 def test_tmux_claude_generates_unit_plan_gate_body_after_requirements_approval(tmp_path: Path) -> None:

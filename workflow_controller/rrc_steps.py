@@ -383,8 +383,9 @@ def _render_builder_execution_prompt(
         if state.get('currentUnitId') in (item.get('units') or [])
     ]
     final_rejection_feedback = state.get('finalAcceptanceRejectionFeedback')
+    final_rejection_route = state.get('finalAcceptanceRejectionRoute')
     final_rejection_section = ''
-    if final_rejection_feedback:
+    if final_rejection_feedback and final_rejection_route in {None, 'implementation'}:
         final_rejection_section = f"""
 Final acceptance rejection feedback from the previous attempt:
 

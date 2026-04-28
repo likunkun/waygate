@@ -1203,7 +1203,13 @@ def test_drive_can_reject_final_acceptance_and_return_to_builder(tmp_path: Path)
     gate_path = state_dir / 'approvals' / 'final-acceptance.md'
     gate_path.parent.mkdir(parents=True, exist_ok=True)
     gate_path.write_text(
-        '# Final Acceptance Confirmation\n\nReviewer note: import preview is missing retry state.\n',
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [x] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
+        'Reviewer note: import preview is missing retry state.\n',
         encoding='utf-8',
     )
 
@@ -1222,11 +1228,221 @@ def test_drive_can_reject_final_acceptance_and_return_to_builder(tmp_path: Path)
     assert '[返工] 最终验收未通过，已回到 Builder。' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state['finalAcceptanceRejectionRoute'] == 'implementation'
     assert state['finalAcceptanceAccepted'] is False
     assert state['finalAcceptanceRejectionCount'] == 1
     assert 'import preview is missing retry state' in state['finalAcceptanceRejectionFeedback']
     assert state['units'][0]['passes'] is False
     assert state['objectiveCoverage'][0]['status'] == 'partial'
+
+
+def test_reject_final_acceptance_routes_to_requirements_when_selected_with_other_reasons(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'unitPlanDraftGenerated': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    (approvals_dir / 'unit-plan.md').write_text('# Unit Plan\n', encoding='utf-8')
+    gate_path = approvals_dir / 'final-acceptance.md'
+    gate_path.write_text(
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        '- [x] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [x] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
+        'Reviewer note: add missing acceptance around offline import recovery.\n',
+        encoding='utf-8',
+    )
+
+    controller.reject_final_acceptance_gate()
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['finalAcceptanceRejectionRoute'] == 'requirements'
+    assert state['requirementsAccepted'] is False
+    assert state['unitPlanAccepted'] is False
+    assert state['requirementsDraftGenerated'] is True
+    assert state['unitPlanDraftGenerated'] is False
+    assert not (approvals_dir / 'unit-plan.md').exists()
+    assert state['units'][0]['passes'] is False
+    assert state['objectiveCoverage'][0]['status'] == 'partial'
+
+
+def test_reject_final_acceptance_requires_human_routing_checkbox(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'final-acceptance.md'
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n',
+        encoding='utf-8',
+    )
+
+    try:
+        controller.reject_final_acceptance_gate()
+    except ValueError as exc:
+        assert 'Final acceptance rejection routing must select one option' in str(exc)
+    else:
+        raise AssertionError('expected rejection without routing to fail')
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_FINAL_ACCEPTANCE'
+    assert state['units'][0]['passes'] is True
+
+
+def test_reject_final_acceptance_routes_to_unit_plan_revision(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'unitPlanDraftGenerated': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    gate_path = approvals_dir / 'final-acceptance.md'
+    gate_path.write_text(
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [x] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
+        'Reviewer note: final acceptance shows verification commands need broader coverage.\n',
+        encoding='utf-8',
+    )
+
+    controller.reject_final_acceptance_gate()
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['finalAcceptanceRejectionRoute'] == 'unit_plan'
+    assert state['requirementsAccepted'] is True
+    assert state['unitPlanAccepted'] is False
+    assert state['unitPlanDraftGenerated'] is True
+    assert state['units'][0]['passes'] is False
+
+
+def test_reject_final_acceptance_can_block_for_environment_or_evidence_issue(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'final-acceptance.md'
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [x] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
+        'Reviewer note: missing customer account credentials for UAT.\n',
+        encoding='utf-8',
+    )
+
+    controller.reject_final_acceptance_gate()
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['status'] == 'blocked'
+    assert state['currentStep'] == 'WAITING_FINAL_ACCEPTANCE'
+    assert state['finalAcceptanceRejectionRoute'] == 'blocked'
+    assert 'Final acceptance rejected as blocked' in state['blockedReason']
+    assert state['units'][0]['passes'] is True
 
 
 def test_start_initializes_and_drives_workflow_in_one_command(tmp_path: Path) -> None:

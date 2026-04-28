@@ -229,6 +229,8 @@ def ensure_final_acceptance_gate(
     if force or not path.exists():
         body = _final_acceptance_body(state, artifacts_dir)
         write_gate_file(path, body)
+    elif '## Rejection Routing' not in gate_body(path.read_text(encoding='utf-8')):
+        write_gate_file(path, _with_final_acceptance_rejection_routing(gate_body(path.read_text(encoding='utf-8'))))
     return path
 
 
@@ -464,6 +466,25 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
         '- [ ] Known issues are accepted or documented.',
         '- [ ] Evidence files are sufficient for final acceptance.',
     ])
+    return _with_final_acceptance_rejection_routing('\n'.join(lines) + '\n')
+
+
+def _with_final_acceptance_rejection_routing(body: str) -> str:
+    if '## Rejection Routing' in body:
+        return body.rstrip() + '\n'
+    lines = [
+        body.rstrip(),
+        '',
+        '## Rejection Routing',
+        'If final acceptance is rejected, select the human routing decision below. Multiple selections are allowed; requirements revision has highest priority.',
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.',
+        '- [ ] Unit plan revision: unit scope or verification commands are wrong.',
+        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.',
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.',
+        '',
+        '## Rejection Notes',
+        'Describe the acceptance gap, missing evidence, or required scope change before choosing reject/rework.',
+    ]
     return '\n'.join(lines) + '\n'
 
 
