@@ -71,17 +71,161 @@
     - `currentUnitId=v2-2-u5-baidu-search`
     - `lastVerifiedStep=PLAN_CREATED`
 
+### 阶段 13：Final Acceptance Defect Fix 流程
+- **状态：** complete
+- 背景：
+  - 最终验收可能发现历史已完成单元的缺陷，例如 i18n、logo、主页、工作台没有真正改到位。
+  - 当前 Builder 只允许执行当前 unit，不能越界修历史 covered unit。
+  - 走需求变更太重，因为原需求可能是对的，只是实现没满足。
+- 已完成：
+  - 新增最终验收拒绝路由 `defect_fix`。
+  - 最终验收 gate 的 Rejection Routing 增加 `Defect fix` 选项。
+  - 终端路由菜单增加 `1  验收缺陷修复 -> Defect Fix`。
+  - `defect_fix` 会保持 requirements accepted，不走 requirements draft。
+  - `defect_fix` 会进入 Unit Plan revision，并设置 `unitPlanRevisionMode=defect_fix`。
+  - Unit Plan drafter prompt 增加 `Final Acceptance Defect-Fix Mode`，要求生成 bug-fix units、不改变已批准需求、不重新解释目标。
+  - Controller State Patch 支持已 covered objective 通过新增 bug-fix unit reopen 为 `partial`。
+  - Builder prompt 对 defect-fix unit 携带最终验收缺陷清单，避免 Builder 缺少原始验收上下文。
+  - 已同步 `rrc_controller.py`、`rrc_human_gates.py`、`rrc_steps.py` 和相关测试到实际运行目录。
+- 已验证：
+  - 新增用例：final acceptance `Defect fix` route 进入 Unit Plan revision。
+  - 新增用例：Unit Plan defect-fix prompt 要求 bug-fix units 且不改需求。
+  - 新增用例：Builder prompt 包含最终验收缺陷清单。
+  - 新增用例：covered objective 可通过 defect-fix unit reopen 为 partial。
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `73 passed in 17.44s`
+  - `python -m pytest workflow_controller/tests -q` -> `110 passed in 38.52s`
+  - 实际运行目录新增关键用例 -> `4 passed in 1.27s`
+
+### 阶段 14：Unit Plan 测试用例矩阵与测试策略预检
+- **状态：** complete
+- 背景：
+  - 当前 controller 只能验证命令是否通过，不能判断测试用例是否覆盖验收标准。
+  - 用户指出测试用例方面非常欠缺，尤其会出现“验证全绿但人工验收发现大量核心场景没测”的问题。
+- 已完成：
+  - Unit Plan drafter prompt 增加 `Use the test-strategy skill...`。
+  - Unit Plan required structure 增加 `## Test Case Matrix`。
+  - Test Case Matrix 明确映射：`Acceptance Criterion -> Test Case -> Layer -> Command/Evidence -> Expected Result`。
+  - Controller State Patch unit 增加 `test_cases` 示例字段。
+  - Unit Plan local template 会渲染 test case matrix 和每个 unit 的 test cases。
+  - Unit Plan approval 新增 `validate_unit_plan_test_case_coverage()`。
+  - 只有 `tsc`/lint/typecheck 等静态检查、且没有 `test_cases` 或 Test Case Matrix evidence 的 unit 会被拒绝。
+  - Builder prompt 要求先补 mapped test cases；defect-fix unit 要补回归测试或人工证据。
+  - `rrc_models.py` 增加 `UNIT_PLANNER` role hint：`test-strategy + writing-plans`。
+  - 已同步 `rrc_controller.py`、`rrc_human_gates.py`、`rrc_steps.py`、`rrc_models.py` 和相关测试到实际运行目录。
+- 已验证：
+  - 新增用例：Unit Plan prompt 要求 `test-strategy` 和 Test Case Matrix。
+  - 新增用例：只有静态检查的 Unit Plan 被 approval 阻断。
+  - 新增用例：有明确 Test Case Matrix/manual evidence 的计划可通过。
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `76 passed in 17.64s`
+  - `python -m pytest workflow_controller/tests -q` -> `113 passed in 38.17s`
+  - 实际运行目录新增关键用例 -> `3 passed in 1.20s`
+
 ### 当前未提交变更
 - **状态：** pending
 - `workflow_controller/rrc_controller.py`
 - `workflow_controller/rrc_human_gates.py`
+- `workflow_controller/rrc_models.py`
 - `workflow_controller/rrc_steps.py`
-- `workflow_controller/rrc_validators.py`
 - `workflow_controller/tests/test_rrc_controller.py`
 - `workflow_controller/tests/test_rrc_human_gates.py`
 - `task_plan.md`
 - `findings.md`
 - `progress.md`
+
+### 阶段 17：旧 Final Acceptance Gate 路由迁移修复
+- **状态：** complete
+- 背景：
+  - 用户在 Plannotator 最终验收反馈后选择 `1  验收缺陷修复 -> Defect Fix`。
+  - controller 已回显 `[验收路由] 已选择：Defect fix`，但随后报错：`Final acceptance rejection routing must select one option...`。
+- 根因：
+  - 现场 `approvals/final-acceptance.md` 是旧格式，`Rejection Routing` 中没有 `Defect fix` 行。
+  - 旧 `_write_final_acceptance_rejection_route()` 只会勾选已存在的 checklist 行，缺失 route 时不会补齐，也不会校验写入是否成功。
+  - 终端选择 route 会重写 gate，mtime 晚于 Plannotator summary；如果继续按 stale 处理，会丢失本轮浏览器批注。
+- 已完成：
+  - `ensure_final_acceptance_gate()` 会规范化旧 Rejection Routing checklist，自动补齐 `Defect fix`。
+  - 终端 route 写入改为重写 canonical checklist，并设置唯一选中项。
+  - `reject_final_acceptance_gate()` 从 gate 文件读取路由，返工 prompt 仍使用 gate + Plannotator feedback 的完整组合内容。
+  - final acceptance route 写入导致 gate mtime 变新时，仍读取本轮 Plannotator feedback。
+  - 已同步 `rrc_controller.py`、`rrc_human_gates.py` 和 `tests/test_rrc_controller.py` 到实际运行目录。
+- 已验证：
+  - 新增红绿用例：旧 final acceptance gate 缺少 `Defect fix` 行时，选择 `1` 后进入 defect-fix，并保留 Plannotator 反馈。
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `77 passed in 17.46s`
+  - `python -m pytest workflow_controller/tests -q` -> `114 passed in 38.31s`
+  - 实际运行目录关键用例 -> `2 passed in 1.25s`
+
+### 阶段 18：Defect Fix Unit Plan Prompt 显性化回滚
+- **状态：** complete
+- 背景：
+  - 用户指出：既然实际 prompt 已经包含 Plannotator 反馈，就不需要额外改 prompt 结构。
+- 已完成：
+  - 回滚 defect-fix 模式下的专用 `Final Acceptance Defects From Plannotator/Human Review` 区块。
+  - 保留原本已存在的数据流：`unitPlanRevisionFeedback` 仍进入 `Existing Unit Plan draft with human notes and requested changes` 区块。
+  - 删除对应的显性化测试断言。
+  - 保留旧 gate 缺 `Defect fix` 行的路由迁移修复。
+
+### 阶段 19：非 Ralph 新目标初始化修复
+- **状态：** complete
+- 背景：
+  - 用户执行 `init --workspace-dir /home/lichangkun/works/ai-works/worktrees/union --target "V3.0"`，随后 `start --target "V3.0"` 报 existing session mismatch。
+  - 现场 `session.json` 为 demo state：`requestedOutcome=usable-system`、`currentUnitId=unit-01`。
+- 根因：
+  - `init_state()` 只有 `from_ralph=True` 时才使用 target/workspace 构建真实目标状态。
+  - `from_ralph=False` 时直接落到 `DEFAULT_INITIAL_STATE`，导致 `--target` 被静默忽略。
+- 已完成：
+  - 新增 `build_state_from_target_acceptance()`，无需 Ralph session 也能从 `workspace_dir + target` 构建 target acceptance state。
+  - `init_state()` 在非 Ralph 且传入 `--target` 时使用新路径，生成 `target-acceptance-prompt.md`。
+  - 初始化后进入 `REQUIREMENTS_DRAFT`，下一步为 `run_requirements_drafter`，避免 demo dry-run 直接完成。
+  - 保留不传 target 的默认 demo 初始化行为，兼容现有测试和演示用法。
+  - 已同步 `rrc_controller.py`、`rrc_real_runtime.py` 和 `tests/test_rrc_controller.py` 到实际运行目录。
+  - 已用真实 V3.0 state-dir 重新执行 `init --force`，当前 state 正确：
+    - `requestedOutcome=V3.0`
+    - `currentUnitId=target-v3-0`
+    - `currentStep=REQUIREMENTS_DRAFT`
+    - `nextAllowedActions=['run_requirements_drafter']`
+- 已验证：
+  - 新增红绿用例：`init --target V3.0 --workspace-dir ...` 不带 `--from-ralph` 时创建真实 target state。
+  - 相关初始化/start/Ralph 用例 -> `7 passed in 0.60s`
+  - 实际运行目录关键用例 -> `2 passed in 2.49s`
+  - `python -m pytest workflow_controller/tests -q` -> `115 passed in 40.82s`
+
+### 阶段 20：V0.1 Unit 1 配置、runner 与 env 隔离
+- **状态：** complete
+- 背景：
+  - 执行 approved unit `v0-1-u1-config-runner-isolation`。
+  - 上轮 controller verifier 在 `/bin/sh` 下执行 `source ...` 导致 approved verification commands 返回 127。
+- 已确认：
+  - 默认 `testStrategistEnabled=false` 已覆盖。
+  - `roleRunners.test_strategist` 默认 `subprocess + codex exec --dangerously-bypass-approvals-and-sandbox -`，并支持 role-specific override。
+  - `roleRunners.test_strategist.env` 只通过 role runner request 注入，不污染 builder 等非 Test Strategist runner。
+  - runner metadata 只记录 role、runner 和 env keys，不记录代理、token 或 secret value。
+  - verifier 已用 bash 执行 shell verification command，并有 `source ./activate` 回归用例覆盖。
+- 已验证：
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `19 passed in 10.94s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `15 passed in 6.44s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `50 passed in 3.92s`
+- Review note：
+  - 独立 review 提醒 Test Strategist production orchestration path 尚未接入 role 参数；该接入属于后续 controller orchestration unit，当前 unit 已完成 runner/config/env 隔离基础能力。
+
+### 阶段 21：V0.1 Unit 5 回归验收
+- **状态：** complete
+- 背景：
+  - 执行 approved unit `v0-1-u5-regression-acceptance`。
+  - 核心缺口是完整 E2E 用例 `TC-E2E01-enabled-full-unit-plan-strategy-flow` 尚未落到 `test_rrc_controller.py` 中。
+- 已完成：
+  - 新增 `test_e2e_test_strategist_unit_plan_flow`，覆盖默认关闭 baseline、启用 Test Strategist、首轮 Critical gap 自动返工、第二轮 Major/Minor 进入现有 Unit Plan gate、summary/gap/review artifacts、env key-only 记录、无 `WAITING_TEST_STRATEGY_APPROVAL`。
+  - 确认 disabled flow 不生成 `test-strategy.json` / `unit-plan-gap-report.json` / `unit-plan-review-package.json`。
+  - 确认 enabled flow 生成完整 strategist artifacts，且最终 `approvals/unit-plan.md` 不包含 unresolved Critical gap。
+  - 确认本单元没有新增浏览器 UI 或 browser-visible page，不需要浏览器验收。
+- 已验证：
+  - RED：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py::test_e2e_test_strategist_unit_plan_flow -q` -> `ERROR: not found`。
+  - GREEN：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py::test_e2e_test_strategist_unit_plan_flow -q` -> `1 passed in 0.22s`。
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `19 passed in 11.03s`。
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `66 passed in 4.40s`。
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `33 passed in 14.74s`。
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `15 passed in 6.52s`。
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `144 passed in 40.34s`。
+- Review note：
+  - simplify skill required three subagent reviews, but all three Agent calls returned API 503; local simplify pass found no cleanup worth changing.
 
 ## 会话：2026-04-28
 

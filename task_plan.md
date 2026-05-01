@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成 workflow-controller 可靠性增强、Plannotator 人工 gate 集成、Unit Plan 审批预检、历史单元 rollup 校验修复，以及 Unit Plan 确认后直接进入 Builder 的状态机修复。当前变更已同步到实际运行目录，尚未提交。
+已完成 workflow-controller 可靠性增强、Plannotator 人工 gate 集成、Unit Plan 审批预检、历史单元 rollup 校验修复、Unit Plan 确认后直接进入 Builder 的状态机修复、最终验收缺陷修复 `defect_fix` 流程、Unit Plan 测试用例矩阵/测试策略预检、旧 Final Acceptance gate 路由迁移修复，以及非 Ralph 新目标初始化修复。当前变更已同步到实际运行目录，尚未提交。
 
 ## 各阶段
 
@@ -126,6 +126,60 @@
 - [x] 已落盘的卡住状态可在 `get_status()` 中自动修复为 Builder-ready
 - [x] 用当前 V2.2 状态验证 `nextAction=run_builder`
 - [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- **状态：** complete
+
+### 阶段 15：Final Acceptance Defect Fix 流程
+- [x] 最终验收拒绝时新增 `defect_fix` 路由
+- [x] `defect_fix` 不走 requirements draft，直接进入 Unit Plan revision
+- [x] Unit Plan revision prompt 明确要求根据验收缺陷生成 bug-fix units，不改变原需求目标
+- [x] Controller State Patch 允许已 covered objective 被 bug-fix unit 重新打开为 `partial`
+- [x] Builder prompt 在执行 defect-fix unit 时携带最终验收缺陷清单
+- [x] 终端验收路由菜单加入“验收缺陷修复 -> Defect Fix”
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 全量测试通过
+- **状态：** complete
+
+### 阶段 16：Unit Plan 测试用例矩阵与测试策略预检
+- [x] Unit Plan drafter prompt 明确要求使用 `test-strategy` skill
+- [x] Unit Plan 必须生成 `## Test Case Matrix`
+- [x] Controller State Patch unit 支持 `test_cases`
+- [x] Unit Plan approval 拒绝只有 tsc/lint/typecheck 等静态检查、没有测试用例或人工证据的计划
+- [x] 静态检查可以作为补充，但不能单独证明行为验收
+- [x] Builder prompt 要求优先补齐 mapped test cases，defect-fix unit 要补回归测试或人工证据
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 全量测试通过
+- **状态：** complete
+
+### 阶段 17：旧 Final Acceptance Gate 路由迁移修复
+- [x] 复现旧 `final-acceptance.md` 缺少 `Defect fix` 行时，终端选择 `1` 后仍无法返工的问题
+- [x] `ensure_final_acceptance_gate()` 自动规范化旧 Rejection Routing checklist，补齐 `Defect fix`
+- [x] 终端路由写入改为重写 canonical checklist，并校准唯一选中项
+- [x] `reject_final_acceptance_gate()` 从 gate 文件读取路由，Plannotator 反馈只作为返工 prompt 内容
+- [x] final acceptance 路由写入导致 gate mtime 变新时，仍保留本轮 Plannotator 反馈
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 全量测试通过
+- **状态：** complete
+
+### 阶段 18：非 Ralph 新目标初始化修复
+- [x] 复现 `init --target V3.0 --workspace-dir ...` 不带 `--from-ralph` 时落到 demo `usable-system/unit-01` 的问题
+- [x] 新增 target acceptance 初始化路径，不依赖 `.plan-ralph/session.json`
+- [x] 写入 `requestedOutcome=V3.0`、`currentUnitId=target-v3-0`、`workspacePath`、runner 和 tmux target
+- [x] 生成 `target-acceptance-prompt.md`，并进入 `REQUIREMENTS_DRAFT -> run_requirements_drafter`
+- [x] 保留无 target 的默认 demo 初始化兼容行为
+- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 用真实 V3.0 state-dir 验证 init 输出正确
+- [x] 全量测试通过
+- **状态：** complete
+
+### 阶段 19：V0.1 Test Strategist 接入与回归验收
+- [x] 完成 Unit 1：配置、默认关闭与 role runner/env 隔离
+- [x] 完成 Unit 2：Test Strategist prompt、schema 与 artifacts
+- [x] 完成 Unit 3：Controller 编排、Critical 自动返工与 fallback 阻断
+- [x] 完成 Unit 4：Review Package 合并与现有 Unit Plan gate 校验
+- [x] 完成 Unit 5：全链路回归、默认兼容与审计验收
+- [x] 新增并通过 `TC-E2E01-enabled-full-unit-plan-strategy-flow`
+- [x] 全量 `workflow_controller/tests` 通过：`144 passed in 40.34s`
+- [x] 确认未新增浏览器 UI 或页面
 - **状态：** complete
 
 ## 关键问题
