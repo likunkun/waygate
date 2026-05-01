@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import shutil
+import socket
 import subprocess
 import time
 from dataclasses import dataclass
@@ -98,7 +99,12 @@ def run_plannotator_gate_review(
                 process_id=process.pid,
             )
 
-        if _has_review_link(stdout) or _has_review_link(stderr):
+        server_ready = (
+            _has_review_link(stdout)
+            or _has_review_link(stderr)
+            or (port is not None and _is_local_port_ready(port))
+        )
+        if server_ready:
             _write_summary(
                 summary_path=summary_path,
                 gate=gate,
@@ -155,6 +161,14 @@ def run_plannotator_gate_review(
 
 def _has_review_link(output: str) -> bool:
     return 'share.plannotator.ai/#' in output or 'Open this link on your local machine to annotate' in output
+
+
+def _is_local_port_ready(port: int) -> bool:
+    try:
+        with socket.create_connection(('localhost', port), timeout=0.5):
+            return True
+    except OSError:
+        return False
 
 
 def _read_text(path: Path) -> str:

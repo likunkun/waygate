@@ -24,6 +24,7 @@ class AgentRunResult:
     status: str = 'done'
     run_dir: str | None = None
     done_payload: dict[str, Any] | None = None
+    runner_metadata: dict[str, Any] | None = None
 
 
 class VerificationEnvironmentError(RuntimeError):
@@ -87,6 +88,7 @@ def build_state_from_ralph(
         'feasibleOutcome': target or 'complete current Ralph step',
         'scopeApproved': False,
         'autoApprove': False,
+        'testStrategistEnabled': False,
         'currentUnitNeedsUiDesign': False,
         'workspacePath': str(workspace_dir),
         'executionWorkspacePath': str(execution_workspace),
@@ -102,6 +104,50 @@ def build_state_from_ralph(
         'targetContextFiles': [str(path) for path in target_context_files],
         'objectiveCoverage': objective_coverage,
         'units': units,
+        'nextAllowedActions': ['require_scope_approval'],
+        'blockedReason': None,
+        'updatedAt': _now_iso(),
+    }
+
+
+def build_state_from_target_acceptance(
+    workspace_dir: Path,
+    target: str,
+    agent_command: str = 'claude',
+    agent_runner: str = 'subprocess',
+    tmux_target: str | None = None,
+) -> dict[str, Any]:
+    execution_workspace = infer_execution_workspace(workspace_dir)
+    target_unit = build_target_acceptance_unit(target, workspace_dir)
+    target_context_files = find_target_context_files(workspace_dir, target=target)
+    return {
+        'task_id': target_unit['id'],
+        'currentUnitId': target_unit['id'],
+        'currentStep': 'PLAN_CREATED',
+        'lastVerifiedStep': 'PLAN_CREATED',
+        'status': 'active',
+        'requestedOutcome': target,
+        'feasibleOutcome': target,
+        'scopeApproved': False,
+        'autoApprove': False,
+        'testStrategistEnabled': False,
+        'currentUnitNeedsUiDesign': False,
+        'workspacePath': str(workspace_dir),
+        'executionWorkspacePath': str(execution_workspace),
+        'baselineChangedFiles': collect_git_changed_files(execution_workspace),
+        'agentCommand': agent_command,
+        'agentRunner': agent_runner,
+        'tmuxTarget': tmux_target,
+        'targetMatchedPlanStep': False,
+        'targetContextFiles': [str(path) for path in target_context_files],
+        'objectiveCoverage': [
+            {
+                'objective': target_unit.get('goal') or target_unit['id'],
+                'units': [target_unit['id']],
+                'status': 'partial',
+            },
+        ],
+        'units': [target_unit],
         'nextAllowedActions': ['require_scope_approval'],
         'blockedReason': None,
         'updatedAt': _now_iso(),
@@ -344,9 +390,10 @@ def run_agent_for_current_step(
     workspace_dir: Path,
     prompt_path: Path,
     artifact_dir: Path | None = None,
+    role: str | None = None,
 ) -> AgentRunResult:
     timeout = int(state.get('agentTimeoutSeconds') or 3600)
-    runner = make_runner(state)
+    runner = make_runner(state, role=role)
     result = run_agent_backend(
         RunnerRequest(
             backend=runner.backend,
@@ -356,6 +403,8 @@ def run_agent_for_current_step(
             unit_id=str(state.get('currentUnitId') or 'unit'),
             agent_command=runner.agent_command or str(state.get('agentCommand') or 'claude'),
             tmux_target=runner.tmux_target,
+            role=runner.role,
+            env=runner.env,
             timeout_seconds=timeout,
         )
     )
@@ -368,6 +417,7 @@ def run_agent_for_current_step(
         status=result.status,
         run_dir=str(result.run_dir),
         done_payload=result.done_payload,
+        runner_metadata=result.runner_metadata,
     )
 
 
@@ -476,6 +526,7 @@ def run_verification_commands(
                 command,
                 cwd=workspace_dir,
                 shell=True,
+                executable='/bin/bash',
                 text=True,
                 capture_output=True,
                 timeout=timeout_seconds,

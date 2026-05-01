@@ -7,8 +7,19 @@ import sys
 from pathlib import Path
 
 from workflow_controller.rrc_controller import RalphRefinerController
-from workflow_controller.rrc_human_gates import approve_gate_file, ensure_final_acceptance_gate, write_gate_file
-from workflow_controller.rrc_steps import _render_unit_plan_draft_prompt
+from workflow_controller.rrc_human_gates import (
+    approve_gate_file,
+    ensure_final_acceptance_gate,
+    extract_unit_plan_state_patch,
+    render_requirements_gate_body,
+    render_unit_plan_gate_body,
+    write_gate_file,
+)
+from workflow_controller.rrc_steps import (
+    _render_requirements_draft_prompt,
+    _render_unit_plan_draft_prompt,
+    prepare_builder_prompt,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,9 +90,146 @@ def test_unit_plan_prompt_allows_covered_legacy_units_outside_executable_units(t
         tmp_path / 'unit-plan-body.md',
     )
 
-    assert 'Completed existing unit ids may remain outside `units` when they are marked `covered` elsewhere in objectiveCoverage' in prompt
-    assert 'Every unfinished `partial` objectiveCoverage unit id must exist in `units`' in prompt
+    assert '已完成的既有 unit id 如果在 objectiveCoverage 中标记为 `covered`' in prompt
+    assert '每个未完成的 `partial` objectiveCoverage unit id 都必须存在于 `units`' in prompt
     assert 'every objectiveCoverage unit id must exist in units' not in prompt
+
+
+def test_unit_plan_prompt_defect_fix_mode_requires_bug_fix_units_without_requirement_changes(tmp_path: Path) -> None:
+    requirements_path = tmp_path / 'requirements.md'
+    requirements_path.write_text('# Requirements\n- Approved requirements remain valid.\n', encoding='utf-8')
+
+    prompt = _render_unit_plan_draft_prompt(
+        {
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'currentUnitId': 'v2-2-u5-baidu-search',
+            'unitPlanRevisionMode': 'defect_fix',
+            'finalAcceptanceRejectionRoute': 'defect_fix',
+            'unitPlanRevisionFeedback': 'Final acceptance defects: homepage logo is still text-only; workbench i18n is incomplete.',
+            'objectiveCoverage': [
+                {'objective': 'i18n coverage', 'units': ['v2-2-u1-i18n-fix'], 'status': 'covered'},
+                {'objective': 'logo coverage', 'units': ['v2-2-u2-logo-real'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'v2-2-u1-i18n-fix', 'name': 'i18n', 'passes': True},
+                {'id': 'v2-2-u2-logo-real', 'name': 'logo', 'passes': True},
+            ],
+        },
+        requirements_path,
+        tmp_path / 'unit-plan-body.md',
+    )
+
+    assert '最终验收缺陷修复模式' in prompt
+    assert '生成一个或多个只聚焦最终验收缺陷的 bug-fix 单元' in prompt
+    assert '不要修改已批准需求，也不要重新解释请求目标' in prompt
+    assert '将受影响的已覆盖目标重新打开为 `partial`' in prompt
+    assert 'Final acceptance defects: homepage logo is still text-only' in prompt
+
+
+def test_unit_plan_prompt_requires_test_strategy_skill_and_test_case_matrix(tmp_path: Path) -> None:
+    requirements_path = tmp_path / 'requirements.md'
+    requirements_path.write_text(
+        '# Requirements\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- User can see the real logo on the homepage.\n',
+        encoding='utf-8',
+    )
+
+    prompt = _render_unit_plan_draft_prompt(
+        {
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'currentUnitId': 'v2-2-u2-logo-real',
+            'objectiveCoverage': [
+                {'objective': 'logo coverage', 'units': ['v2-2-u2-logo-real'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'v2-2-u2-logo-real', 'name': 'logo', 'passes': False},
+            ],
+        },
+        requirements_path,
+        tmp_path / 'unit-plan-body.md',
+    )
+
+    assert '使用 `test-strategy` skill' in prompt
+    assert '## 测试用例矩阵（Test Case Matrix）' in prompt
+    assert 'Acceptance Criterion -> Test Case -> Layer -> Command/Evidence -> Expected Result' in prompt
+    assert '"test_cases"' in prompt
+
+
+def test_requirements_and_unit_plan_prompts_require_simplified_chinese(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': '2.5',
+        'feasibleOutcome': '2.5',
+        'currentUnitId': 'target-2-5',
+        'objectiveCoverage': [
+            {'objective': '完成 2.5 验收', 'units': ['target-2-5'], 'status': 'partial'},
+        ],
+        'units': [
+            {
+                'id': 'target-2-5',
+                'name': '2.5 验收',
+                'passes': False,
+                'verification_commands': ['pnpm exec tsc --noEmit'],
+            },
+        ],
+    }
+    requirements_path = tmp_path / 'requirements.md'
+    requirements_path.write_text('# 需求与验收确认\n\n## 4. 测试策略（Test Strategy）\n- unit tests\n', encoding='utf-8')
+
+    requirements_prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+    unit_plan_prompt = _render_unit_plan_draft_prompt(state, requirements_path, tmp_path / 'unit-plan-body.md')
+
+    assert '使用简体中文' in requirements_prompt
+    assert '# 需求与验收确认' in requirements_prompt
+    assert '## 4. 测试策略（Test Strategy）' in requirements_prompt
+    assert '## 6. 产品设计概要' in requirements_prompt
+    assert '## 7. 架构概要' in requirements_prompt
+    assert '## 8. 人工审阅清单' in requirements_prompt
+    assert '使用简体中文' in unit_plan_prompt
+    assert '# 单元计划确认（Unit Plan Confirmation）' in unit_plan_prompt
+    assert '## 测试用例矩阵（Test Case Matrix）' in unit_plan_prompt
+
+
+def test_controller_generated_gate_bodies_are_chinese_first(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': '2.5',
+        'feasibleOutcome': '2.5',
+        'currentUnitId': 'target-2-5',
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'status': 'active',
+        'objectiveCoverage': [
+            {'objective': '完成 2.5 验收', 'units': ['target-2-5'], 'status': 'covered'},
+        ],
+        'units': [
+            {
+                'id': 'target-2-5',
+                'name': '2.5 验收',
+                'passes': True,
+                'done_when': ['验收证据完整'],
+                'verification_commands': ['pnpm exec tsc --noEmit'],
+            },
+        ],
+    }
+
+    requirements_body = render_requirements_gate_body(state)
+    unit_plan_body = render_unit_plan_gate_body(state)
+    final_path = ensure_final_acceptance_gate(state, tmp_path / 'approvals', tmp_path / 'artifacts')
+    final_body = final_path.read_text(encoding='utf-8')
+
+    assert '# 需求与验收确认' in requirements_body
+    assert '## 4. 测试策略（Test Strategy）' in requirements_body
+    assert '## 6. 产品设计概要' in requirements_body
+    assert '## 7. 架构概要' in requirements_body
+    assert '## 8. 人工审阅清单' in requirements_body
+    assert '# 单元计划确认（Unit Plan Confirmation）' in unit_plan_body
+    assert '## 目标覆盖矩阵' in unit_plan_body
+    assert '## Controller State Patch' in unit_plan_body
+    assert '# 最终验收确认' in final_body
+    assert '## 证据摘要' in final_body
+    assert '## 返工路由（Rejection Routing）' in final_body
+    assert '需求变更:' in final_body
 
 
 def _generate_requirements_gate(state_dir: Path) -> None:
@@ -238,7 +386,9 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 3. Acceptance Criteria\\n- Delivery evidence is verified.\\n\\n"
             "## 4. Test Strategy\\n- Run the declared verification command.\\n\\n"
             "## 5. Out of Scope\\n- Future units.\\n\\n"
-            "## 6. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
+            "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
+            "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
@@ -323,7 +473,9 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 3. Acceptance Criteria\\n- Delivery evidence is verified.\\n\\n"
             "## 4. Test Strategy\\n- Run the declared verification command.\\n\\n"
             "## 5. Out of Scope\\n- Future units.\\n\\n"
-            "## 6. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
+            "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
+            "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
@@ -487,7 +639,9 @@ if sys.argv[1:2] == ["paste-buffer"]:
                 "## 3. Acceptance Criteria\\n- Generated acceptance.\\n\\n"
                 "## 4. Test Strategy\\n- Generated tests.\\n\\n"
                 "## 5. Out of Scope\\n- Future units.\\n\\n"
-                "## 6. Human Review Checklist\\n- [ ] Requirements reviewed.\\n"
+                "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
+                "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+                "## 8. Human Review Checklist\\n- [ ] Requirements reviewed.\\n"
             )
         body_path.write_text(body, encoding="utf-8")
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
@@ -870,6 +1024,80 @@ def test_unit_plan_patch_rejects_partial_rollup_with_undeclared_unfinished_unit(
     assert 'target-v2-2' in state['blockedReason']
 
 
+def test_unit_plan_patch_can_reopen_covered_objective_with_defect_fix_unit(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'v2-2-u1-i18n-fix',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'i18n coverage', 'units': ['v2-2-u1-i18n-fix'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'v2-2-u1-i18n-fix', 'name': 'i18n', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "v2-2-fix-i18n-acceptance",
+  "objectiveCoverage": [
+    {
+      "objective": "i18n coverage",
+      "units": ["v2-2-u1-i18n-fix", "v2-2-fix-i18n-acceptance"],
+      "status": "partial"
+    }
+  ],
+  "units": [
+    {
+      "id": "v2-2-fix-i18n-acceptance",
+      "name": "Final acceptance i18n defect fix",
+      "passes": false,
+      "scope": ["Fix final acceptance i18n gaps"],
+      "verification_commands": ["pytest tests/test_i18n.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'PLAN_APPROVED'
+    assert state['unitPlanAccepted'] is True
+    assert [unit['id'] for unit in state['units']] == ['v2-2-fix-i18n-acceptance', 'v2-2-u1-i18n-fix']
+    assert state['units'][0]['passes'] is False
+    assert state['units'][1]['passes'] is True
+    assert state['objectiveCoverage'] == [
+        {
+            'objective': 'i18n coverage',
+            'units': ['v2-2-u1-i18n-fix', 'v2-2-fix-i18n-acceptance'],
+            'status': 'partial',
+        }
+    ]
+
+
 def test_unit_plan_approval_with_preapproved_scope_advances_to_builder_ready_state(tmp_path: Path) -> None:
     state_dir = tmp_path / '.rrc-controller'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -966,6 +1194,30 @@ def test_status_repairs_preapproved_plan_created_state_to_builder_ready_state(tm
 
     assert state['currentStep'] == 'PLAN_APPROVED'
     assert state['nextAction'] == 'run_builder'
+
+
+def test_unit_plan_state_patch_accepts_chinese_heading() -> None:
+    patch = extract_unit_plan_state_patch(
+        """# 单元计划确认
+
+## 控制器状态补丁
+
+```json
+{
+  "currentUnitId": "unit-a",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-a"], "status": "partial"}
+  ],
+  "units": [
+    {"id": "unit-a", "name": "Implementation", "passes": false}
+  ]
+}
+```
+"""
+    )
+
+    assert patch['currentUnitId'] == 'unit-a'
+    assert patch['units'][0]['id'] == 'unit-a'
 
 
 def test_unit_plan_approval_without_controller_state_patch_stays_waiting(tmp_path: Path) -> None:
@@ -1183,6 +1435,172 @@ def test_unit_plan_approval_rejects_playwright_command_without_database_env(tmp_
     assert 'DATABASE_URL' in state['blockedReason']
 
 
+def test_unit_plan_approval_rejects_static_only_verification_without_test_cases(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-static',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-static'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-static', 'name': 'Static-only delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# Requirements & Acceptance Confirmation
+
+## 3. Acceptance Criteria
+- User can complete delivery.
+
+## 4. Test Strategy
+- Unit tests cover delivery behavior.
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        unit_plan_path,
+        """# Unit Plan Confirmation
+
+## Units
+### unit-static - Static-only delivery
+- Verification commands:
+  - `pnpm exec tsc --noEmit`
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-static",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-static"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-static",
+      "name": "Static-only delivery",
+      "passes": false,
+      "verification_commands": ["pnpm exec tsc --noEmit"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'test case coverage' in state['blockedReason']
+    assert 'unit-static' in state['blockedReason']
+
+
+def test_unit_plan_approval_accepts_explicit_test_case_matrix_for_static_and_manual_evidence(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-logo',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Logo objective', 'units': ['unit-logo'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-logo', 'name': 'Logo delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# Requirements & Acceptance Confirmation
+
+## 3. Acceptance Criteria
+- Homepage shows the real logo image.
+
+## 4. Test Strategy
+- Manual visual acceptance covers homepage logo rendering.
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        unit_plan_path,
+        """# Unit Plan Confirmation
+
+## Test Case Matrix
+
+| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |
+|---|---|---|---|---|
+| Homepage shows the real logo image | logo-home-visible | manual visual | manual evidence: inspect homepage screenshot | logo is an image, not text |
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-logo",
+  "objectiveCoverage": [
+    {"objective": "Logo objective", "units": ["unit-logo"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-logo",
+      "name": "Logo delivery",
+      "passes": false,
+      "verification_commands": ["pnpm exec tsc --noEmit"],
+      "test_cases": [
+        {
+          "id": "logo-home-visible",
+          "acceptance_criterion": "Homepage shows the real logo image",
+          "layer": "manual visual",
+          "evidence": "Inspect homepage screenshot",
+          "expected": "logo is an image, not text"
+        }
+      ]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'PLAN_CREATED'
+    assert state['unitPlanAccepted'] is True
+
+
 def test_final_acceptance_gate_summarizes_execution_evidence(tmp_path: Path) -> None:
     state = {
         'task_id': 'delivery',
@@ -1223,16 +1641,69 @@ def test_final_acceptance_gate_summarizes_execution_evidence(tmp_path: Path) -> 
     gate_path = ensure_final_acceptance_gate(state, tmp_path / 'approvals', artifacts_dir, force=True)
 
     content = gate_path.read_text(encoding='utf-8')
-    assert '## Evidence Summary' in content
+    assert '## 证据摘要' in content
     assert 'Delivery implemented' in content
     assert '`pytest tests/test_delivery.py -q` -> passed' in content
     assert '`src/delivery.py`' in content
-    assert 'Review: passed' in content
-    assert '## Rejection Routing' in content
-    assert '- [ ] Requirements revision:' in content
-    assert '- [ ] Unit plan revision:' in content
-    assert '- [ ] Implementation rework:' in content
-    assert '- [ ] Blocked:' in content
+    assert '评审：passed' in content
+    assert '## 返工路由（Rejection Routing）' in content
+    assert '- [ ] 需求变更:' in content
+    assert '- [ ] 验收缺陷修复:' in content
+    assert '- [ ] Unit Plan 修订:' in content
+    assert '- [ ] 实现返工:' in content
+    assert '- [ ] 阻塞:' in content
+
+
+def test_builder_prompt_includes_final_acceptance_defect_list_for_defect_fix_units(tmp_path: Path) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    unit_dir = tmp_path / 'artifacts' / 'v2-2-fix-branding'
+    original_prompt_path = tmp_path / 'current-prompt.md'
+    original_prompt_path.write_text('Complete V2.2.', encoding='utf-8')
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    unit_plan_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(requirements_path, '# Requirements & Acceptance Confirmation\n\nApproved requirements remain valid.\n')
+    approve_gate_file(requirements_path, actor='tester')
+    write_gate_file(
+        unit_plan_path,
+        '# Unit Plan Confirmation\n\n'
+        '## Units\n'
+        '### v2-2-fix-branding - Acceptance defect fix\n'
+        '- Scope: fix final acceptance branding/i18n defects.\n',
+    )
+    approve_gate_file(unit_plan_path, actor='tester')
+    state = {
+        'task_id': 'delivery',
+        'workspacePath': str(tmp_path),
+        'promptPath': str(original_prompt_path),
+        'currentUnitId': 'v2-2-fix-branding',
+        'requestedOutcome': 'V2.2',
+        'humanGatesRequired': True,
+        'finalAcceptanceRejectionRoute': 'defect_fix',
+        'finalAcceptanceRejectionFeedback': 'Homepage logo is still text-only; workbench i18n is incomplete.',
+        'units': [
+            {
+                'id': 'v2-2-fix-branding',
+                'name': 'Acceptance defect fix',
+                'passes': False,
+                'scope': ['Fix final acceptance branding/i18n defects'],
+            }
+        ],
+        'objectiveCoverage': [
+            {
+                'objective': 'i18n and logo coverage',
+                'units': ['v2-2-fix-branding'],
+                'status': 'partial',
+            }
+        ],
+    }
+
+    prompt_path = prepare_builder_prompt(state, approvals_dir, unit_dir)
+
+    assert prompt_path is not None
+    prompt = prompt_path.read_text(encoding='utf-8')
+    assert 'Final acceptance defect-fix feedback from the previous attempt' in prompt
+    assert 'Homepage logo is still text-only' in prompt
+    assert 'approved defect-fix unit' in prompt
 
 
 def test_tmux_claude_generates_unit_plan_gate_body_after_requirements_approval(tmp_path: Path) -> None:
@@ -1401,8 +1872,8 @@ def test_gate_approval_becomes_stale_when_content_changes(tmp_path: Path) -> Non
     approve_gate_file(gate_path, actor='tester')
     gate_path.write_text(
         gate_path.read_text(encoding='utf-8').replace(
-            'Requirements are accurate.',
-            'Requirements have changed.',
+            '需求描述准确。',
+            '需求描述已变更。',
         ),
         encoding='utf-8',
     )

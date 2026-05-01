@@ -15,7 +15,9 @@ from typing import Any
 DEFAULT_TMUX_SUBMIT_DELAY_SECONDS = 0.5
 DEFAULT_TMUX_CLEAR_DELAY_SECONDS = 0.5
 DEFAULT_TMUX_IDLE_GRACE_SECONDS = 60.0
-DEFAULT_TMUX_IDLE_POLL_SECONDS = 0.0
+DEFAULT_TMUX_IDLE_POLL_SECONDS = 60.0
+DEFAULT_TMUX_IDLE_NUDGE_SECONDS = 120.0
+DEFAULT_TMUX_IDLE_MAX_NUDGES = 3
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,20 @@ class RunnerConfig:
     backend: str
     agent_command: str = ''
     tmux_target: str | None = None
+    role: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            'role': self.role,
+            'backend': self.backend,
+            'agent_command': self.agent_command,
+            'tmux_target': self.tmux_target,
+            'env_keys': sorted(self.env),
+        }
+
+
+DEFAULT_TEST_STRATEGIST_COMMAND = 'codex exec --dangerously-bypass-approvals-and-sandbox -'
 
 
 @dataclass(frozen=True)
@@ -34,6 +50,8 @@ class RunnerRequest:
     unit_id: str
     agent_command: str = ''
     tmux_target: str | None = None
+    role: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 3600
 
 
@@ -49,15 +67,56 @@ class RunnerResult:
     prompt_path: Path
     done_path: Path | None = None
     done_payload: dict[str, Any] = field(default_factory=dict)
+    runner_metadata: dict[str, Any] = field(default_factory=dict)
 
 
-def make_runner(state: dict[str, Any]) -> RunnerConfig:
+def make_runner(state: dict[str, Any], role: str | None = None) -> RunnerConfig:
+    role_config = _role_runner_config(state, role)
+    if role == 'test_strategist' and not role_config:
+        return RunnerConfig(
+            backend='subprocess',
+            agent_command=DEFAULT_TEST_STRATEGIST_COMMAND,
+            role=role,
+        )
+
+    if role_config:
+        default_command = DEFAULT_TEST_STRATEGIST_COMMAND if role == 'test_strategist' else ''
+        return RunnerConfig(
+            backend=str(role_config.get('runner') or role_config.get('backend') or 'subprocess'),
+            agent_command=str(role_config.get('command') or role_config.get('agentCommand') or default_command),
+            tmux_target=role_config.get('tmuxTarget') or role_config.get('tmuxPane'),
+            role=role,
+            env=_string_env(role_config.get('env')),
+        )
+
     backend = str(state.get('agentRunner') or state.get('runnerBackend') or 'subprocess')
     return RunnerConfig(
         backend=backend,
         agent_command=str(state.get('agentCommand') or ''),
         tmux_target=state.get('tmuxTarget') or state.get('tmuxPane'),
+        role=role,
     )
+
+
+def _role_runner_config(state: dict[str, Any], role: str | None) -> dict[str, Any]:
+    if not role:
+        return {}
+    role_runners = state.get('roleRunners')
+    if not isinstance(role_runners, dict):
+        return {}
+    config = role_runners.get(role)
+    return dict(config) if isinstance(config, dict) else {}
+
+
+def _string_env(raw_env: Any) -> dict[str, str]:
+    if not isinstance(raw_env, dict):
+        return {}
+    env: dict[str, str] = {}
+    for key, value in raw_env.items():
+        key_text = str(key).strip()
+        if key_text and value is not None:
+            env[key_text] = str(value)
+    return env
 
 
 def run_agent_backend(request: RunnerRequest) -> RunnerResult:
@@ -79,6 +138,7 @@ def _run_subprocess_agent(request: RunnerRequest) -> RunnerResult:
         capture_output=True,
         timeout=request.timeout_seconds,
         check=False,
+        env={**os.environ, **request.env} if request.env else None,
     )
     return RunnerResult(
         backend='subprocess',
@@ -89,13 +149,25 @@ def _run_subprocess_agent(request: RunnerRequest) -> RunnerResult:
         stderr=completed.stderr,
         run_dir=request.artifact_dir,
         prompt_path=request.prompt_path,
+        runner_metadata=_request_metadata(request),
     )
+
+
+def _request_metadata(request: RunnerRequest) -> dict[str, Any]:
+    return {
+        'role': request.role,
+        'backend': request.backend,
+        'agent_command': request.agent_command,
+        'tmux_target': request.tmux_target,
+        'env_keys': sorted(request.env),
+    }
 
 
 def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     if not request.tmux_target:
         raise ValueError('tmux-claude runner requires tmuxTarget or tmuxPane in state')
 
+    runner_metadata = _request_metadata(request)
     run_dir = _new_run_dir(request.artifact_dir, request.unit_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     run_id = run_dir.name
@@ -125,6 +197,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     tmux_command = _tmux_command(request.agent_command)
     env = {
         **os.environ,
+        **request.env,
         'RRC_RUN_DONE_FILE': str(done_path),
         'RRC_RUN_DIR': str(run_dir),
         'RRC_RUN_ID': run_id,
@@ -175,6 +248,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                 run_dir=run_dir,
                 prompt_path=runner_prompt_path,
                 done_path=done_path,
+                runner_metadata=runner_metadata,
             )
         if clear_commands and command == clear_commands[-1]:
             delay_seconds = _tmux_clear_delay_seconds()
@@ -194,6 +268,11 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     deadline = time.monotonic() + request.timeout_seconds
     next_idle_check = time.monotonic() + _tmux_idle_grace_seconds()
     idle_poll_seconds = _tmux_idle_poll_seconds()
+    nudge_seconds = _tmux_idle_nudge_seconds()
+    max_nudges = _tmux_idle_max_nudges()
+    nudge_count = 0
+    last_pane_content: str | None = None
+    last_pane_change_time = time.monotonic()
     while time.monotonic() < deadline:
         if done_path.exists():
             payload = _read_done_payload(done_path)
@@ -218,6 +297,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                     prompt_path=runner_prompt_path,
                     done_path=done_path,
                     done_payload=payload,
+                    runner_metadata=runner_metadata,
                 )
             actual_run_id = payload.get('run_id')
             if actual_run_id != run_id:
@@ -243,6 +323,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                     prompt_path=runner_prompt_path,
                     done_path=done_path,
                     done_payload=payload,
+                    runner_metadata=runner_metadata,
                 )
             status = str(payload.get('status') or 'done')
             _append_event(events_path, {'event': 'done_signal_seen', 'status': status})
@@ -257,6 +338,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                 prompt_path=runner_prompt_path,
                 done_path=done_path,
                 done_payload=payload,
+                runner_metadata=runner_metadata,
             )
         now = time.monotonic()
         if idle_poll_seconds > 0 and now >= next_idle_check:
@@ -288,7 +370,27 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                     run_dir=run_dir,
                     prompt_path=runner_prompt_path,
                     done_path=done_path,
+                    runner_metadata=runner_metadata,
                 )
+            if pane_tail != last_pane_content:
+                last_pane_content = pane_tail
+                last_pane_change_time = now
+            elif max_nudges > 0 and nudge_count < max_nudges and (now - last_pane_change_time) >= nudge_seconds:
+                _append_event(events_path, {
+                    'event': 'agent_nudge_sent',
+                    'nudge_count': nudge_count + 1,
+                    'seconds_since_change': now - last_pane_change_time,
+                })
+                subprocess.run(
+                    [*tmux_command, 'send-keys', '-t', request.tmux_target, '继续', 'C-m'],
+                    cwd=request.workspace_dir,
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                    env=env,
+                )
+                nudge_count += 1
+                last_pane_change_time = now
             next_idle_check = now + idle_poll_seconds
         time.sleep(0.2)
 
@@ -322,6 +424,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
         run_dir=run_dir,
         prompt_path=runner_prompt_path,
         done_path=done_path,
+        runner_metadata=runner_metadata,
     )
 
 
@@ -380,17 +483,14 @@ def _subprocess_agent_command(agent_command: str, prompt: str) -> list[str]:
         ]
     if 'codex' in executable:
         if len(parts) > 1 and parts[1] == 'exec':
-            return [
-                *parts,
-                '--dangerously-bypass-approvals-and-sandbox',
-                '-',
-            ]
-        return [
-            *parts,
-            'exec',
-            '--dangerously-bypass-approvals-and-sandbox',
-            '-',
-        ]
+            command = list(parts)
+        else:
+            command = [*parts, 'exec']
+        if '--dangerously-bypass-approvals-and-sandbox' not in command:
+            command.append('--dangerously-bypass-approvals-and-sandbox')
+        if '-' not in command[2:]:
+            command.append('-')
+        return command
     return [*parts, prompt]
 
 
@@ -422,6 +522,20 @@ def _tmux_idle_grace_seconds() -> float:
 
 def _tmux_idle_poll_seconds() -> float:
     return _env_float('RRC_TMUX_IDLE_POLL_SECONDS', DEFAULT_TMUX_IDLE_POLL_SECONDS)
+
+
+def _tmux_idle_nudge_seconds() -> float:
+    return _env_float('RRC_TMUX_IDLE_NUDGE_SECONDS', DEFAULT_TMUX_IDLE_NUDGE_SECONDS)
+
+
+def _tmux_idle_max_nudges() -> int:
+    raw = os.environ.get('RRC_TMUX_IDLE_MAX_NUDGES')
+    if raw is None:
+        return DEFAULT_TMUX_IDLE_MAX_NUDGES
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_TMUX_IDLE_MAX_NUDGES
 
 
 def _env_float(name: str, default: float) -> float:

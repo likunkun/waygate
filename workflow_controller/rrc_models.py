@@ -16,6 +16,12 @@ BUILDER = RoleConfig(
     skill_hint='ralph-driven-delivery + test-driven-development',
 )
 
+UNIT_PLANNER = RoleConfig(
+    role='unit_planner',
+    model_hint='strong-planning-model',
+    skill_hint='test-strategy + writing-plans',
+)
+
 REVIEWER = RoleConfig(
     role='reviewer',
     model_hint='medium-or-different-family-model',

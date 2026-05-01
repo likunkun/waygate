@@ -11,7 +11,26 @@ from typing import Any
 
 CONFIRMATION_HEADING = '## Human Confirmation'
 CONTROLLER_STATE_PATCH_HEADING = '## Controller State Patch'
+CONTROLLER_STATE_PATCH_HEADING_ALIASES = (
+    'Controller State Patch',
+    '控制器状态补丁',
+)
 ALLOWED_COVERAGE_STATUSES = {'partial', 'covered'}
+
+FINAL_ACCEPTANCE_REJECTION_ROUTES = (
+    ('requirements', '需求变更', '已批准需求不完整或存在错误。'),
+    ('defect_fix', '验收缺陷修复', '已批准需求正确，最终验收发现已完成工作存在缺陷。'),
+    ('unit_plan', 'Unit Plan 修订', '单元范围或验证命令不正确。'),
+    ('implementation', '实现返工', '已批准需求正确，但实现需要修改。'),
+    ('blocked', '阻塞', '由于环境、数据、权限或证据缺失，暂时无法判断。'),
+)
+FINAL_ACCEPTANCE_REJECTION_ROUTE_ALIASES = {
+    'requirements': ('需求变更', 'Requirements revision'),
+    'defect_fix': ('验收缺陷修复', 'Defect fix'),
+    'unit_plan': ('Unit Plan 修订', 'Unit plan revision'),
+    'implementation': ('实现返工', 'Implementation rework'),
+    'blocked': ('阻塞', 'Blocked'),
+}
 
 
 @dataclass(frozen=True)
@@ -51,7 +70,7 @@ def apply_unit_plan_state_patch_from_gate(state: dict[str, Any], gate_path: Path
 
 def migrate_unit_plan_gate_to_state_patch(state: dict[str, Any], gate_path: Path) -> bool:
     content = gate_path.read_text(encoding='utf-8')
-    if CONTROLLER_STATE_PATCH_HEADING in gate_body(content):
+    if _find_controller_state_patch_heading(gate_body(content)):
         return False
 
     backup_path = gate_path.with_suffix('.md.before-controller-state-patch')
@@ -100,6 +119,32 @@ def validate_unit_plan_test_strategy(
         )
 
 
+def validate_unit_plan_test_case_coverage(
+    unit_plan_path: Path,
+    state: dict[str, Any],
+) -> None:
+    if not unit_plan_path.exists():
+        return
+    content = gate_body(unit_plan_path.read_text(encoding='utf-8'))
+    gaps: list[str] = []
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict) or bool(unit.get('passes')):
+            continue
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        commands = [str(command) for command in unit.get('verification_commands') or []]
+        test_cases = _unit_test_cases(unit)
+        if test_cases:
+            continue
+        if _unit_plan_body_has_test_case_matrix_entry(content, unit_id):
+            continue
+        if commands and all(_is_static_verification_command(command) for command in commands):
+            gaps.append(
+                f'unit {unit_id} has only static verification commands; add test_cases or Test Case Matrix evidence'
+            )
+    if gaps:
+        raise ValueError('unit plan test case coverage is incomplete: ' + '; '.join(gaps))
+
+
 def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
     missing: list[str] = []
     state_env_keys = _verification_env_keys(state)
@@ -124,7 +169,7 @@ def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
 
 def extract_unit_plan_state_patch(content: str) -> dict[str, Any]:
     body = gate_body(content)
-    heading = re.search(r'(?im)^##+\s+Controller State Patch\s*$', body)
+    heading = _find_controller_state_patch_heading(body)
     if not heading:
         raise ValueError('Unit plan is missing ## Controller State Patch')
 
@@ -145,6 +190,11 @@ def extract_unit_plan_state_patch(content: str) -> dict[str, Any]:
     if not isinstance(patch, dict):
         raise ValueError('Controller State Patch must be a JSON object')
     return patch
+
+
+def _find_controller_state_patch_heading(body: str) -> re.Match[str] | None:
+    names = '|'.join(re.escape(name) for name in CONTROLLER_STATE_PATCH_HEADING_ALIASES)
+    return re.search(rf'(?im)^##+\s+(?:{names})\s*$', body)
 
 
 def apply_unit_plan_state_patch(state: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
@@ -248,8 +298,11 @@ def ensure_final_acceptance_gate(
     if force or not path.exists():
         body = _final_acceptance_body(state, artifacts_dir)
         write_gate_file(path, body)
-    elif '## Rejection Routing' not in gate_body(path.read_text(encoding='utf-8')):
-        write_gate_file(path, _with_final_acceptance_rejection_routing(gate_body(path.read_text(encoding='utf-8'))))
+    else:
+        body = gate_body(path.read_text(encoding='utf-8'))
+        normalized = normalize_final_acceptance_rejection_routing(body)
+        if normalized != body:
+            write_gate_file(path, normalized)
     return path
 
 
@@ -327,76 +380,123 @@ def _requirements_body(state: dict[str, Any]) -> str:
     unit = _current_unit(state)
     commands = unit.get('verification_commands') or state.get('verificationCommands') or []
     lines = [
-        '# Requirements & Acceptance Confirmation',
+        '# 需求与验收确认',
         '',
-        '## 1. Requirements',
-        f"- Requested outcome: `{state.get('requestedOutcome')}`",
-        f"- Feasible outcome: `{state.get('feasibleOutcome')}`",
-        f"- Current unit: `{state.get('currentUnitId')}`",
+        '## 1. 需求',
+        f"- 请求目标：`{state.get('requestedOutcome')}`",
+        f"- 可行目标：`{state.get('feasibleOutcome')}`",
+        f"- 当前单元：`{state.get('currentUnitId')}`",
         '',
-        '## 2. User Journeys',
-        '- Derived from current progress, findings, and Ralph plan context.',
-        '- Review this section manually and add missing normal, abnormal, role, permission, retry, and persistence paths before approval.',
+        '## 2. 用户旅程',
+        '- 根据当前进度、发现记录和 Ralph 计划上下文整理。',
+        '- 确认前请人工补齐正常、异常、角色、权限、重试和数据持久化路径。',
         '',
-        '## 3. Acceptance Criteria',
+        '## 3. 验收标准',
     ]
     done_when = unit.get('done_when') or []
     if done_when:
         lines.extend(f'- {item}' for item in done_when)
     else:
-        lines.append('- Target acceptance criteria from current context are satisfied.')
+        lines.append('- 当前上下文中的目标验收标准均已满足。')
     lines.extend([
         '',
-        '## 4. Test Strategy',
+        '## 4. 测试策略（Test Strategy）',
     ])
     if commands:
         lines.extend(f'- `{command}`' for command in commands)
     else:
-        lines.append('- Add at least one verification command or explicit manual evidence before approval.')
+        lines.append('- 确认前至少补充一个验证命令或明确的人工证据。')
     lines.extend([
         '',
-        '## 5. Out of Scope',
+        '## 5. 范围外',
     ])
     non_goals = unit.get('non_goals') or []
     if non_goals:
         lines.extend(f'- {item}' for item in non_goals)
     else:
-        lines.append('- Do not expand scope beyond the requested target without updating this gate.')
+        lines.append('- 未更新本确认门禁前，不扩展到请求目标之外。')
     lines.extend([
         '',
-        '## 6. Human Review Checklist',
-        '- [ ] Requirements are accurate.',
-        '- [ ] User journeys cover normal, abnormal, role, permission, retry, and persistence paths as applicable.',
-        '- [ ] Acceptance criteria are sufficient to judge completion.',
-        '- [ ] Test strategy is sufficient for the requested outcome.',
+        '## 6. 产品设计概要',
+        '- **主要用户流程**：补充用户完成核心功能的关键步骤，包括正常路径和主要异常路径。',
+        '- **关键页面/状态**：补充关键界面、关键系统状态，或无 UI 场景下的 API/CLI 输出示意。',
+        '- **验收示意**：补充“什么样算完成”的直观表现，方便快速评审。',
+        '',
+        '## 7. 架构概要',
+        '- **模块边界**：补充涉及的模块、组件及职责划分。',
+        '- **数据流**：补充核心输入、处理、输出路径。',
+        '- **外部依赖**：补充依赖的系统、服务、第三方 API 或运行环境。',
+        '- **主要风险**：补充兼容性、约束或技术风险。',
+        '',
+        '## 8. 人工审阅清单',
+        '- [ ] 需求描述准确。',
+        '- [ ] 用户旅程覆盖适用的正常、异常、角色、权限、重试和持久化路径。',
+        '- [ ] 验收标准足以判断是否完成。',
+        '- [ ] 测试策略足以验证请求目标。',
+        '- [ ] 产品设计概要足以帮助评审者形成具体产品形态认知。',
+        '- [ ] 架构概要足以帮助评审者理解模块边界、数据流和主要风险。',
     ])
     return '\n'.join(lines) + '\n'
 
 
 def _unit_plan_body(state: dict[str, Any]) -> str:
     lines = [
-        '# Unit Plan Confirmation',
+        '# 单元计划确认（Unit Plan Confirmation）',
         '',
-        '## Objective Coverage Matrix',
+        '## 目标覆盖矩阵',
     ]
     for item in state.get('objectiveCoverage', []):
         units = ', '.join(item.get('units', []))
         lines.append(f"- `{item.get('status')}` {item.get('objective')} -> {units}")
     lines.extend([
         '',
-        '## Units',
+        '## 测试用例矩阵（Test Case Matrix）',
+        '',
+        '| 验收标准 | 测试用例 | 层级 | 命令/证据 | 预期结果 |',
+        '|---|---|---|---|---|',
+    ])
+    for unit in state.get('units', []):
+        test_cases = _unit_test_cases(unit)
+        if not test_cases:
+            continue
+        for case in test_cases:
+            if not isinstance(case, dict):
+                continue
+            criterion = str(case.get('acceptance_criterion') or case.get('acceptanceCriterion') or '未指定')
+            case_id = str(case.get('id') or case.get('name') or '未指定')
+            layer = str(case.get('layer') or '未指定')
+            command_or_evidence = str(case.get('command') or case.get('evidence') or '未指定')
+            expected = str(case.get('expected') or case.get('expected_result') or case.get('expectedResult') or '未指定')
+            lines.append(f'| {criterion} | {case_id} | {layer} | {command_or_evidence} | {expected} |')
+    if lines[-1] == '|---|---|---|---|---|':
+        lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | 补充命令或人工证据 | 补充预期结果 |')
+    lines.extend([
+        '',
+        '## 执行单元',
     ])
     for unit in state.get('units', []):
         lines.extend([
             f"### {unit.get('id')} - {unit.get('name', unit.get('id'))}",
-            f"- Workflow validation level: `{unit.get('workflow_validation_level', 'fragment')}`",
-            '- Scope:',
+            f"- 工作流验证层级：`{unit.get('workflow_validation_level', 'fragment')}`",
+            '- 范围：',
         ])
         scope = unit.get('scope') or []
-        lines.extend(f'  - {item}' for item in scope) if scope else lines.append('  - Not specified')
+        lines.extend(f'  - {item}' for item in scope) if scope else lines.append('  - 未指定')
         commands = unit.get('verification_commands') or []
-        lines.append('- Verification commands:')
-        lines.extend(f'  - `{command}`' for command in commands) if commands else lines.append('  - Not specified')
+        lines.append('- 验证命令：')
+        lines.extend(f'  - `{command}`' for command in commands) if commands else lines.append('  - 未指定')
+        test_cases = _unit_test_cases(unit)
+        lines.append('- 测试用例：')
+        if test_cases:
+            for case in test_cases:
+                if isinstance(case, dict):
+                    case_id = case.get('id') or case.get('name') or 'unnamed'
+                    layer = case.get('layer') or 'unspecified'
+                    lines.append(f'  - `{case_id}` ({layer})')
+                else:
+                    lines.append(f'  - {case}')
+        else:
+            lines.append('  - 未指定')
         lines.append('')
     lines.extend([
         '',
@@ -406,11 +506,11 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         json.dumps(_controller_state_patch(state), ensure_ascii=False, indent=2),
         '```',
         '',
-        '## Human Review Checklist',
-        '- [ ] Every objective maps to one or more units.',
-        '- [ ] Every unit declares enough verification evidence.',
-        '- [ ] Fragment units do not claim full scenario completion.',
-        '- [ ] Closure units include functional/E2E closure evidence.',
+        '## 人工审阅清单',
+        '- [ ] 每个目标都映射到一个或多个单元。',
+        '- [ ] 每个单元都声明了足够的验证证据。',
+        '- [ ] fragment 单元没有声称完整场景闭环。',
+        '- [ ] closure 单元包含功能或 E2E 闭环证据。',
     ])
     return '\n'.join(lines).rstrip() + '\n'
 
@@ -423,38 +523,38 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
     verification = _load_json_file(unit_dir / 'verification.json')
     changed_files = _read_lines(unit_dir / 'changed-files.txt')
     lines = [
-        '# Final Acceptance Confirmation',
+        '# 最终验收确认',
         '',
-        '## Result',
-        f"- Current step: `{state.get('currentStep')}`",
-        f"- Status: `{state.get('status')}`",
-        f"- Current unit: `{unit_id}`",
+        '## 结果',
+        f"- 当前阶段：`{state.get('currentStep')}`",
+        f"- 状态：`{state.get('status')}`",
+        f"- 当前单元：`{unit_id}`",
         '',
-        '## Coverage',
+        '## 覆盖情况',
     ]
     for item in state.get('objectiveCoverage', []):
         units = ', '.join(item.get('units', []))
         lines.append(f"- `{item.get('status')}` {item.get('objective')} -> {units}")
     lines.extend([
         '',
-        '## Evidence Summary',
+        '## 证据摘要',
     ])
     builder_summary = (builder.get('done_payload') or {}).get('summary') or builder.get('runner_status')
     if builder_summary:
-        lines.append(f'- Builder: {builder_summary}')
+        lines.append(f'- 构建器：{builder_summary}')
     if changed_files:
-        lines.append('- Changed files:')
+        lines.append('- 变更文件：')
         lines.extend(f'  - `{path}`' for path in changed_files[:20])
     if review:
         review_status = 'passed' if review.get('passed') else 'failed'
-        lines.append(f'- Review: {review_status}')
+        lines.append(f'- 评审：{review_status}')
         issues = review.get('issues') or []
         if issues:
-            lines.append('- Review issues:')
+            lines.append('- 评审问题：')
             lines.extend(f"  - {issue.get('type', 'issue')}: {issue.get('message', issue)}" for issue in issues[:10])
     if verification:
         verification_status = 'passed' if verification.get('passed') else 'failed'
-        lines.append(f'- Verification: {verification_status}')
+        lines.append(f'- 验证：{verification_status}')
         for result in verification.get('results') or []:
             command = result.get('command')
             if not command:
@@ -465,7 +565,7 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
             lines.append(f'  - `{command}` -> {result_status}{suffix}')
     lines.extend([
         '',
-        '## Evidence Files',
+        '## 证据文件',
     ])
     for name in [
         'builder-summary.json',
@@ -480,31 +580,130 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
             lines.append(f'- `{path}`')
     lines.extend([
         '',
-        '## Human Review Checklist',
-        '- [ ] Actual result satisfies the approved acceptance criteria.',
-        '- [ ] Known issues are accepted or documented.',
-        '- [ ] Evidence files are sufficient for final acceptance.',
+        '## 人工审阅清单',
+        '- [ ] 实际结果满足已批准的验收标准。',
+        '- [ ] 已知问题已接受或记录。',
+        '- [ ] 证据文件足以支持最终验收。',
+        '',
+        '## 修改清单',
+        '',
+        '<!-- 如需 Agent 做定点修改，请在此列出具体事项（每项一行）。',
+        '     留空则 Agent 收到完整验收文档作为参考。-->',
     ])
     return _with_final_acceptance_rejection_routing('\n'.join(lines) + '\n')
 
 
 def _with_final_acceptance_rejection_routing(body: str) -> str:
-    if '## Rejection Routing' in body:
-        return body.rstrip() + '\n'
+    return normalize_final_acceptance_rejection_routing(body)
+
+
+def normalize_final_acceptance_rejection_routing(
+    body: str,
+    selected_route: str | None = None,
+) -> str:
+    route_ids = {route for route, _, _ in FINAL_ACCEPTANCE_REJECTION_ROUTES}
+    if selected_route is not None and selected_route not in route_ids:
+        raise ValueError(f'Unknown final acceptance rejection route: {selected_route}')
+
+    selected_routes = {selected_route} if selected_route else _selected_final_acceptance_rejection_routes(body)
+    routing_block = _final_acceptance_rejection_routing_block(selected_routes)
+    if _has_final_acceptance_rejection_routing_heading(body):
+        return _replace_final_acceptance_rejection_routing_block(body, routing_block)
+
     lines = [
         body.rstrip(),
         '',
-        '## Rejection Routing',
-        'If final acceptance is rejected, select the human routing decision below. Multiple selections are allowed; requirements revision has highest priority.',
-        '- [ ] Requirements revision: approved requirements are incomplete or wrong.',
-        '- [ ] Unit plan revision: unit scope or verification commands are wrong.',
-        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.',
-        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.',
+        routing_block.rstrip(),
         '',
-        '## Rejection Notes',
-        'Describe the acceptance gap, missing evidence, or required scope change before choosing reject/rework.',
     ]
+    if '## Rejection Notes' not in body and '## 返工说明' not in body:
+        lines.extend([
+            '## 返工说明（Rejection Notes）',
+            '选择拒绝或返工前，请描述验收差距、缺失证据或需要变更的范围。',
+        ])
     return '\n'.join(lines) + '\n'
+
+
+def _selected_final_acceptance_rejection_routes(body: str) -> set[str]:
+    selected: set[str] = set()
+    for route, label, _ in FINAL_ACCEPTANCE_REJECTION_ROUTES:
+        for alias in (*FINAL_ACCEPTANCE_REJECTION_ROUTE_ALIASES.get(route, ()), label):
+            pattern = rf'^\s*[-*]\s*\[[xX]\]\s*{re.escape(alias)}\s*:'
+            if re.search(pattern, body, flags=re.MULTILINE):
+                selected.add(route)
+                break
+    return selected
+
+
+def _replace_final_acceptance_rejection_routing_block(body: str, routing_block: str) -> str:
+    lines = body.rstrip().splitlines()
+    start = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if _is_final_acceptance_rejection_routing_heading(line)
+        ),
+        None,
+    )
+    if start is None:
+        return body.rstrip() + '\n'
+
+    end = start + 1
+    saw_route_item = False
+    while end < len(lines):
+        line = lines[end]
+        if line.startswith('## ') and end > start + 1:
+            break
+        if _is_final_acceptance_rejection_route_line(line):
+            saw_route_item = True
+            end += 1
+            continue
+        if not saw_route_item:
+            end += 1
+            continue
+        if not line.strip():
+            end += 1
+        break
+
+    next_lines = [
+        *lines[:start],
+        *routing_block.rstrip().splitlines(),
+        '',
+        *lines[end:],
+    ]
+    return '\n'.join(next_lines).rstrip() + '\n'
+
+
+def _is_final_acceptance_rejection_route_line(line: str) -> bool:
+    for route, label, _ in FINAL_ACCEPTANCE_REJECTION_ROUTES:
+        for alias in (*FINAL_ACCEPTANCE_REJECTION_ROUTE_ALIASES.get(route, ()), label):
+            pattern = rf'^\s*[-*]\s*\[[ xX]\]\s*{re.escape(alias)}\s*:'
+            if re.search(pattern, line):
+                return True
+    return False
+
+
+def _final_acceptance_rejection_routing_block(selected_routes: set[str]) -> str:
+    lines = [
+        '## 返工路由（Rejection Routing）',
+        '如果最终验收不通过，请勾选下面的人工流向。可多选；需求变更优先级最高。',
+    ]
+    for route, label, description in FINAL_ACCEPTANCE_REJECTION_ROUTES:
+        checked = 'x' if route in selected_routes else ' '
+        lines.append(f'- [{checked}] {label}: {description}')
+    return '\n'.join(lines) + '\n'
+
+
+def _has_final_acceptance_rejection_routing_heading(body: str) -> bool:
+    return any(_is_final_acceptance_rejection_routing_heading(line) for line in body.splitlines())
+
+
+def _is_final_acceptance_rejection_routing_heading(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith('##') and (
+        'Rejection Routing' in stripped
+        or '返工路由' in stripped
+    )
 
 
 def _current_unit(state: dict[str, Any]) -> dict[str, Any]:
@@ -553,6 +752,44 @@ def _test_layer_is_covered(layer: str, haystack: str) -> bool:
     return any(term in haystack for term in coverage_terms[layer])
 
 
+def _unit_test_cases(unit: dict[str, Any]) -> list[Any]:
+    for key in ('test_cases', 'testCases'):
+        raw_cases = unit.get(key)
+        if isinstance(raw_cases, list) and raw_cases:
+            return raw_cases
+    return []
+
+
+def _unit_plan_body_has_test_case_matrix_entry(content: str, unit_id: str) -> bool:
+    if not unit_id:
+        return False
+    matrix_match = re.search(
+        r'(?ims)^##+\s+.*(?:Test Case Matrix|测试用例矩阵).*$([\s\S]*?)(?=^##+\s+|\Z)',
+        content,
+    )
+    if not matrix_match:
+        return False
+    return unit_id.lower() in matrix_match.group(1).lower()
+
+
+def _is_static_verification_command(command: str) -> bool:
+    lowered = command.lower().replace('--noemit', '--noemit')
+    normalized = re.sub(r'\s+', ' ', lowered).strip()
+    static_patterns = [
+        'tsc --noemit',
+        'tsc --no-emit',
+        'eslint',
+        'biome check',
+        'prettier',
+        'typecheck',
+        'type-check',
+        'lint',
+    ]
+    if any(pattern in normalized for pattern in static_patterns):
+        return True
+    return re.search(r'\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|typecheck|type-check)\b', normalized) is not None
+
+
 def _verification_env_keys(payload: dict[str, Any]) -> set[str]:
     keys: set[str] = set()
     for field in ('verification_env', 'verificationEnv'):
@@ -594,6 +831,16 @@ def _markdown_section(content: str, heading_contains: str) -> str:
             break
         section.append(line)
     return '\n'.join(section)
+
+
+def extract_patch_list(gate_content: str) -> str | None:
+    """Return non-empty lines from the ## 修改清单 section, or None if absent/empty."""
+    raw = _markdown_section(gate_content, '修改清单')
+    lines = [
+        line for line in raw.splitlines()
+        if line.strip() and not line.strip().startswith('<!--') and not line.strip().startswith('-->')
+    ]
+    return '\n'.join(lines) if lines else None
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
@@ -639,6 +886,10 @@ def _normalize_patch_units(raw_units: Any, state: dict[str, Any]) -> list[dict[s
             unit['passes'] = previous_passes.get(unit_id, False)
         if 'verification_commands' in unit and not isinstance(unit['verification_commands'], list):
             raise ValueError(f'unit {unit_id} verification_commands must be a list')
+        if 'test_cases' in unit and not isinstance(unit['test_cases'], list):
+            raise ValueError(f'unit {unit_id} test_cases must be a list')
+        if 'testCases' in unit and not isinstance(unit['testCases'], list):
+            raise ValueError(f'unit {unit_id} testCases must be a list')
         normalized_units.append(unit)
     return normalized_units
 

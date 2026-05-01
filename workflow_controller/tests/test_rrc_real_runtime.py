@@ -10,6 +10,7 @@ from pathlib import Path
 from workflow_controller.rrc_controller import RalphRefinerController
 from workflow_controller.rrc_human_gates import approve_gate_file
 from workflow_controller.rrc_human_gates import write_gate_file
+from workflow_controller.rrc_real_runtime import run_agent_for_current_step
 from workflow_controller.rrc_steps import run_builder, run_verifier
 
 
@@ -327,6 +328,68 @@ print("ARGS=" + " ".join(sys.argv[1:]))
     assert (unit_dir / 'changed-files.txt').read_text(encoding='utf-8') == 'codex-generated.txt\n'
 
 
+def test_run_agent_for_current_step_uses_role_specific_runner_env_and_redacted_metadata(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv('HTTP_PROXY', raising=False)
+    monkeypatch.delenv('HTTPS_PROXY', raising=False)
+    monkeypatch.delenv('NO_PROXY', raising=False)
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Inspect role env.')
+    fake_agent = tmp_path / 'fake-strategist'
+    _write(
+        fake_agent,
+        """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+Path("role-env.json").write_text(json.dumps({
+    "HTTP_PROXY": os.environ.get("HTTP_PROXY"),
+    "SECRET_TOKEN": os.environ.get("SECRET_TOKEN"),
+}), encoding="utf-8")
+""",
+    )
+    fake_agent.chmod(fake_agent.stat().st_mode | stat.S_IXUSR)
+    state = {
+        'currentUnitId': 'unit-01',
+        'agentRunner': 'tmux-claude',
+        'agentCommand': 'claude',
+        'roleRunners': {
+            'test_strategist': {
+                'runner': 'subprocess',
+                'command': str(fake_agent),
+                'env': {
+                    'HTTP_PROXY': 'http://127.0.0.1:7890',
+                    'SECRET_TOKEN': 'super-secret-token',
+                },
+            },
+        },
+    }
+
+    result = run_agent_for_current_step(
+        state,
+        workspace,
+        prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        role='test_strategist',
+    )
+
+    assert result.status == 'done'
+    assert result.runner_metadata == {
+        'role': 'test_strategist',
+        'backend': 'subprocess',
+        'agent_command': str(fake_agent),
+        'tmux_target': None,
+        'env_keys': ['HTTP_PROXY', 'SECRET_TOKEN'],
+    }
+    assert json.loads((workspace / 'role-env.json').read_text(encoding='utf-8')) == {
+        'HTTP_PROXY': 'http://127.0.0.1:7890',
+        'SECRET_TOKEN': 'super-secret-token',
+    }
+    assert 'super-secret-token' not in json.dumps(result.runner_metadata)
+    assert 'http://127.0.0.1:7890' not in json.dumps(result.runner_metadata)
+
+
 def test_run_builder_uses_tmux_runner_when_configured(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -532,7 +595,9 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 3. Acceptance Criteria\\n- Evidence exists.\\n\\n"
             "## 4. Test Strategy\\n- Run verification.\\n\\n"
             "## 5. Out of Scope\\n- Future units.\\n\\n"
-            "## 6. Human Review Checklist\\n- [ ] Reviewed.\\n",
+            "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
+            "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 8. Human Review Checklist\\n- [ ] Reviewed.\\n",
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
@@ -658,6 +723,34 @@ def test_run_verifier_executes_verification_commands_in_workspace_and_records_re
     assert verification['passed'] is True
     assert verification['results'][0]['returncode'] == 0
     assert 'verified' in verification['results'][0]['stdout']
+
+
+def test_run_verifier_supports_bash_source_in_approved_verification_command(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    activate = workspace / 'activate'
+    activate.write_text('export RRC_SOURCE_SENTINEL=from-source\n', encoding='utf-8')
+    command = "source ./activate && python -c \"import os; print(os.environ['RRC_SOURCE_SENTINEL'])\""
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['passed'] is True
+    assert verification['results'][0]['command'] == command
+    assert verification['results'][0]['returncode'] == 0
+    assert 'from-source' in verification['results'][0]['stdout']
 
 
 def test_run_verifier_injects_unit_verification_env_without_inlining_it_in_command(tmp_path: Path) -> None:

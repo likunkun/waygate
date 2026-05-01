@@ -7,6 +7,7 @@ from pathlib import Path
 
 from workflow_controller.rrc_agent_runners import (
     RunnerRequest,
+    _subprocess_agent_command,
     _tmux_idle_poll_seconds,
     _tmux_pane_looks_idle,
     make_runner,
@@ -410,12 +411,12 @@ raise SystemExit(0)
     assert str(result.done_path) in result.stderr
 
 
-def test_tmux_claude_runner_disables_mid_run_idle_detection_by_default(
+def test_tmux_claude_runner_idle_poll_default_is_60s(
     monkeypatch,
 ) -> None:
     monkeypatch.delenv('RRC_TMUX_IDLE_POLL_SECONDS', raising=False)
 
-    assert _tmux_idle_poll_seconds() == 0.0
+    assert _tmux_idle_poll_seconds() == 60.0
 
 
 def test_tmux_idle_detection_accepts_claude_prompt_with_insert_status() -> None:
@@ -449,3 +450,238 @@ def test_make_runner_maps_state_to_backend() -> None:
     assert make_runner({'agentRunner': 'tmux-claude'}).backend == 'tmux-claude'
     assert make_runner({'agentRunner': 'subprocess'}).backend == 'subprocess'
     assert make_runner({'agentCommand': 'claude'}).backend == 'subprocess'
+
+
+def test_make_runner_defaults_test_strategist_to_codex_subprocess() -> None:
+    runner = make_runner({}, role='test_strategist')
+
+    assert runner.backend == 'subprocess'
+    assert runner.agent_command == 'codex exec --dangerously-bypass-approvals-and-sandbox -'
+    assert runner.role == 'test_strategist'
+    assert runner.env == {}
+
+
+def test_make_runner_role_specific_test_strategist_overrides_global_only_for_that_role() -> None:
+    state = {
+        'agentRunner': 'tmux-claude',
+        'agentCommand': 'claude',
+        'tmuxTarget': '1.2',
+        'roleRunners': {
+            'test_strategist': {
+                'runner': 'subprocess',
+                'command': 'codex exec -',
+                'env': {
+                    'HTTP_PROXY': 'http://127.0.0.1:7890',
+                    'HTTPS_PROXY': 'http://127.0.0.1:7890',
+                    'NO_PROXY': 'localhost,127.0.0.1',
+                },
+            },
+        },
+    }
+
+    strategist_runner = make_runner(state, role='test_strategist')
+    builder_runner = make_runner(state, role='builder')
+
+    assert strategist_runner.backend == 'subprocess'
+    assert strategist_runner.agent_command == 'codex exec -'
+    assert strategist_runner.tmux_target is None
+    assert strategist_runner.env == {
+        'HTTP_PROXY': 'http://127.0.0.1:7890',
+        'HTTPS_PROXY': 'http://127.0.0.1:7890',
+        'NO_PROXY': 'localhost,127.0.0.1',
+    }
+    assert builder_runner.backend == 'tmux-claude'
+    assert builder_runner.agent_command == 'claude'
+    assert builder_runner.tmux_target == '1.2'
+    assert builder_runner.env == {}
+
+
+def test_default_test_strategist_command_expands_to_single_codex_exec_stdin_command() -> None:
+    runner = make_runner({}, role='test_strategist')
+
+    assert _subprocess_agent_command(runner.agent_command, 'Prompt body') == [
+        'codex',
+        'exec',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '-',
+    ]
+
+
+def test_make_runner_env_only_test_strategist_config_keeps_codex_default() -> None:
+    runner = make_runner({
+        'agentRunner': 'tmux-claude',
+        'agentCommand': 'claude',
+        'roleRunners': {
+            'test_strategist': {
+                'env': {'HTTP_PROXY': 'http://127.0.0.1:7890'},
+            },
+        },
+    }, role='test_strategist')
+
+    assert runner.backend == 'subprocess'
+    assert runner.agent_command == 'codex exec --dangerously-bypass-approvals-and-sandbox -'
+    assert runner.env == {'HTTP_PROXY': 'http://127.0.0.1:7890'}
+
+
+def test_subprocess_runner_injects_env_only_from_runner_request(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv('HTTP_PROXY', raising=False)
+    monkeypatch.delenv('HTTPS_PROXY', raising=False)
+    monkeypatch.delenv('NO_PROXY', raising=False)
+    monkeypatch.delenv('http_proxy', raising=False)
+    monkeypatch.delenv('https_proxy', raising=False)
+    monkeypatch.delenv('no_proxy', raising=False)
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Inspect env.')
+    agent = _make_executable(
+        tmp_path / 'fake-agent',
+        """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+keys = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]
+Path("env-capture.json").write_text(json.dumps({key: os.environ.get(key) for key in keys}), encoding="utf-8")
+""",
+    )
+
+    clean_request = RunnerRequest(
+        backend='subprocess',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts-clean',
+        unit_id='builder',
+        agent_command=str(agent),
+        env={},
+        timeout_seconds=30,
+    )
+    clean_result = run_agent_backend(clean_request)
+    clean_capture = json.loads((workspace / 'env-capture.json').read_text(encoding='utf-8'))
+
+    strategist_request = RunnerRequest(
+        backend='subprocess',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts-strategist',
+        unit_id='test-strategist',
+        agent_command=str(agent),
+        env={
+            'HTTP_PROXY': 'http://127.0.0.1:7890',
+            'HTTPS_PROXY': 'http://127.0.0.1:7890',
+            'NO_PROXY': 'localhost,127.0.0.1',
+        },
+        timeout_seconds=30,
+    )
+    strategist_result = run_agent_backend(strategist_request)
+    strategist_capture = json.loads((workspace / 'env-capture.json').read_text(encoding='utf-8'))
+
+    assert clean_result.status == 'done'
+    assert strategist_result.status == 'done'
+    assert clean_capture == {'HTTP_PROXY': None, 'HTTPS_PROXY': None, 'NO_PROXY': None}
+    assert strategist_capture == {
+        'HTTP_PROXY': 'http://127.0.0.1:7890',
+        'HTTPS_PROXY': 'http://127.0.0.1:7890',
+        'NO_PROXY': 'localhost,127.0.0.1',
+    }
+    assert strategist_result.runner_metadata == {
+        'role': None,
+        'backend': 'subprocess',
+        'agent_command': str(agent),
+        'tmux_target': None,
+        'env_keys': ['HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY'],
+    }
+    assert 'http://127.0.0.1:7890' not in json.dumps(strategist_result.runner_metadata)
+
+
+def test_runner_config_metadata_redacts_env_values() -> None:
+    runner = make_runner({
+        'roleRunners': {
+            'test_strategist': {
+                'command': 'codex exec -',
+                'env': {
+                    'HTTP_PROXY': 'http://127.0.0.1:7890',
+                    'SECRET_TOKEN': 'super-secret-token',
+                },
+            },
+        },
+    }, role='test_strategist')
+
+    metadata = runner.to_metadata()
+
+    assert metadata == {
+        'role': 'test_strategist',
+        'backend': 'subprocess',
+        'agent_command': 'codex exec -',
+        'tmux_target': None,
+        'env_keys': ['HTTP_PROXY', 'SECRET_TOKEN'],
+    }
+    assert 'http://127.0.0.1:7890' not in json.dumps(metadata)
+    assert 'super-secret-token' not in json.dumps(metadata)
+
+
+def test_tmux_claude_runner_sends_continue_nudge_when_pane_unchanged(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        """#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+if sys.argv[1:2] == ["capture-pane"]:
+    # always return same content - no change (no prompt character so _tmux_pane_looks_idle returns False)
+    print("Claude is thinking about the task, please stand by")
+elif sys.argv[1:2] == ["send-keys"] and sys.argv[2:3] == ["-t"]:
+    text_args = sys.argv[4:]
+    text = " ".join(text_args)
+    # Check for the actual Chinese characters (继续 = U+7EE7 U+7EED)
+    if "\\u7ee7\\u7eed" in text:
+        done_file = os.environ.get("RRC_RUN_DONE_FILE", "")
+        run_id = os.environ.get("RRC_RUN_ID", "")
+        if done_file:
+            Path(done_file).write_text(
+                json.dumps({"status": "done", "summary": "nudged to complete", "run_id": run_id}),
+                encoding="utf-8",
+            )
+raise SystemExit(0)
+""",
+    )
+    monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
+    monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_CLEAR_DELAY_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_SUBMIT_DELAY_SECONDS', '0')
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-nudge',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    assert result.done_payload.get('summary') == 'nudged to complete'
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    assert any(event.get('event') == 'agent_nudge_sent' for event in events)
+
+
+def test_tmux_claude_runner_idle_nudge_disabled_when_nudge_seconds_is_zero_and_no_env(
+    monkeypatch,
+) -> None:
+    from workflow_controller.rrc_agent_runners import _tmux_idle_nudge_seconds
+    monkeypatch.delenv('RRC_TMUX_IDLE_NUDGE_SECONDS', raising=False)
+
+    assert _tmux_idle_nudge_seconds() == 120.0

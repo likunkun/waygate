@@ -86,7 +86,9 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 3. Acceptance Criteria\\n- Verification command passes.\\n\\n"
             "## 4. Test Strategy\\n- Run declared verification.\\n\\n"
             "## 5. Out of Scope\\n- Future units.\\n\\n"
-            "## 6. Human Review Checklist\\n- [ ] Reviewed.\\n",
+            "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
+            "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 8. Human Review Checklist\\n- [ ] Reviewed.\\n",
             encoding="utf-8",
         )
         Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(

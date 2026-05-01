@@ -4,9 +4,15 @@ import json
 import re
 import subprocess
 import sys
-from pathlib import Path
 
-from workflow_controller.rrc_controller import RalphRefinerController, parse_args
+import pytest
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
+from workflow_controller.rrc_steps import TestStrategistBlocked as StrategistBlocked
+from workflow_controller.rrc_validators import reconcile_state, validate_objective_coverage
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +41,80 @@ def test_init_creates_session_and_events_files(tmp_path: Path) -> None:
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['currentStep'] == 'PLAN_CREATED'
     assert state['status'] == 'active'
+    assert state['testStrategistEnabled'] is False
+
+
+def test_init_with_target_and_workspace_without_ralph_creates_target_acceptance_state(tmp_path: Path) -> None:
+    workspace = tmp_path / 'union'
+    workspace.mkdir()
+    (workspace / 'task_plan.md').write_text('# Plan\n\nV3.0 target acceptance.\n', encoding='utf-8')
+    state_dir = workspace / '.rrc-controller-v3.0'
+
+    result = run_rrc(
+        'init',
+        '--state-dir',
+        str(state_dir),
+        '--workspace-dir',
+        str(workspace),
+        '--target',
+        'V3.0',
+        '--runner',
+        'tmux-claude',
+        '--tmux-target',
+        '3.0',
+        '--force',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'currentStep=REQUIREMENTS_DRAFT' in result.stdout
+    assert 'nextAction=run_requirements_drafter' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requestedOutcome'] == 'V3.0'
+    assert state['feasibleOutcome'] == 'V3.0'
+    assert state['workspacePath'] == str(workspace)
+    assert state['currentUnitId'] == 'target-v3-0'
+    assert state['units'][0]['id'] == 'target-v3-0'
+    assert state['objectiveCoverage'][0]['units'] == ['target-v3-0']
+    assert state['humanGatesRequired'] is True
+    assert state['requirementsAccepted'] is False
+    assert state['unitPlanAccepted'] is False
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTarget'] == '3.0'
+    assert str(workspace / 'task_plan.md') in state['targetContextFiles']
+    assert Path(state['promptPath']).exists()
+    assert 'Target acceptance: V3.0' in Path(state['promptPath']).read_text(encoding='utf-8')
+
+
+def test_init_with_test_strategist_flag_enables_it_in_session(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+
+    result = run_rrc(
+        'init',
+        '--state-dir', str(state_dir),
+        '--test-strategist',
+        '--test-strategist-command', 'my-codex exec -',
+        '--test-strategist-env', 'HTTP_PROXY=http://127.0.0.1:7890',
+        '--test-strategist-env', 'NO_PROXY=localhost',
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['testStrategistEnabled'] is True
+    ts = state['roleRunners']['test_strategist']
+    assert ts['command'] == 'my-codex exec -'
+    assert ts['env']['HTTP_PROXY'] == 'http://127.0.0.1:7890'
+    assert ts['env']['NO_PROXY'] == 'localhost'
+
+
+def test_init_test_strategist_flag_without_extras_uses_defaults(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+
+    result = run_rrc('init', '--state-dir', str(state_dir), '--test-strategist')
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['testStrategistEnabled'] is True
+    assert 'roleRunners' not in state or 'test_strategist' not in state.get('roleRunners', {})
 
 
 def test_status_reports_current_step_and_next_action(tmp_path: Path) -> None:
@@ -47,6 +127,1342 @@ def test_status_reports_current_step_and_next_action(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert 'currentStep=PLAN_CREATED' in result.stdout
     assert 'nextAction=require_scope_approval' in result.stdout
+
+
+def _fake_agent_result(request, *, status: str = 'done', returncode: int = 0, stderr: str = ''):
+    return SimpleNamespace(
+        backend=request.backend,
+        status=status,
+        command=[request.agent_command or 'fake'],
+        returncode=returncode,
+        stdout='',
+        stderr=stderr,
+        run_dir=request.artifact_dir,
+        prompt_path=request.prompt_path,
+        done_payload={},
+        runner_metadata={
+            'role': request.role,
+            'backend': request.backend,
+            'agent_command': request.agent_command,
+            'tmux_target': request.tmux_target,
+            'env_keys': sorted(request.env),
+        },
+    )
+
+
+def _write_valid_unit_plan(path: Path, *, command: str = 'pytest tests/test_delivery.py -q') -> None:
+    path.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        f'| AC-1 | TC-AC1 | integration | {command} | Delivery behavior works |\n\n'
+        '## Controller State Patch\n\n'
+        '```json\n'
+        + json.dumps(
+            {
+                'currentUnitId': 'unit-01',
+                'objectiveCoverage': [
+                    {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'}
+                ],
+                'units': [
+                    {
+                        'id': 'unit-01',
+                        'name': 'Delivery unit',
+                        'passes': False,
+                        'test_cases': [
+                            {
+                                'id': 'TC-AC1',
+                                'acceptance_criterion': 'AC-1',
+                                'layer': 'integration',
+                                'command': command,
+                                'expected': 'Delivery behavior works',
+                            }
+                        ],
+                        'verification_commands': [command],
+                    }
+                ],
+            }
+        )
+        + '\n```\n',
+        encoding='utf-8',
+    )
+
+
+def _controller_state_for_unit_plan(workspace: Path) -> dict[str, Any]:
+    return {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'currentStep': 'UNIT_PLAN_DRAFT',
+        'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+        'status': 'active',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'agentRunner': 'tmux-claude',
+        'workspacePath': str(workspace),
+        'testStrategistEnabled': True,
+        'humanGatesRequired': True,
+        'requirementsAccepted': True,
+        'unitPlanAccepted': False,
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-01', 'name': 'Delivery unit', 'scope': ['Implement delivery behavior'], 'passes': False},
+        ],
+    }
+
+
+def test_unit_plan_drafter_persists_test_strategist_artifacts(tmp_path: Path, monkeypatch) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    artifacts_dir = tmp_path / 'artifacts'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-1: Import retry state is visible.\n\n'
+        '## 4. Test Strategy\n'
+        '- E2E covers AC-1.\n',
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'agentRunner': 'tmux-claude',
+        'workspacePath': str(workspace),
+        'testStrategistEnabled': True,
+        'unitPlanRetryCount': 2,
+        'roleRunners': {
+            'test_strategist': {
+                'runner': 'subprocess',
+                'command': 'fake-strategist -',
+                'env': {'SECRET_TOKEN': 'redacted-value'},
+            },
+        },
+        'objectiveCoverage': [
+            {'objective': 'Import retry state is visible', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [
+            {
+                'id': 'unit-01',
+                'name': 'Import retry visibility',
+                'scope': ['Expose retry state in import UI'],
+                'done_when': ['AC-1 is visible in browser'],
+            },
+        ],
+    }
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            prompt = request.prompt_path.read_text(encoding='utf-8')
+            assert 'AC-1: Import retry state is visible' in prompt
+            assert 'Expose retry state in import UI' in prompt
+            assert 'verification requirements' in prompt
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps(
+                    {
+                        'acceptance_criteria': [
+                            {
+                                'id': 'AC-1',
+                                'test_cases': [
+                                    {
+                                        'id': 'TC-AC1-E2E',
+                                        'layer': 'e2e',
+                                        'command': 'pnpm exec playwright test import-retry.spec.ts --workers=1',
+                                        'evidence': '',
+                                        'expected': 'Retry state is visible in the browser',
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'test-strategy.md').write_text(
+                '# Test Strategy\n\nAC-1 -> TC-AC1-E2E via browser-visible E2E.\n',
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': []}),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-review-package.json').write_text(
+                json.dumps({'ready_for_review': True, 'acceptance_criteria': ['AC-1']}),
+                encoding='utf-8',
+            )
+        else:
+            (request.artifact_dir / 'unit-plan-body.md').write_text(
+                '# Unit Plan Confirmation\n\n'
+                '## Test Case Matrix\n'
+                '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
+                '| --- | --- | --- | --- | --- |\n'
+                '| AC-1 | TC-AC1-E2E | e2e | pnpm exec playwright test import-retry.spec.ts --workers=1 | Retry state visible |\n\n'
+                '## Controller State Patch\n\n'
+                '```json\n'
+                '{"currentUnitId":"unit-01","objectiveCoverage":[{"objective":"Import retry state is visible","units":["unit-01"],"status":"partial"}],"units":[{"id":"unit-01","name":"Import retry visibility","passes":false,"test_cases":[{"id":"TC-AC1-E2E","acceptance_criterion":"AC-1","layer":"e2e","command":"pnpm exec playwright test import-retry.spec.ts --workers=1","expected":"Retry state visible"}],"verification_commands":["pnpm exec playwright test import-retry.spec.ts --workers=1"],"verification_env":{"DATABASE_URL":"file:test.db"}}]}\n'
+                '```\n',
+                encoding='utf-8',
+            )
+        return SimpleNamespace(
+            backend=request.backend,
+            status='done',
+            command=[request.agent_command or 'fake'],
+            returncode=0,
+            stdout='',
+            stderr='',
+            run_dir=request.artifact_dir,
+            prompt_path=request.prompt_path,
+            done_payload={},
+            runner_metadata={
+                'role': request.role,
+                'backend': request.backend,
+                'agent_command': request.agent_command,
+                'tmux_target': request.tmux_target,
+                'env_keys': sorted(request.env),
+            },
+        )
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    run_unit_plan_drafter(state, approvals_dir, artifacts_dir)
+
+    draft_dir = artifacts_dir / 'unit-plan-draft'
+    assert (draft_dir / 'test-strategy.json').exists()
+    assert (draft_dir / 'unit-plan-gap-report.json').exists()
+    assert (draft_dir / 'unit-plan-review-package.json').exists()
+    assert (draft_dir / 'test-strategy.md').read_text(encoding='utf-8').startswith('# Test Strategy')
+    summary = json.loads((draft_dir / 'unit-plan-draft-summary.json').read_text(encoding='utf-8'))
+    assert summary['test_strategist']['enabled'] is True
+    assert summary['test_strategist']['actual_independence'] == 'role-runner'
+    assert summary['test_strategist']['gap_counts'] == {'critical': 0, 'major': 0, 'minor': 0}
+    assert summary['test_strategist']['planner_retry_count'] == 2
+    assert summary['test_strategist']['fallback']['used'] is False
+    assert summary['test_strategist']['runner']['env_keys'] == ['SECRET_TOKEN']
+    assert 'redacted-value' not in json.dumps(summary)
+
+
+def test_unit_plan_drafter_records_critical_gap_for_static_only_strategy(tmp_path: Path, monkeypatch) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    artifacts_dir = tmp_path / 'artifacts'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-1: Browser retry state is visible.\n',
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'agentRunner': 'tmux-claude',
+        'workspacePath': str(workspace),
+        'testStrategistEnabled': True,
+        'objectiveCoverage': [
+            {'objective': 'Browser retry state is visible', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-01', 'name': 'Import retry visibility', 'scope': ['Expose retry state']},
+        ],
+    }
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps(
+                    {
+                        'acceptance_criteria': [
+                            {
+                                'id': 'AC-1',
+                                'test_cases': [
+                                    {
+                                        'id': 'TC-AC1-STATIC',
+                                        'layer': 'static',
+                                        'command': 'pnpm exec tsc --noEmit',
+                                        'expected': 'Types compile',
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+        else:
+            (request.artifact_dir / 'unit-plan-body.md').write_text('# Unit Plan Confirmation\n', encoding='utf-8')
+        return SimpleNamespace(
+            backend=request.backend,
+            status='done',
+            command=[request.agent_command or 'fake'],
+            returncode=0,
+            stdout='',
+            stderr='',
+            run_dir=request.artifact_dir,
+            prompt_path=request.prompt_path,
+            done_payload={},
+            runner_metadata={'role': request.role, 'backend': request.backend, 'env_keys': []},
+        )
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    run_unit_plan_drafter(state, approvals_dir, artifacts_dir)
+
+    draft_dir = artifacts_dir / 'unit-plan-draft'
+    gap_report = json.loads((draft_dir / 'unit-plan-gap-report.json').read_text(encoding='utf-8'))
+    assert gap_report['gap_counts']['critical'] == 1
+    assert gap_report['gaps'][0]['severity'] == 'Critical'
+    assert gap_report['gaps'][0]['type'] == 'static_only_coverage'
+    summary = json.loads((draft_dir / 'unit-plan-draft-summary.json').read_text(encoding='utf-8'))
+    assert summary['test_strategist']['gap_counts']['critical'] == 1
+    gate_path = approvals_dir / 'unit-plan.md'
+    assert gate_path.exists(), 'Gate must be generated for human review even when critical gaps remain'
+    gate_body = gate_path.read_text(encoding='utf-8')
+    assert 'Unresolved Critical' in gate_body
+    assert 'static_only_coverage' in gate_body
+
+
+def test_unit_plan_drafter_materializes_strategy_artifacts_when_strategist_fails(tmp_path: Path, monkeypatch) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    artifacts_dir = tmp_path / 'artifacts'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-1: Browser retry state is visible.\n',
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'agentRunner': 'tmux-claude',
+        'workspacePath': str(workspace),
+        'testStrategistEnabled': True,
+        'objectiveCoverage': [
+            {'objective': 'Browser retry state is visible', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-01', 'name': 'Import retry visibility', 'scope': ['Expose retry state']},
+        ],
+    }
+
+    def fake_run_agent_backend(request):
+        if request.role is None:
+            (request.artifact_dir / 'unit-plan-body.md').write_text('# Unit Plan Confirmation\n', encoding='utf-8')
+        return SimpleNamespace(
+            backend=request.backend,
+            status='failed' if request.role == 'test_strategist' else 'done',
+            command=[request.agent_command or 'fake'],
+            returncode=1 if request.role == 'test_strategist' else 0,
+            stdout='',
+            stderr='strategist crashed',
+            run_dir=request.artifact_dir,
+            prompt_path=request.prompt_path,
+            done_payload={},
+            runner_metadata={'role': request.role, 'backend': request.backend, 'env_keys': []},
+        )
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    run_unit_plan_drafter(state, approvals_dir, artifacts_dir)
+
+    draft_dir = artifacts_dir / 'unit-plan-draft'
+    assert json.loads((draft_dir / 'test-strategy.json').read_text(encoding='utf-8')) == {
+        'acceptance_criteria': []
+    }
+    gap_report = json.loads((draft_dir / 'unit-plan-gap-report.json').read_text(encoding='utf-8'))
+    assert gap_report['gap_counts']['critical'] == 0
+    summary = json.loads((draft_dir / 'unit-plan-draft-summary.json').read_text(encoding='utf-8'))
+    assert summary['test_strategist']['actual_independence'] == 'same_family_fallback'
+    assert summary['test_strategist']['independence'] == 'degraded'
+    assert summary['test_strategist']['fallback'] == {
+        'used': True,
+        'reason': 'Test strategist failed with exit code 1',
+    }
+
+
+def test_unit_plan_drafter_rewrites_stale_strategist_artifacts_on_rerun(tmp_path: Path, monkeypatch) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    artifacts_dir = tmp_path / 'artifacts'
+    draft_dir = artifacts_dir / 'unit-plan-draft'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    draft_dir.mkdir(parents=True)
+    (draft_dir / 'unit-plan-gap-report.json').write_text(
+        json.dumps(
+            {
+                'gap_counts': {'critical': 1, 'major': 0, 'minor': 0},
+                'gaps': [{'severity': 'Critical', 'type': 'stale_gap', 'message': 'old gap'}],
+            }
+        ),
+        encoding='utf-8',
+    )
+    (draft_dir / 'unit-plan-review-package.json').write_text(
+        json.dumps({'ready_for_review': True, 'stale': True}),
+        encoding='utf-8',
+    )
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-1: Browser retry state is visible.\n',
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'agentRunner': 'tmux-claude',
+        'workspacePath': str(workspace),
+        'testStrategistEnabled': True,
+        'objectiveCoverage': [
+            {'objective': 'Browser retry state is visible', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-01', 'name': 'Import retry visibility', 'scope': ['Expose retry state']},
+        ],
+    }
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            static_gap = {
+                'severity': 'Critical',
+                'type': 'static_only_coverage',
+                'message': 'AC-1 is covered only by static checks',
+            }
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps(
+                    {
+                        'acceptance_criteria': [
+                            {
+                                'id': 'AC-1',
+                                'test_cases': [
+                                    {'id': 'TC-AC1-STATIC', 'layer': 'static', 'command': 'pnpm exec tsc --noEmit'}
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gap_counts': {'critical': 1, 'major': 0, 'minor': 0}, 'gaps': [static_gap]}),
+                encoding='utf-8',
+            )
+        else:
+            (request.artifact_dir / 'unit-plan-body.md').write_text('# Unit Plan Confirmation\n', encoding='utf-8')
+        return SimpleNamespace(
+            backend=request.backend,
+            status='done',
+            command=[request.agent_command or 'fake'],
+            returncode=0,
+            stdout='',
+            stderr='',
+            run_dir=request.artifact_dir,
+            prompt_path=request.prompt_path,
+            done_payload={},
+            runner_metadata={'role': request.role, 'backend': request.backend, 'env_keys': []},
+        )
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    run_unit_plan_drafter(state, approvals_dir, artifacts_dir)
+
+    gap_report = json.loads((draft_dir / 'unit-plan-gap-report.json').read_text(encoding='utf-8'))
+    assert gap_report['gap_counts']['critical'] == 1
+    assert gap_report['gaps'] == [
+        {
+            'severity': 'Critical',
+            'type': 'static_only_coverage',
+            'message': 'AC-1 is covered only by static checks',
+        }
+    ]
+    review_package = json.loads((draft_dir / 'unit-plan-review-package.json').read_text(encoding='utf-8'))
+    assert review_package['ready_for_review'] is False
+    assert 'stale' not in review_package
+
+
+def test_unit_plan_drafter_runs_planner_before_strategist_and_passes_body_in_prompt(tmp_path: Path, monkeypatch) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    artifacts_dir = tmp_path / 'artifacts'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# Requirements & Acceptance Confirmation\n\n- AC-1: Delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    state = _controller_state_for_unit_plan(workspace)
+    calls: list[str | None] = []
+
+    def fake_run_agent_backend(request):
+        calls.append(request.role)
+        if request.role == 'test_strategist':
+            prompt = request.prompt_path.read_text(encoding='utf-8')
+            assert '# Unit Plan Confirmation' in prompt
+            assert 'TC-AC1' in prompt
+            assert 'Test Strategist internal state' not in prompt
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps(
+                    {
+                        'acceptance_criteria': [
+                            {
+                                'id': 'AC-1',
+                                'test_cases': [
+                                    {
+                                        'id': 'TC-AC1',
+                                        'layer': 'integration',
+                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'expected': 'Delivery behavior works',
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': []}),
+                encoding='utf-8',
+            )
+        else:
+            planner_prompt = request.prompt_path.read_text(encoding='utf-8')
+            assert 'unit-plan-gap-report' not in planner_prompt
+            assert 'Test Strategist internal state' not in planner_prompt
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    run_unit_plan_drafter(state, approvals_dir, artifacts_dir)
+
+    assert calls == [None, 'test_strategist']
+
+
+def test_codex_patcher_fills_critical_gap_and_enters_unit_plan_gate(tmp_path: Path, monkeypatch) -> None:
+    """When initial strategist finds a Critical gap, the Codex patcher (2nd run) fills it.
+    No Planner revision loop occurs."""
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_controller_state_for_unit_plan(workspace), force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+    strategist_calls = 0
+    planner_prompts: list[str] = []
+
+    def fake_run_agent_backend(request):
+        nonlocal strategist_calls
+        if request.role == 'test_strategist':
+            strategist_calls += 1
+            # Initial run: returns a Critical gap; patcher (2nd run): returns no gaps
+            gaps = [] if strategist_calls == 2 else [
+                {
+                    'id': 'GAP-AC1',
+                    'severity': 'Critical',
+                    'type': 'missing_acceptance_criterion_mapping',
+                    'message': 'AC-1 has no mapped behavioral test',
+                }
+            ]
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps(
+                    {
+                        'acceptance_criteria': [
+                            {
+                                'id': 'AC-1',
+                                'test_cases': [
+                                    {
+                                        'id': 'TC-AC1',
+                                        'layer': 'integration',
+                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'expected': 'Delivery behavior works',
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': gaps}),
+                encoding='utf-8',
+            )
+        else:
+            planner_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['status'] == 'active'
+    assert state['testStrategistPlannerRetryCount'] == 0, 'Planner is no longer retried; patcher handles gaps'
+    assert strategist_calls == 2, 'initial strategist run + patcher run'
+    assert not any('Critical Test Strategy Gap Feedback' in p for p in planner_prompts), \
+        'No Planner revision prompt should be sent; Codex patcher handles gap remediation'
+    assert not (state_dir / 'approvals' / 'unit-plan.md').read_text(encoding='utf-8').count('GAP-AC1')
+    summary = json.loads((state_dir / 'artifacts' / 'unit-plan-draft' / 'unit-plan-draft-summary.json').read_text(encoding='utf-8'))
+    assert summary['test_strategist']['planner_retry_count'] == 0
+    assert summary['test_strategist']['gap_counts']['critical'] == 0
+
+
+def test_controller_renders_major_minor_gap_report_in_existing_unit_plan_gate(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_controller_state_for_unit_plan(workspace), force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps(
+                    {
+                        'acceptance_criteria': [
+                            {
+                                'id': 'AC-1',
+                                'test_cases': [
+                                    {
+                                        'id': 'TC-AC1',
+                                        'layer': 'integration',
+                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'expected': 'Delivery behavior works',
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps(
+                    {
+                        'gaps': [
+                            {
+                                'id': 'MAJOR-AC1',
+                                'severity': 'Major',
+                                'type': 'weak_manual_evidence',
+                                'message': 'Manual evidence should name the approval artifact',
+                            },
+                            {
+                                'id': 'MINOR-AC1',
+                                'severity': 'Minor',
+                                'type': 'wording_gap',
+                                'message': 'Expected result could be more specific',
+                            },
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['nextAllowedActions'] == ['check_unit_plan_approval']
+    gate_body = (state_dir / 'approvals' / 'unit-plan.md').read_text(encoding='utf-8')
+    review_package = json.loads(
+        (state_dir / 'artifacts' / 'unit-plan-draft' / 'unit-plan-review-package.json').read_text(encoding='utf-8')
+    )
+    assert review_package['gap_report']['gaps'] == [
+        {
+            'id': 'MAJOR-AC1',
+            'severity': 'Major',
+            'type': 'weak_manual_evidence',
+            'message': 'Manual evidence should name the approval artifact',
+        },
+        {
+            'id': 'MINOR-AC1',
+            'severity': 'Minor',
+            'type': 'wording_gap',
+            'message': 'Expected result could be more specific',
+        },
+    ]
+    assert '## Test Strategy Gap Report' in gate_body
+    assert 'MAJOR-AC1' in gate_body
+    assert 'Manual evidence should name the approval artifact' in gate_body
+    assert 'MINOR-AC1' in gate_body
+    assert 'Expected result could be more specific' in gate_body
+    assert 'WAITING_TEST_STRATEGY_APPROVAL' not in json.dumps(state)
+
+
+def test_suggested_fix_appears_in_major_minor_gap_report_in_gate(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_controller_state_for_unit_plan(workspace), force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps({'acceptance_criteria': [{'id': 'AC-1', 'test_cases': [{'id': 'TC-1', 'layer': 'unit', 'command': 'pytest', 'expected': 'pass'}]}]}),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': [{
+                    'id': 'MAJOR-AC1',
+                    'severity': 'Major',
+                    'type': 'weak_manual_evidence',
+                    'message': 'Manual evidence should name the approval artifact',
+                    'suggested_fix': 'Add a screenshot path or artifact name as evidence for AC-1',
+                }]}),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+    controller.run_once()
+
+    gate_body = (state_dir / 'approvals' / 'unit-plan.md').read_text(encoding='utf-8')
+    assert 'Add a screenshot path or artifact name as evidence for AC-1' in gate_body
+
+
+def test_suggested_fix_appears_in_codex_patcher_prompt(tmp_path: Path, monkeypatch) -> None:
+    """suggested_fix from the gap report is forwarded to the Codex patcher prompt
+    so Codex knows exactly how to fill the gap."""
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_controller_state_for_unit_plan(workspace), force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Behavior works.\n', encoding='utf-8')
+
+    patcher_prompts: list[str] = []
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps({'acceptance_criteria': [{'id': 'AC-1', 'test_cases': []}]}),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': [{
+                    'id': 'CRIT-AC1',
+                    'severity': 'Critical',
+                    'type': 'missing_acceptance_criterion_mapping',
+                    'message': 'AC-1 has no mapped test cases',
+                    'suggested_fix': 'Add a Playwright E2E test that verifies AC-1 behavior end-to-end',
+                }]}),
+                encoding='utf-8',
+            )
+            prompt = request.prompt_path.read_text(encoding='utf-8')
+            if 'codex_patch' in prompt:
+                patcher_prompts.append(prompt)
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+    controller.run_once()
+
+    assert patcher_prompts, 'Expected Codex patcher to be invoked'
+    assert 'Add a Playwright E2E test that verifies AC-1 behavior end-to-end' in patcher_prompts[0]
+
+
+def test_critical_gap_escalates_to_human_review_after_max_retries(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    initial_state = _controller_state_for_unit_plan(workspace)
+    initial_state['testStrategistCriticalMaxReworks'] = 0
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(initial_state, force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps({'acceptance_criteria': []}),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': [{
+                    'id': 'CRITICAL-AC1',
+                    'severity': 'Critical',
+                    'type': 'missing_acceptance_criterion_mapping',
+                    'message': 'AC-1 has no mapped behavioral test',
+                    'suggested_fix': 'Add a pytest integration test for AC-1',
+                }]}),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL', f"Expected human review, got: {state['currentStep']}"
+    assert state.get('status') != 'blocked'
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    assert gate_path.exists(), 'Gate file must exist for human review'
+    gate_body = gate_path.read_text(encoding='utf-8')
+    assert 'CRITICAL-AC1' in gate_body
+    assert 'AC-1 has no mapped behavioral test' in gate_body
+    assert 'Add a pytest integration test for AC-1' in gate_body
+
+
+
+def test_e2e_test_strategist_unit_plan_flow(tmp_path: Path, monkeypatch) -> None:
+    disabled_workspace = tmp_path / 'disabled-workspace'
+    disabled_workspace.mkdir()
+    disabled_state_dir = tmp_path / 'disabled-state'
+    disabled_controller = RalphRefinerController(state_dir=disabled_state_dir, auto_approve=True)
+    disabled_state = _controller_state_for_unit_plan(disabled_workspace)
+    disabled_state['testStrategistEnabled'] = False
+    disabled_controller.init_state(disabled_state, force=True)
+    disabled_requirements = disabled_state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    disabled_requirements.parent.mkdir(parents=True, exist_ok=True)
+    disabled_requirements.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+
+    enabled_workspace = tmp_path / 'enabled-workspace'
+    enabled_workspace.mkdir()
+    enabled_state_dir = tmp_path / 'enabled-state'
+    enabled_controller = RalphRefinerController(state_dir=enabled_state_dir, auto_approve=True)
+    enabled_state = _controller_state_for_unit_plan(enabled_workspace)
+    enabled_state['roleRunners'] = {
+        'test_strategist': {
+            'runner': 'subprocess',
+            'command': 'codex exec --dangerously-bypass-approvals-and-sandbox -',
+            'env': {
+                'HTTP_PROXY': 'http://127.0.0.1:7890',
+                'HTTPS_PROXY': 'http://127.0.0.1:7890',
+                'NO_PROXY': 'localhost,127.0.0.1',
+                'SECRET_TOKEN': 'super-secret-token',
+            },
+        }
+    }
+    enabled_controller.init_state(enabled_state, force=True)
+    enabled_requirements = enabled_state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    enabled_requirements.parent.mkdir(parents=True, exist_ok=True)
+    enabled_requirements.write_text(
+        '# Requirements\n\n'
+        '- AC-1: Delivery behavior works.\n'
+        '- AC-2: Test strategy gaps are visible to humans.\n',
+        encoding='utf-8',
+    )
+
+    calls: list[tuple[str | None, dict[str, str]]] = []
+    planner_prompts: list[str] = []
+    strategist_prompts: list[str] = []
+    strategist_calls_by_state: dict[Path, int] = {}
+
+    def fake_run_agent_backend(request):
+        calls.append((request.role, dict(request.env)))
+        if request.role == 'test_strategist':
+            strategist_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+            call_number = strategist_calls_by_state.get(request.artifact_dir, 0) + 1
+            strategist_calls_by_state[request.artifact_dir] = call_number
+            gaps = [
+                {
+                    'id': 'GAP-AC1',
+                    'severity': 'Critical',
+                    'type': 'missing_acceptance_criterion_mapping',
+                    'message': 'AC-1 has no mapped behavioral test',
+                }
+            ] if call_number == 1 else [
+                {
+                    'id': 'MAJOR-AC2',
+                    'severity': 'Major',
+                    'type': 'weak_manual_evidence',
+                    'message': 'Human evidence should name approvals/unit-plan.md',
+                },
+                {
+                    'id': 'MINOR-AC2',
+                    'severity': 'Minor',
+                    'type': 'wording_gap',
+                    'message': 'Expected result can be more specific',
+                },
+            ]
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps(
+                    {
+                        'acceptance_criteria': [
+                            {
+                                'id': 'AC-1',
+                                'test_cases': [
+                                    {
+                                        'id': 'TC-AC1',
+                                        'layer': 'integration',
+                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'fixture': 'fake unit planner and strategist',
+                                        'environment': 'temporary state dir',
+                                        'evidence': 'approvals/unit-plan.md',
+                                        'expected': 'Delivery behavior works',
+                                    }
+                                ],
+                            },
+                            {
+                                'id': 'AC-2',
+                                'test_cases': [
+                                    {
+                                        'id': 'TC-AC2',
+                                        'layer': 'manual',
+                                        'command': 'manual approval artifact inspection',
+                                        'fixture': 'Major and Minor gap report',
+                                        'environment': 'temporary state dir',
+                                        'evidence': 'approvals/unit-plan.md contains Test Strategy Gap Report',
+                                        'expected': 'Gaps are visible in the existing Unit Plan gate',
+                                    }
+                                ],
+                            },
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(json.dumps({'gaps': gaps}), encoding='utf-8')
+        else:
+            planner_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    disabled_result = disabled_controller.run_once()
+
+    assert disabled_result['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    disabled_draft_dir = disabled_state_dir / 'artifacts' / 'unit-plan-draft'
+    assert (disabled_state_dir / 'approvals' / 'unit-plan.md').exists()
+    assert not (disabled_draft_dir / 'test-strategy.json').exists()
+    assert not (disabled_draft_dir / 'unit-plan-gap-report.json').exists()
+    assert not (disabled_draft_dir / 'unit-plan-review-package.json').exists()
+
+    enabled_result = enabled_controller.run_once()
+
+    assert enabled_result['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert enabled_result['status'] == 'active'
+    assert enabled_result['testStrategistPlannerRetryCount'] == 0, 'Planner runs once; patcher handles gaps'
+    assert 'WAITING_TEST_STRATEGY_APPROVAL' not in json.dumps(enabled_result)
+    role_calls = [role for role, _env in calls]
+    # disabled planner, enabled planner, initial strategist, patcher (no Planner revision loop)
+    assert role_calls == [None, None, 'test_strategist', 'test_strategist']
+    strategist_envs = [env for role, env in calls if role == 'test_strategist']
+    non_strategist_envs = [env for role, env in calls if role is None]
+    assert all(env['HTTP_PROXY'] == 'http://127.0.0.1:7890' for env in strategist_envs)
+    assert all('HTTP_PROXY' not in env for env in non_strategist_envs)
+    assert not any('Critical Test Strategy Gap Feedback' in prompt for prompt in planner_prompts), \
+        'Planner should not receive gap feedback; Codex patcher handles remediation'
+    assert any('AC-1: Delivery behavior works' in prompt and '# Unit Plan Confirmation' in prompt for prompt in strategist_prompts)
+
+    enabled_draft_dir = enabled_state_dir / 'artifacts' / 'unit-plan-draft'
+    gate_body = (enabled_state_dir / 'approvals' / 'unit-plan.md').read_text(encoding='utf-8')
+    summary = json.loads((enabled_draft_dir / 'unit-plan-draft-summary.json').read_text(encoding='utf-8'))
+    review_package = json.loads((enabled_draft_dir / 'unit-plan-review-package.json').read_text(encoding='utf-8'))
+    gap_report = json.loads((enabled_draft_dir / 'unit-plan-gap-report.json').read_text(encoding='utf-8'))
+    assert (enabled_draft_dir / 'test-strategy.json').exists()
+    assert (enabled_draft_dir / 'test-strategy.md').exists()
+    assert summary['test_strategist']['enabled'] is True
+    assert summary['test_strategist']['runner']['env_keys'] == [
+        'HTTPS_PROXY',
+        'HTTP_PROXY',
+        'NO_PROXY',
+        'SECRET_TOKEN',
+    ]
+    assert summary['test_strategist']['gap_counts'] == {'critical': 0, 'major': 1, 'minor': 1}
+    assert summary['test_strategist']['planner_retry_count'] == 0
+    assert review_package['ready_for_review'] is True
+    assert gap_report['gap_counts'] == {'critical': 0, 'major': 1, 'minor': 1}
+    assert 'GAP-AC1' not in gate_body
+    assert '## Test Strategy Gap Report' in gate_body
+    assert 'MAJOR-AC2' in gate_body
+    assert 'MINOR-AC2' in gate_body
+    serialized_artifacts = json.dumps(summary) + json.dumps(review_package) + gate_body
+    assert 'super-secret-token' not in serialized_artifacts
+    assert 'http://127.0.0.1:7890' not in serialized_artifacts
+
+
+
+def test_controller_escalates_to_human_review_after_third_unresolved_critical_gap(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_controller_state_for_unit_plan(workspace), force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+    strategist_calls = 0
+
+    def fake_run_agent_backend(request):
+        nonlocal strategist_calls
+        if request.role == 'test_strategist':
+            strategist_calls += 1
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps({'acceptance_criteria': []}),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': [{
+                    'id': 'GAP-AC1',
+                    'severity': 'Critical',
+                    'type': 'missing_acceptance_criterion_mapping',
+                    'message': 'AC-1 has no mapped behavioral test',
+                }]}),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state.get('status') != 'blocked'
+    assert state['testStrategistPlannerRetryCount'] == 0, 'Planner is no longer retried for test strategy gaps'
+    assert strategist_calls == 2, 'initial strategist run + patcher run (both return gappy strategy)'
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    assert gate_path.exists()
+    gate_body = gate_path.read_text(encoding='utf-8')
+    assert 'GAP-AC1' in gate_body
+    assert 'Unresolved Critical' in gate_body
+
+
+def test_controller_blocks_when_test_strategist_fallback_is_not_allowed(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    initial_state = _controller_state_for_unit_plan(workspace)
+    initial_state['allowTestStrategistFallback'] = False
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(initial_state, force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            return _fake_agent_result(request, status='failed', returncode=127, stderr='codex: not found')
+        _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'blocked'
+    assert state['currentStep'] == 'UNIT_PLAN_DRAFT'
+    assert 'Test strategist failed with exit code 127' in state['blockedReason']
+    assert 'fallback is not allowed' in state['blockedReason']
+
+
+def test_controller_continues_with_degraded_independence_when_strategist_fallback_allowed(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_controller_state_for_unit_plan(workspace), force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+    strategist_calls = 0
+
+    def fake_run_agent_backend(request):
+        nonlocal strategist_calls
+        if request.role == 'test_strategist':
+            strategist_calls += 1
+            return _fake_agent_result(request, status='failed', returncode=127, stderr='codex: not found')
+        _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['testStrategistPlannerRetryCount'] == 0
+    assert strategist_calls == 1
+    draft_dir = state_dir / 'artifacts' / 'unit-plan-draft'
+    gap_report = json.loads((draft_dir / 'unit-plan-gap-report.json').read_text(encoding='utf-8'))
+    assert gap_report['gap_counts']['critical'] == 0
+    summary = json.loads((draft_dir / 'unit-plan-draft-summary.json').read_text(encoding='utf-8'))
+    assert summary['test_strategist']['actual_independence'] == 'same_family_fallback'
+    assert summary['test_strategist']['independence'] == 'degraded'
+    assert summary['test_strategist']['fallback'] == {
+        'used': True,
+        'reason': 'Test strategist failed with exit code 127',
+    }
+
+
+
+def test_controller_ignores_partial_critical_artifacts_when_strategist_fallback_allowed(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_controller_state_for_unit_plan(workspace), force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+    strategist_calls = 0
+
+    def fake_run_agent_backend(request):
+        nonlocal strategist_calls
+        if request.role == 'test_strategist':
+            strategist_calls += 1
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps(
+                    {
+                        'gap_counts': {'critical': 1, 'major': 0, 'minor': 0},
+                        'gaps': [
+                            {
+                                'id': 'PARTIAL-GAP',
+                                'severity': 'Critical',
+                                'type': 'partial_failed_strategist_output',
+                                'message': 'partial output before crash',
+                            }
+                        ],
+                    }
+                ),
+                encoding='utf-8',
+            )
+            return _fake_agent_result(request, status='failed', returncode=1, stderr='strategist crashed')
+        _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert strategist_calls == 1
+    draft_dir = state_dir / 'artifacts' / 'unit-plan-draft'
+    gap_report = json.loads((draft_dir / 'unit-plan-gap-report.json').read_text(encoding='utf-8'))
+    assert gap_report['gap_counts']['critical'] == 0
+    assert gap_report['gaps'] == []
+    assert 'PARTIAL-GAP' not in json.dumps(gap_report)
+    summary = json.loads((draft_dir / 'unit-plan-draft-summary.json').read_text(encoding='utf-8'))
+    assert summary['test_strategist']['actual_independence'] == 'same_family_fallback'
+    assert summary['test_strategist']['fallback']['reason'] == 'Test strategist failed with exit code 1'
+
+
+
+def test_controller_resets_stale_strategist_retry_count_for_fresh_unit_plan_cycle(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    initial_state = _controller_state_for_unit_plan(workspace)
+    initial_state['testStrategistPlannerRetryCount'] = 2
+    initial_state['unitPlanRetryCount'] = 2
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(initial_state, force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps(
+                    {
+                        'acceptance_criteria': [
+                            {
+                                'id': 'AC-1',
+                                'test_cases': [
+                                    {
+                                        'id': 'TC-AC1',
+                                        'layer': 'integration',
+                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'expected': 'Delivery behavior works',
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': []}),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['testStrategistPlannerRetryCount'] == 0
+    assert state['unitPlanRetryCount'] == 0
+    summary = json.loads((state_dir / 'artifacts' / 'unit-plan-draft' / 'unit-plan-draft-summary.json').read_text(encoding='utf-8'))
+    assert summary['test_strategist']['planner_retry_count'] == 0
+
+
+def test_controller_escalates_unit_plan_gate_revision_to_human_after_unresolved_critical_gap(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    initial_state = _controller_state_for_unit_plan(workspace)
+    initial_state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+    initial_state['unitPlanDraftGenerated'] = True
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(initial_state, force=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+    (approvals_dir / 'unit-plan.md').write_text('# Unit Plan Confirmation\n\nReviewer note: add behavioral coverage.\n', encoding='utf-8')
+    strategist_calls = 0
+
+    def fake_run_agent_backend(request):
+        nonlocal strategist_calls
+        if request.role == 'test_strategist':
+            strategist_calls += 1
+            (request.artifact_dir / 'test-strategy.json').write_text(json.dumps({'acceptance_criteria': []}), encoding='utf-8')
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps(
+                    {
+                        'gaps': [
+                            {
+                                'id': 'GAP-REVISION',
+                                'severity': 'Critical',
+                                'type': 'missing_acceptance_criterion_mapping',
+                                'message': 'AC-1 has no mapped behavioral test',
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    controller.revise_human_gate('unit-plan')
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state.get('status') != 'blocked'
+    assert state['testStrategistPlannerRetryCount'] == 0, 'Planner is no longer retried for test strategy gaps'
+    assert strategist_calls == 2, 'initial strategist run + patcher run (both return gappy strategy)'
+    gate_body = (state_dir / 'approvals' / 'unit-plan.md').read_text(encoding='utf-8')
+    assert 'GAP-REVISION' in gate_body
+    assert 'Unresolved Critical' in gate_body
+
+
+def test_controller_escalates_final_acceptance_unit_plan_reroute_to_human_after_unresolved_critical_gap(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    initial_state = _controller_state_for_unit_plan(workspace)
+    initial_state.update(
+        {
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'scopeApproved': True,
+            'unitPlanAccepted': True,
+            'unitPlanDraftGenerated': True,
+            'finalAcceptanceAccepted': False,
+        }
+    )
+    initial_state['objectiveCoverage'][0]['status'] = 'covered'
+    initial_state['units'][0]['passes'] = True
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(initial_state, force=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+    (approvals_dir / 'unit-plan.md').write_text('# Unit Plan Confirmation\n', encoding='utf-8')
+    (approvals_dir / 'final-acceptance.md').write_text(
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Defect fix: approved requirements are correct; final acceptance found bugs in completed work.\n'
+        '- [x] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
+        'Reviewer note: final acceptance shows verification commands need broader coverage.\n',
+        encoding='utf-8',
+    )
+    strategist_calls = 0
+
+    def fake_run_agent_backend(request):
+        nonlocal strategist_calls
+        if request.role == 'test_strategist':
+            strategist_calls += 1
+            (request.artifact_dir / 'test-strategy.json').write_text(json.dumps({'acceptance_criteria': []}), encoding='utf-8')
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps(
+                    {
+                        'gaps': [
+                            {
+                                'id': 'GAP-FINAL',
+                                'severity': 'Critical',
+                                'type': 'missing_acceptance_criterion_mapping',
+                                'message': 'AC-1 has no mapped behavioral test',
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    controller.reject_final_acceptance_gate()
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state.get('status') != 'blocked'
+    assert state['testStrategistPlannerRetryCount'] == 0, 'Planner is no longer retried for test strategy gaps'
+    assert strategist_calls == 2, 'initial strategist run + patcher run (both return gappy strategy)'
+    gate_body = (state_dir / 'approvals' / 'unit-plan.md').read_text(encoding='utf-8')
+    assert 'GAP-FINAL' in gate_body
+    assert 'Unresolved Critical' in gate_body
 
 
 def test_dry_run_until_done_advances_workflow_and_writes_artifacts(tmp_path: Path) -> None:
@@ -194,6 +1610,85 @@ def test_drive_compact_output_shows_unit_roadmap_and_attempt_summary(tmp_path: P
     assert '验证 通过' in rendered
     assert '[进度]' not in rendered
     assert '[执行]' not in rendered
+
+
+def test_complete_unit_keeps_multi_unit_objective_partial_until_all_units_pass(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'multi-unit-delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'UNIT_COMPLETE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {
+                    'objective': 'Complete usable system',
+                    'units': ['unit-01', 'unit-02', 'unit-03'],
+                    'status': 'partial',
+                },
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'First unit', 'passes': False},
+                {'id': 'unit-02', 'name': 'Second unit', 'passes': False},
+                {'id': 'unit-03', 'name': 'Third unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+
+    state = controller.run_once()
+
+    assert state['objectiveCoverage'][0]['status'] == 'partial'
+    assert state['units'][0]['passes'] is True
+    assert state['currentUnitId'] == 'unit-02'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert not (state_dir / 'approvals' / 'final-acceptance.md').exists()
+
+
+def test_reconcile_reopens_early_final_acceptance_when_units_are_incomplete(tmp_path: Path) -> None:
+    state = {
+        'task_id': 'multi-unit-delivery',
+        'currentUnitId': 'unit-01',
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'lastVerifiedStep': 'VERIFY_UNIT',
+        'status': 'active',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'scopeApproved': True,
+        'humanGatesRequired': True,
+        'requirementsAccepted': True,
+        'unitPlanAccepted': True,
+        'finalAcceptanceAccepted': False,
+        'objectiveCoverage': [
+            {
+                'objective': 'Complete usable system',
+                'units': ['unit-01', 'unit-02', 'unit-03'],
+                'status': 'covered',
+            },
+        ],
+        'units': [
+            {'id': 'unit-01', 'name': 'First unit', 'passes': True},
+            {'id': 'unit-02', 'name': 'Second unit', 'passes': False},
+            {'id': 'unit-03', 'name': 'Third unit', 'passes': False},
+        ],
+    }
+
+    reconciled = reconcile_state(state, tmp_path / 'artifacts')
+
+    assert validate_objective_coverage(reconciled) is False
+    assert reconciled['objectiveCoverage'][0]['status'] == 'partial'
+    assert reconciled['currentUnitId'] == 'unit-02'
+    assert reconciled['currentStep'] == 'EXECUTE_UNIT'
+    assert reconciled['finalAcceptanceAccepted'] is False
 
 
 def test_drive_compact_output_shows_planning_roadmap_before_unit_execution(tmp_path: Path) -> None:
@@ -839,7 +2334,9 @@ print('{"decision":"dismissed"}')
 
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
-    assert 'https://share.plannotator.ai/#fake' in result.stdout
+    assert 'http://localhost:20000' in result.stdout
+    assert 'Open this link on your local machine to annotate:' not in result.stdout
+    assert 'https://share.plannotator.ai/#fake' not in result.stdout
     assert '请在 Plannotator 浏览器里选择 Approve 或 Close。Approve 会自动继续。' in result.stdout
     assert '[Plannotator] 已关闭，未批准；仍停在人工确认点。' in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
@@ -1411,7 +2908,9 @@ print('{"decision":"approved"}', flush=True)
 
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
-    assert 'https://share.plannotator.ai/#long-running' in result.stdout
+    assert 'http://localhost:20000' in result.stdout
+    assert 'Open this link on your local machine to annotate:' not in result.stdout
+    assert 'https://share.plannotator.ai/#long-running' not in result.stdout
     assert '等待 Plannotator 操作结果' in result.stdout
     assert '[Plannotator] 已收到 Approve，等同于人工确认通过。' in result.stdout
     summary = json.loads((state_dir / 'plannotator' / 'unit-plan-last-review.json').read_text(encoding='utf-8'))
@@ -1737,6 +3236,7 @@ def test_drive_can_reject_final_acceptance_and_return_to_builder(tmp_path: Path)
         '# Final Acceptance Confirmation\n\n'
         '## Rejection Routing\n'
         '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Defect fix: approved requirements are correct; final acceptance found bugs in completed work.\n'
         '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
         '- [x] Implementation rework: approved requirements are correct; implementation needs changes.\n'
         '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
@@ -1803,6 +3303,7 @@ def test_reject_final_acceptance_routes_to_requirements_when_selected_with_other
         '# Final Acceptance Confirmation\n\n'
         '## Rejection Routing\n'
         '- [x] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Defect fix: approved requirements are correct; final acceptance found bugs in completed work.\n'
         '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
         '- [x] Implementation rework: approved requirements are correct; implementation needs changes.\n'
         '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
@@ -1856,6 +3357,7 @@ def test_reject_final_acceptance_requires_human_routing_checkbox(tmp_path: Path)
         '# Final Acceptance Confirmation\n\n'
         '## Rejection Routing\n'
         '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Defect fix: approved requirements are correct; final acceptance found bugs in completed work.\n'
         '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
         '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
         '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n',
@@ -1906,6 +3408,7 @@ def test_drive_prompts_for_final_acceptance_rejection_route_when_unselected(tmp_
         '# Final Acceptance Confirmation\n\n'
         '## Rejection Routing\n'
         '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Defect fix: approved requirements are correct; final acceptance found bugs in completed work.\n'
         '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
         '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
         '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
@@ -1920,18 +3423,173 @@ def test_drive_prompts_for_final_acceptance_rejection_route_when_unselected(tmp_
         '--auto-approve',
         '--max-steps',
         '0',
-        input_text='r\n3\n',
+        input_text='r\n4\n',
     )
 
     assert result.returncode == 0, result.stderr
     assert '[验收路由] 请选择最终验收不通过后的流向：' in result.stdout
-    assert '3  实现返工 -> Builder' in result.stdout
+    assert '1  验收缺陷修复 -> Defect Fix' in result.stdout
+    assert '4  实现返工 -> Builder' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['currentStep'] == 'EXECUTE_UNIT'
     assert state['finalAcceptanceRejectionRoute'] == 'implementation'
     content = gate_path.read_text(encoding='utf-8')
-    assert '- [x] Implementation rework:' in content
+    assert '- [x] 实现返工:' in content
     assert 'Reviewer note: button copy is wrong.' in content
+
+
+def test_drive_defect_fix_route_migrates_old_final_acceptance_gate_and_keeps_plannotator_feedback(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'v2-2-u5-baidu-search',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'unitPlanDraftGenerated': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'Logo objective', 'units': ['v2-2-u2-logo-real'], 'status': 'covered'},
+                {'objective': 'Baidu objective', 'units': ['v2-2-u5-baidu-search'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'v2-2-u2-logo-real', 'name': 'logo', 'passes': True},
+                {'id': 'v2-2-u5-baidu-search', 'name': 'baidu', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.rrc_human_gates import write_gate_file
+
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    gate_path = approvals_dir / 'final-acceptance.md'
+    write_gate_file(
+        gate_path,
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        'If final acceptance is rejected, select the human routing decision below. Multiple selections are allowed; requirements revision has highest priority.\n'
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
+        '## Rejection Notes\n'
+        'Old gate format without Defect fix row.\n',
+    )
+    plannotator_dir = state_dir / 'plannotator'
+    plannotator_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = plannotator_dir / 'final-acceptance-last-review.stdout.log'
+    stdout_path.write_text(
+        json.dumps(
+            {
+                'decision': 'annotated',
+                'feedback': '# File Feedback\n\nplayback logo needs dark-mode asset and better placement.',
+            }
+        ),
+        encoding='utf-8',
+    )
+    (plannotator_dir / 'final-acceptance-last-review.json').write_text(
+        json.dumps(
+            {
+                'gate_path': str(gate_path),
+                'approval_gate_path': str(gate_path),
+                'stdout_path': str(stdout_path),
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--max-steps',
+        '0',
+        input_text='r\n1\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '[验收路由] 已选择：Defect fix' in result.stdout
+    assert '[返工] 最终验收未通过，已进入验收缺陷修复流程。' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['finalAcceptanceRejectionRoute'] == 'defect_fix'
+    assert 'playback logo needs dark-mode asset' in state['finalAcceptanceDefectFeedback']
+    content = gate_path.read_text(encoding='utf-8')
+    assert '- [x] 验收缺陷修复:' in content
+    assert '- [ ] 需求变更:' in content
+
+
+def test_reject_final_acceptance_routes_to_defect_fix_unit_plan_revision(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'v2-2-u5-baidu-search',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'V2.2',
+            'feasibleOutcome': 'V2.2',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'unitPlanDraftGenerated': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'i18n coverage', 'units': ['v2-2-u1-i18n-fix'], 'status': 'covered'},
+                {'objective': 'logo coverage', 'units': ['v2-2-u2-logo-real'], 'status': 'covered'},
+                {'objective': 'baidu provider', 'units': ['v2-2-u5-baidu-search'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'v2-2-u1-i18n-fix', 'name': 'i18n', 'passes': True},
+                {'id': 'v2-2-u2-logo-real', 'name': 'logo', 'passes': True},
+                {'id': 'v2-2-u5-baidu-search', 'name': 'baidu', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    gate_path = approvals_dir / 'final-acceptance.md'
+    gate_path.write_text(
+        '# Final Acceptance Confirmation\n\n'
+        '## Rejection Routing\n'
+        '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [x] Defect fix: approved requirements are correct; final acceptance found bugs in completed work.\n'
+        '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
+        '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
+        '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
+        'Reviewer note: homepage logo is still text-only; workbench has untranslated strings.\n',
+        encoding='utf-8',
+    )
+
+    controller.reject_final_acceptance_gate()
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['finalAcceptanceRejectionRoute'] == 'defect_fix'
+    assert state['requirementsAccepted'] is True
+    assert state['unitPlanAccepted'] is False
+    assert state['unitPlanDraftGenerated'] is True
+    assert state['finalAcceptanceAccepted'] is False
+    assert state['finalAcceptanceDefectFeedback'].startswith('# Final Acceptance Confirmation')
+    assert 'homepage logo is still text-only' in state['finalAcceptanceDefectFeedback']
+    assert state['unitPlanRevisionMode'] == 'defect_fix'
+    assert all(unit['passes'] is True for unit in state['units'])
 
 
 def test_reject_final_acceptance_routes_to_unit_plan_revision(tmp_path: Path) -> None:
@@ -1969,6 +3627,7 @@ def test_reject_final_acceptance_routes_to_unit_plan_revision(tmp_path: Path) ->
         '# Final Acceptance Confirmation\n\n'
         '## Rejection Routing\n'
         '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Defect fix: approved requirements are correct; final acceptance found bugs in completed work.\n'
         '- [x] Unit plan revision: unit scope or verification commands are wrong.\n'
         '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
         '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
@@ -2019,6 +3678,7 @@ def test_reject_final_acceptance_can_block_for_environment_or_evidence_issue(tmp
         '# Final Acceptance Confirmation\n\n'
         '## Rejection Routing\n'
         '- [ ] Requirements revision: approved requirements are incomplete or wrong.\n'
+        '- [ ] Defect fix: approved requirements are correct; final acceptance found bugs in completed work.\n'
         '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
         '- [ ] Implementation rework: approved requirements are correct; implementation needs changes.\n'
         '- [x] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
@@ -2132,3 +3792,276 @@ def test_start_rejects_existing_state_when_target_differs_without_force(tmp_path
     assert 'Existing session does not match start arguments' in result.stderr
     assert '--target=1.2 but session requestedOutcome=1.1' in result.stderr
     assert 'Use --force to reinitialize' in result.stderr
+
+
+def test_unit_plan_drafter_emits_test_strategist_start_progress(tmp_path: Path, monkeypatch) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    artifacts_dir = tmp_path / 'artifacts'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Behavior works.\n', encoding='utf-8')
+    state = _controller_state_for_unit_plan(workspace)
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps({'acceptance_criteria': []}),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': []}),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    emitted: list[str] = []
+    run_unit_plan_drafter(state, approvals_dir, artifacts_dir, progress_callback=emitted.append)
+
+    assert any('Test Strategist' in msg or 'Codex' in msg or 'test strategist' in msg.lower() for msg in emitted), \
+        f'Expected a startup message about Test Strategist but got: {emitted}'
+
+
+def test_drive_threads_output_func_to_unit_plan_drafter(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_controller_state_for_unit_plan(workspace), force=True)
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Behavior works.\n', encoding='utf-8')
+
+    def fake_run_agent_backend(request):
+        if request.role == 'test_strategist':
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps({'acceptance_criteria': []}),
+                encoding='utf-8',
+            )
+            (request.artifact_dir / 'unit-plan-gap-report.json').write_text(
+                json.dumps({'gaps': []}),
+                encoding='utf-8',
+            )
+        else:
+            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    output: list[str] = []
+
+    def quit_at_gate(_prompt: str) -> str:
+        return 'q'
+
+    controller.drive(max_steps=2, output_func=output.append, input_func=quit_at_gate, timestamp_output=False)
+
+    assert any('Test Strategist' in msg or 'Codex' in msg or 'test strategist' in msg.lower() for msg in output), \
+        f'Expected startup message in drive output but got: {output}'
+
+
+# ---------------------------------------------------------------------------
+# Codex self-patch tests (Option C)
+# ---------------------------------------------------------------------------
+
+def test_codex_patcher_fills_gaps_and_marks_patched_test_cases(tmp_path: Path, monkeypatch) -> None:
+    """When the initial strategist leaves a gap, a second Codex run patches it
+    and marks each added test_case with codex_patch=True."""
+    from workflow_controller.rrc_steps import _run_test_strategist_if_enabled
+
+    draft_dir = tmp_path / 'unit-plan-draft'
+    draft_dir.mkdir()
+    approvals_dir = tmp_path / 'approvals'
+    approvals_dir.mkdir()
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('## 1. 需求\n- req\n', encoding='utf-8')
+    (draft_dir / 'unit-plan-body.md').write_text('## AC\n- AC-1-1: do thing\n', encoding='utf-8')
+
+    call_count = [0]
+
+    def fake_run(request):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps({'acceptance_criteria': [{'id': 'AC-1-1', 'test_cases': []}]}),
+                encoding='utf-8',
+            )
+        else:
+            patched = {
+                'acceptance_criteria': [
+                    {'id': 'AC-1-1', 'test_cases': [
+                        {'id': 'TC-1-1-a', 'layer': 'functional',
+                         'command': 'pytest tests/', 'expected': 'pass',
+                         'codex_patch': True},
+                    ]}
+                ]
+            }
+            (request.artifact_dir / 'test-strategy.json').write_text(json.dumps(patched), encoding='utf-8')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run)
+
+    state: dict = {'testStrategistEnabled': True, 'currentUnitId': 'u1'}
+    _run_test_strategist_if_enabled(
+        state=state,
+        approvals_dir=approvals_dir,
+        draft_dir=draft_dir,
+        workspace_path=tmp_path,
+    )
+
+    assert call_count[0] == 2, f'patcher should run a second Codex pass when gaps exist, got {call_count[0]}'
+    strategy = json.loads((draft_dir / 'test-strategy.json').read_text(encoding='utf-8'))
+    tc = strategy['acceptance_criteria'][0]['test_cases'][0]
+    assert tc.get('codex_patch') is True
+
+
+def test_codex_patch_markers_appear_in_unit_plan_gate(tmp_path: Path) -> None:
+    """Patched test cases are rendered in a dedicated section in the gate."""
+    from workflow_controller.rrc_steps import _merge_review_package_into_unit_plan_gate
+
+    draft_dir = tmp_path / 'unit-plan-draft'
+    draft_dir.mkdir()
+
+    patched_strategy = {
+        'acceptance_criteria': [
+            {'id': 'AC-1-1', 'test_cases': [
+                {'id': 'TC-1-1-a', 'layer': 'functional',
+                 'command': 'pytest tests/', 'expected': 'pass',
+                 'codex_patch': True},
+            ]}
+        ]
+    }
+    (draft_dir / 'test-strategy.json').write_text(json.dumps(patched_strategy), encoding='utf-8')
+    (draft_dir / 'unit-plan-gap-report.json').write_text(
+        json.dumps({'gap_counts': {'critical': 0, 'major': 0, 'minor': 0}, 'gaps': []}),
+        encoding='utf-8',
+    )
+
+    gate = _merge_review_package_into_unit_plan_gate(
+        'Original body\n', draft_dir, retry_count=0
+    )
+
+    assert 'Codex' in gate
+    assert 'TC-1-1-a' in gate
+    assert 'AC-1-1' in gate
+
+
+def test_patcher_failure_does_not_block_gate_creation(tmp_path: Path, monkeypatch) -> None:
+    """If the patcher Codex run fails, the original test-strategy.json is kept
+    and the strategist summary is returned without raising."""
+    from workflow_controller.rrc_steps import _run_test_strategist_if_enabled
+
+    draft_dir = tmp_path / 'unit-plan-draft'
+    draft_dir.mkdir()
+    approvals_dir = tmp_path / 'approvals'
+    approvals_dir.mkdir()
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# req\n', encoding='utf-8')
+    (draft_dir / 'unit-plan-body.md').write_text('body\n', encoding='utf-8')
+
+    call_count = [0]
+
+    def fake_run(request):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            (request.artifact_dir / 'test-strategy.json').write_text(
+                json.dumps({'acceptance_criteria': [{'id': 'AC-1-1', 'test_cases': []}]}),
+                encoding='utf-8',
+            )
+            return _fake_agent_result(request)
+        return _fake_agent_result(request, status='failed', returncode=1, stderr='error')
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run)
+
+    state: dict = {'testStrategistEnabled': True, 'currentUnitId': 'u1'}
+    summary = _run_test_strategist_if_enabled(
+        state=state,
+        approvals_dir=approvals_dir,
+        draft_dir=draft_dir,
+        workspace_path=tmp_path,
+    )
+
+    assert (draft_dir / 'test-strategy.json').exists()
+    assert 'gap_counts' in summary
+
+
+def test_patch_list_in_final_acceptance_gate_is_extracted_for_builder(tmp_path: Path) -> None:
+    """When ## 修改清单 has items, finalAcceptanceRejectionFeedback contains only those items."""
+    from workflow_controller.rrc_human_gates import write_gate_file, normalize_final_acceptance_rejection_routing
+
+    state_dir = tmp_path / 'state'
+    initial_state = _controller_state_for_unit_plan(tmp_path / 'workspace')
+    initial_state.update({
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'unitPlanDraftGenerated': True,
+        'unitPlanAccepted': True,
+        'scopeApproved': True,
+        'units': [{'id': 'u1', 'passes': True}],
+        'objectiveCoverage': [{'objective': 'obj1', 'status': 'covered', 'units': ['u1']}],
+    })
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(initial_state, force=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+
+    gate_body = (
+        '# 最终验收确认\n\n'
+        '## 结果\n- 状态: active\n\n'
+        '## 修改清单\n\n'
+        '- [ ] 登录按钮文字改为"立即登录"\n'
+        '- [ ] 错误提示消失时间从 5s 改为 3s\n\n'
+        '## 人工审阅清单\n- [ ] 实际结果满足已批准的验收标准。\n\n'
+    )
+    gate_body = normalize_final_acceptance_rejection_routing(
+        gate_body, selected_route='implementation'
+    )
+    write_gate_file(approvals_dir / 'final-acceptance.md', gate_body)
+
+    controller.reject_final_acceptance_gate()
+
+    saved = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    feedback = saved['finalAcceptanceRejectionFeedback']
+    assert '立即登录' in feedback
+    assert '5s 改为 3s' in feedback
+    assert '## 结果' not in feedback, 'Full gate content should not be in feedback when patch list is present'
+    assert '## 覆盖情况' not in feedback
+
+
+def test_empty_patch_list_falls_back_to_full_gate_for_builder(tmp_path: Path) -> None:
+    """When ## 修改清单 is present but empty, builder receives the full gate content."""
+    from workflow_controller.rrc_human_gates import write_gate_file, normalize_final_acceptance_rejection_routing
+
+    state_dir = tmp_path / 'state'
+    initial_state = _controller_state_for_unit_plan(tmp_path / 'workspace')
+    initial_state.update({
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'unitPlanDraftGenerated': True,
+        'unitPlanAccepted': True,
+        'scopeApproved': True,
+        'units': [{'id': 'u1', 'passes': True}],
+        'objectiveCoverage': [{'objective': 'obj1', 'status': 'covered', 'units': ['u1']}],
+    })
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(initial_state, force=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+
+    gate_body = (
+        '# 最终验收确认\n\n'
+        '## 结果\n- 状态: active\n\n'
+        '## 修改清单\n\n'
+        '<!-- 留空 -->\n\n'
+        '## 人工审阅清单\n- [ ] 实际结果满足已批准的验收标准。\n\n'
+    )
+    gate_body = normalize_final_acceptance_rejection_routing(
+        gate_body, selected_route='implementation'
+    )
+    write_gate_file(approvals_dir / 'final-acceptance.md', gate_body)
+
+    controller.reject_final_acceptance_gate()
+
+    saved = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    feedback = saved['finalAcceptanceRejectionFeedback']
+    assert '# 最终验收确认' in feedback, 'Full gate should be used when patch list is empty'

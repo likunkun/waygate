@@ -12,14 +12,18 @@ from pathlib import Path
 from typing import Any, Callable
 
 from workflow_controller.rrc_human_gates import (
+    FINAL_ACCEPTANCE_REJECTION_ROUTE_ALIASES,
     apply_unit_plan_state_patch_from_gate,
     approve_gate_file,
     check_gate_file,
     ensure_final_acceptance_gate,
     ensure_requirements_gate,
     ensure_unit_plan_gate,
+    extract_patch_list,
     gate_body,
     migrate_unit_plan_gate_to_state_patch,
+    normalize_final_acceptance_rejection_routing,
+    validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,
     write_gate_file,
@@ -28,6 +32,7 @@ from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import (
     VerificationEnvironmentError,
     build_state_from_ralph,
+    build_state_from_target_acceptance,
     render_target_acceptance_prompt,
 )
 from workflow_controller.rrc_state_store import StateStore
@@ -41,6 +46,8 @@ from workflow_controller.rrc_validators import (
     validate_verification_verdict,
 )
 from workflow_controller.rrc_steps import (
+    TestStrategistBlocked,
+    TestStrategistFallbackBlocked,
     ask_human_release_approval,
     ask_human_scope_approval,
     mark_current_unit_covered,
@@ -67,6 +74,7 @@ DEFAULT_INITIAL_STATE: dict[str, Any] = {
     'feasibleOutcome': 'usable-system',
     'scopeApproved': False,
     'autoApprove': False,
+    'testStrategistEnabled': False,
     'currentUnitNeedsUiDesign': False,
     'objectiveCoverage': [
         {
@@ -164,18 +172,21 @@ HUMAN_GATE_LABELS = {
 
 FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS = {
     'requirements': 'Requirements revision',
+    'defect_fix': 'Defect fix',
     'unit_plan': 'Unit plan revision',
     'implementation': 'Implementation rework',
     'blocked': 'Blocked',
 }
 FINAL_ACCEPTANCE_REJECTION_ROUTE_PRIORITY = (
     'requirements',
+    'defect_fix',
     'unit_plan',
     'implementation',
     'blocked',
 )
 FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES = {
     'requirements': '最终验收未通过，已回到需求变更流程。',
+    'defect_fix': '最终验收未通过，已进入验收缺陷修复流程。',
     'unit_plan': '最终验收未通过，已回到 Unit Plan 修订流程。',
     'implementation': '最终验收未通过，已回到 Builder。',
     'blocked': '最终验收未通过，已阻塞等待人工处理。',
@@ -226,6 +237,7 @@ class RalphRefinerController:
         initial_state: dict[str, Any] | None = None,
         force: bool = False,
         from_ralph: bool = False,
+        strategist_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.store.ensure_layout()
         if self.store.session_path.exists() and not force:
@@ -255,9 +267,34 @@ class RalphRefinerController:
                 'currentStep': 'REQUIREMENTS_DRAFT',
                 'nextAllowedActions': ['run_requirements_drafter'],
             })
+        elif self.target:
+            workspace_dir = self.workspace_dir or Path.cwd()
+            state = build_state_from_target_acceptance(
+                workspace_dir=workspace_dir,
+                target=self.target,
+                agent_command=self.agent_command or 'claude',
+                agent_runner=self.agent_runner or 'subprocess',
+                tmux_target=self.tmux_target,
+            )
+            prompt_path = self.state_dir / 'target-acceptance-prompt.md'
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            state['promptPath'] = str(prompt_path)
+            prompt_path.write_text(render_target_acceptance_prompt(state), encoding='utf-8')
+            state.update({
+                'humanGatesRequired': True,
+                'requirementsAccepted': False,
+                'unitPlanAccepted': False,
+                'finalAcceptanceAccepted': False,
+                'requirementsDraftGenerated': False,
+                'currentStep': 'REQUIREMENTS_DRAFT',
+                'nextAllowedActions': ['run_requirements_drafter'],
+            })
         else:
             state = dict(initial_state or DEFAULT_INITIAL_STATE)
         state['autoApprove'] = self.auto_approve
+        state.setdefault('testStrategistEnabled', False)
+        if strategist_overrides:
+            state.update(strategist_overrides)
         self._save_state(state)
         return state
 
@@ -346,6 +383,7 @@ class RalphRefinerController:
                 gate_path,
                 candidate_state,
             )
+            validate_unit_plan_test_case_coverage(gate_path, candidate_state)
             validate_unit_plan_verification_environment(candidate_state)
         except ValueError as exc:
             return f'unit plan gate invalid: {exc}'
@@ -409,9 +447,11 @@ class RalphRefinerController:
             raise ValueError('Final acceptance can only be rejected at WAITING_FINAL_ACCEPTANCE')
 
         gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
+        gate_content = gate_path.read_text(encoding='utf-8')
+        route = _final_acceptance_rejection_route(gate_content)
         rejection_feedback = self._revision_feedback_for_gate('final-acceptance', gate_path)
-        route = _final_acceptance_rejection_route(rejection_feedback)
-        state['finalAcceptanceRejectionFeedback'] = rejection_feedback
+        patch_list = extract_patch_list(gate_content) if route in {'implementation', 'defect_fix'} else None
+        state['finalAcceptanceRejectionFeedback'] = patch_list if patch_list else rejection_feedback
         state['finalAcceptanceRejectionRoute'] = route
         state['finalAcceptanceRejectionCount'] = int(state.get('finalAcceptanceRejectionCount') or 0) + 1
         state['finalAcceptanceAccepted'] = False
@@ -422,6 +462,13 @@ class RalphRefinerController:
         if route == 'requirements':
             self._mark_current_unit_incomplete(state)
             self._route_final_acceptance_rejection_to_requirements(state, rejection_feedback)
+        elif route == 'defect_fix':
+            state['finalAcceptanceDefectFeedback'] = rejection_feedback
+            self._route_final_acceptance_rejection_to_unit_plan(
+                state,
+                rejection_feedback,
+                defect_fix=True,
+            )
         elif route == 'unit_plan':
             self._mark_current_unit_incomplete(state)
             self._route_final_acceptance_rejection_to_unit_plan(state, rejection_feedback)
@@ -477,15 +524,28 @@ class RalphRefinerController:
         self,
         state: dict[str, Any],
         rejection_feedback: str,
+        defect_fix: bool = False,
     ) -> None:
-        state['unitPlanRevisionFeedback'] = rejection_feedback
+        state['unitPlanRevisionFeedback'] = (
+            _defect_fix_unit_plan_revision_feedback(rejection_feedback)
+            if defect_fix
+            else rejection_feedback
+        )
+        if defect_fix:
+            state['unitPlanRevisionMode'] = 'defect_fix'
+        else:
+            state.pop('unitPlanRevisionMode', None)
         state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
         state['unitPlanAccepted'] = False
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
         state['unitPlanDraftGenerated'] = False
 
-        run_unit_plan_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)
+        try:
+            self._run_controller_unit_plan_drafter(state)
+        except (TestStrategistBlocked, TestStrategistFallbackBlocked) as exc:
+            self._block_on_test_strategist(state, exc)
+            return
         validate_required_artifacts(
             self.artifacts_dir / 'unit-plan-draft',
             ['unit-plan-draft-summary.json', 'unit-plan-body.md'],
@@ -571,7 +631,12 @@ class RalphRefinerController:
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
 
-        run_unit_plan_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)
+        try:
+            self._run_controller_unit_plan_drafter(state)
+        except (TestStrategistBlocked, TestStrategistFallbackBlocked) as exc:
+            self._block_on_test_strategist(state, exc)
+            self._save_state(state)
+            return gate_path
         validate_required_artifacts(
             self.artifacts_dir / 'unit-plan-draft',
             ['unit-plan-draft-summary.json', 'unit-plan-body.md'],
@@ -681,6 +746,40 @@ class RalphRefinerController:
                 + '. Use --force to reinitialize.'
             )
 
+    def _run_controller_unit_plan_drafter(
+        self,
+        state: dict[str, Any],
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> None:
+        effective_callback = progress_callback or getattr(self, '_drive_progress_callback', None)
+        state['testStrategistCriticalReworkRequired'] = True
+        try:
+            run_unit_plan_drafter(
+                state,
+                self.approvals_dir,
+                self.artifacts_dir,
+                dry_run=self.dry_run,
+                progress_callback=effective_callback,
+            )
+        finally:
+            state.pop('testStrategistCriticalReworkRequired', None)
+
+    def _block_on_test_strategist(
+        self,
+        state: dict[str, Any],
+        exc: TestStrategistBlocked | TestStrategistFallbackBlocked,
+    ) -> None:
+        state['status'] = 'blocked'
+        state['currentStep'] = 'UNIT_PLAN_DRAFT'
+        state['blockedReason'] = str(exc)
+        if isinstance(exc, TestStrategistBlocked):
+            state['testStrategistPlannerRetryCount'] = exc.retry_count
+            state['unitPlanRetryCount'] = exc.retry_count
+        self.store.append_event('unit_plan_draft_blocked', {
+            'task_id': state.get('task_id'),
+            'reason': str(exc),
+        })
+
     def run_once(self) -> dict[str, Any]:
         return self._run_once()
 
@@ -721,7 +820,12 @@ class RalphRefinerController:
             return state
 
         if action == 'run_unit_plan_drafter':
-            run_unit_plan_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)
+            try:
+                self._run_controller_unit_plan_drafter(state)
+            except (TestStrategistBlocked, TestStrategistFallbackBlocked) as exc:
+                self._block_on_test_strategist(state, exc)
+                self._save_state(state)
+                return state
             validate_required_artifacts(self.artifacts_dir / 'unit-plan-draft', ['unit-plan-draft-summary.json', 'unit-plan-body.md'])
             validate_required_artifacts(self.approvals_dir, ['unit-plan.md'])
             state['unitPlanDraftGenerated'] = True
@@ -780,6 +884,7 @@ class RalphRefinerController:
                         gate_path,
                         state,
                     )
+                    validate_unit_plan_test_case_coverage(gate_path, state)
                     validate_unit_plan_verification_environment(state)
                 except ValueError as exc:
                     state['unitPlanAccepted'] = False
@@ -1015,6 +1120,7 @@ class RalphRefinerController:
         if timestamp_output:
             output_func = _timestamped_output(output_func)
 
+        self._drive_progress_callback: Callable[[str], None] | None = output_func
         steps = 0
         no_progress_steps = 0
         color_enabled = _color_enabled(color_mode)
@@ -1075,6 +1181,7 @@ class RalphRefinerController:
             else:
                 no_progress_steps = 0
 
+        self._drive_progress_callback = None
         if state.get('status') == 'done':
             output_func(_paint('[完成] 工作流已完成。', 'green', color_enabled))
         elif state.get('status') == 'blocked':
@@ -1322,9 +1429,11 @@ def _final_acceptance_rejection_route(content: str) -> str:
     body = gate_body(content)
     selected: set[str] = set()
     for route, label in FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS.items():
-        pattern = rf'^\s*[-*]\s*\[[xX]\]\s*{re.escape(label)}\s*:'
-        if re.search(pattern, body, flags=re.MULTILINE):
-            selected.add(route)
+        for alias in (label, *FINAL_ACCEPTANCE_REJECTION_ROUTE_ALIASES.get(route, ())):
+            pattern = rf'^\s*[-*]\s*\[[xX]\]\s*{re.escape(alias)}\s*:'
+            if re.search(pattern, body, flags=re.MULTILINE):
+                selected.add(route)
+                break
 
     if not selected:
         raise ValueError(
@@ -1336,6 +1445,16 @@ def _final_acceptance_rejection_route(content: str) -> str:
         if route in selected:
             return route
     raise ValueError('Final acceptance rejection routing selected an unknown option.')
+
+
+def _defect_fix_unit_plan_revision_feedback(rejection_feedback: str) -> str:
+    return (
+        'Final acceptance defect-fix request.\n\n'
+        'The approved requirements remain valid. Do not route this as a requirements change.\n'
+        'Generate focused bug-fix units that address the defects below, and reopen only the affected '
+        'covered objectives by adding those bug-fix unit ids with status partial in the Controller State Patch.\n\n'
+        f'{rejection_feedback}'
+    )
 
 
 def _ensure_final_acceptance_rejection_route_from_prompt(
@@ -1350,31 +1469,45 @@ def _ensure_final_acceptance_rejection_route_from_prompt(
         pass
 
     output_func('[验收路由] 请选择最终验收不通过后的流向：')
-    output_func('  1  需求变更 -> Requirements')
-    output_func('  2  Unit Plan 问题 -> Unit Plan')
-    output_func('  3  实现返工 -> Builder')
-    output_func('  4  阻塞/资料环境问题 -> Blocked')
+    output_func('  1  验收缺陷修复 -> Defect Fix')
+    output_func('  2  需求变更 -> Requirements')
+    output_func('  3  Unit Plan 问题 -> Unit Plan')
+    output_func('  4  实现返工 -> Builder')
+    output_func('  5  阻塞/资料环境问题 -> Blocked')
     output_func('  q  取消')
     route_by_choice = {
-        '1': 'requirements',
+        '1': 'defect_fix',
+        'defect': 'defect_fix',
+        'defect-fix': 'defect_fix',
+        'defect_fix': 'defect_fix',
+        'bug': 'defect_fix',
+        'bug-fix': 'defect_fix',
+        'bugfix': 'defect_fix',
+        'fix': 'defect_fix',
+        '缺陷': 'defect_fix',
+        '缺陷修复': 'defect_fix',
+        '修bug': 'defect_fix',
+        '验收缺陷': 'defect_fix',
+        '验收缺陷修复': 'defect_fix',
+        '2': 'requirements',
         'requirements': 'requirements',
         'requirement': 'requirements',
         'req': 'requirements',
         '需求': 'requirements',
         '需求变更': 'requirements',
-        '2': 'unit_plan',
+        '3': 'unit_plan',
         'unit': 'unit_plan',
         'unit-plan': 'unit_plan',
         'unit_plan': 'unit_plan',
         'plan': 'unit_plan',
         '计划': 'unit_plan',
-        '3': 'implementation',
+        '4': 'implementation',
         'implementation': 'implementation',
         'impl': 'implementation',
         'builder': 'implementation',
         '实现': 'implementation',
         '实现返工': 'implementation',
-        '4': 'blocked',
+        '5': 'blocked',
         'blocked': 'blocked',
         'block': 'blocked',
         '阻塞': 'blocked',
@@ -1393,18 +1526,17 @@ def _ensure_final_acceptance_rejection_route_from_prompt(
             _write_final_acceptance_rejection_route(gate_path, route)
             output_func(f"[验收路由] 已选择：{FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS[route]}")
             return True
-        output_func('[提示] 请输入 1 / 2 / 3 / 4 / q。')
+        output_func('[提示] 请输入 1 / 2 / 3 / 4 / 5 / q。')
 
 
 def _write_final_acceptance_rejection_route(gate_path: Path, route: str) -> None:
     if route not in FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS:
         raise ValueError(f'Unknown final acceptance rejection route: {route}')
     content = gate_path.read_text(encoding='utf-8')
-    for candidate, label in FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS.items():
-        checked = 'x' if candidate == route else ' '
-        pattern = rf'^(\s*[-*]\s*)\[[ xX]\](\s*{re.escape(label)}\s*:.*)$'
-        content = re.sub(pattern, rf'\1[{checked}]\2', content, flags=re.MULTILINE)
-    gate_path.write_text(content, encoding='utf-8')
+    write_gate_file(
+        gate_path,
+        normalize_final_acceptance_rejection_routing(gate_body(content), selected_route=route),
+    )
 
 
 def _verification_progress_printer(
@@ -1921,8 +2053,18 @@ def _timestamped_output(output_func: Callable[[str], None]) -> Callable[[str], N
 
 def _print_plannotator_output(output: str, output_func: Callable[[str], None]) -> None:
     for line in output.splitlines():
-        if line.strip():
-            output_func(f'  {line}')
+        stripped = line.strip()
+        if not stripped or _should_hide_plannotator_output_line(stripped):
+            continue
+        output_func(f'  {line}')
+
+
+def _should_hide_plannotator_output_line(line: str) -> bool:
+    hidden_prefixes = (
+        'Open this link on your local machine to annotate:',
+        'https://share.plannotator.ai/#',
+    )
+    return line.startswith(hidden_prefixes)
 
 
 def _plannotator_review_path_for_gate(artifacts_dir: Path, gate: str, approval_gate_path: Path) -> Path:
@@ -1964,6 +2106,8 @@ def _read_plannotator_submitted_feedback(
     gate_content: str,
 ) -> tuple[str | None, str | None]:
     decision = _read_plannotator_decision(state_dir, gate, gate_path, gate_content)
+    if decision.get('status') == 'stale' and gate == 'final-acceptance':
+        decision = _read_plannotator_decision(state_dir, gate, gate_path)
     if decision.get('status') in {'missing', 'stale', 'path-mismatch'}:
         return None, None
     if decision.get('status') == 'feedback':
@@ -2169,6 +2313,9 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
     init_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
     init_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
+    init_parser.add_argument('--test-strategist', action='store_true', default=False, help='Enable Test Strategist for Unit Plan draft')
+    init_parser.add_argument('--test-strategist-command', default=None, help='Override Test Strategist runner command')
+    init_parser.add_argument('--test-strategist-env', action='append', metavar='KEY=VALUE', dest='test_strategist_env', help='Inject env var into Test Strategist subprocess only (repeatable)')
 
     status_parser = subparsers.add_parser(
         'status',
@@ -2276,6 +2423,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _build_strategist_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
+    enabled = getattr(args, 'test_strategist', False)
+    command = getattr(args, 'test_strategist_command', None)
+    raw_env = getattr(args, 'test_strategist_env', None) or []
+    if not enabled and not command and not raw_env:
+        return None
+    overrides: dict[str, Any] = {'testStrategistEnabled': True}
+    if command or raw_env:
+        role_runner: dict[str, Any] = {'runner': 'subprocess'}
+        if command:
+            role_runner['command'] = command
+        if raw_env:
+            env: dict[str, str] = {}
+            for pair in raw_env:
+                k, _, v = pair.partition('=')
+                env[k] = v
+            role_runner['env'] = env
+        overrides['roleRunners'] = {'test_strategist': role_runner}
+    return overrides
+
+
 def render_status_line(state: dict[str, Any]) -> str:
     next_action = state.get('nextAction') or compute_next_allowed_action(state)
     return (
@@ -2302,7 +2470,8 @@ def main() -> None:
     )
 
     if args.command == 'init':
-        state = controller.init_state(force=args.force, from_ralph=args.from_ralph)
+        strategist_overrides = _build_strategist_overrides(args)
+        state = controller.init_state(force=args.force, from_ralph=args.from_ralph, strategist_overrides=strategist_overrides)
         print(render_status_line(state))
         return
 
