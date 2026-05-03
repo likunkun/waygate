@@ -560,6 +560,40 @@ def test_make_runner_env_only_test_strategist_config_keeps_codex_default() -> No
     assert runner.env == {'HTTP_PROXY': 'http://127.0.0.1:7890'}
 
 
+def test_make_runner_role_specific_refiner_overrides_global_only_for_that_role() -> None:
+    state = {
+        'agentRunner': 'tmux-claude',
+        'agentCommand': 'claude',
+        'tmuxTarget': '1.2',
+        'roleRunners': {
+            'refiner': {
+                'runner': 'subprocess',
+                'command': 'codex exec -',
+                'env': {'SECRET_TOKEN': ''},
+            },
+        },
+    }
+
+    refiner_runner = make_runner(state, role='refiner')
+    builder_runner = make_runner(state, role='builder')
+
+    assert refiner_runner.backend == 'subprocess'
+    assert refiner_runner.agent_command == 'codex exec -'
+    assert refiner_runner.tmux_target is None
+    assert refiner_runner.env == {'SECRET_TOKEN': ''}
+    assert refiner_runner.to_metadata() == {
+        'role': 'refiner',
+        'backend': 'subprocess',
+        'agent_command': 'codex exec -',
+        'tmux_target': None,
+        'env_keys': ['SECRET_TOKEN'],
+    }
+    assert builder_runner.backend == 'tmux-claude'
+    assert builder_runner.agent_command == 'claude'
+    assert builder_runner.tmux_target == '1.2'
+    assert builder_runner.env == {}
+
+
 def test_subprocess_runner_injects_env_only_from_runner_request(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv('HTTP_PROXY', raising=False)
     monkeypatch.delenv('HTTPS_PROXY', raising=False)

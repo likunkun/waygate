@@ -116,11 +116,17 @@ class TestGeneratorsLayer:
         body = render_requirements_gate_body(_minimal_state())
         assert '# 需求与验收确认' in body
         assert 'It is done' in body
+        assert '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）' in body
+        assert '| AO | AC | Status | Verification Layer | Evidence/Reason |' in body
+        assert 'covered/deferred/rejected/out_of_scope' in body
+        assert '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）' in body
+        assert '| AC | Product Design Ref | Technical Architecture Ref | Notes |' in body
 
     def test_render_unit_plan_gate_body(self) -> None:
         body = render_unit_plan_gate_body(_minimal_state())
         assert '# 单元计划确认' in body
         assert 'Controller State Patch' in body
+        assert '| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in body
 
     def test_ensure_requirements_gate_creates_file(self, tmp_path: Path) -> None:
         path = ensure_requirements_gate(_minimal_state(), tmp_path)

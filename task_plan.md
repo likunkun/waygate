@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）和 V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）。当前继续以 `ROADMAP.md` 为版本规划基线推进 workflow-controller。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）和 V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）。当前继续以 `ROADMAP.md` 为版本规划基线推进 workflow-controller。
 
 ## 各阶段
 
@@ -196,6 +196,37 @@
 - [x] Phase 3.7: Browser Verify — skipped（无用户可见 UI）
 - [x] Phase 4: Verify and Finish — `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `240 passed in 32.12s`
 - **目标：** 新增 Acceptance Obligation Ledger，让人工反馈/验收失败问题以稳定 AO id 贯穿 Requirements、Unit Plan、Verifier evidence 和 Final Acceptance，避免多条问题被压缩成单个 closure unit。
+- **状态：** complete
+
+### 阶段 23：V0.3.2 CodeSimplifier 集成
+- [x] 完成 Unit 1：默认开启配置、CLI opt-out、`roleRunners.refiner` env/command 覆盖和旧 state reconcile。
+- [x] 完成 Unit 2：Refiner prompt、`role='refiner'` runner 调用、`simplifier-result.json` 和兼容 `refinement-summary.json`。
+- [x] 完成 Unit 3：`ok/skipped -> Reviewer`、`changes_requested -> Builder rework`、`failed -> Refiner retry/block` 路由。
+- [x] Builder 下一轮 prompt 注入 CodeSimplifier findings，避免返工缺少精修反馈。
+- [x] runner metadata/env value redaction 覆盖测试。
+- [x] 全量 `workflow_controller/tests` 通过：`252 passed in 30.76s`。
+- [x] 确认未新增浏览器 UI 或页面。
+- **状态：** complete
+
+### 阶段 24：V0.3.3 Requirements Quality Gate
+- [x] 完成 Unit 1：Requirements gate validator、controller approval/check 接线、invalid blockedReason 和 revision feedback 注入。
+- [x] 完成 Unit 2：Requirements draft prompt、本地 gate template、roadmap/计划/进度/发现记录更新。
+- [x] Requirements approval 阻断未映射 active must AO。
+- [x] Requirements approval 阻断未声明 verification layer 的 AC。
+- [x] 支持 AO 显式 `deferred` / `rejected` / `out_of_scope`，但必须填写原因。
+- [x] 全量 `workflow_controller/tests` 通过：`259 passed in 30.51s`。
+- [x] 确认未新增浏览器 UI 或页面。
+- **状态：** complete
+
+### 阶段 25：V0.3.4 Product Design / Technical Architecture Traceability
+- [x] 完成 Unit 1：Requirements 设计/架构可追溯矩阵、approval 质量 gate、draft prompt 和本地 template 更新。
+- [x] 完成 Unit 2：Unit Plan test case 设计/架构引用传播、approval gate、prompt 和本地 template 更新。
+- [x] Requirements 中存在 `Design/Architecture Traceability Matrix` 时，每条 AC 必须同时映射 Product Design Ref 和 Technical Architecture Ref。
+- [x] Unit Plan test case 必须保留对应 AC 的 `product_design_refs` 和 `technical_architecture_refs`。
+- [x] 保持历史兼容：旧 requirements 没有设计/架构矩阵时不会被 V0.3.4 新 gate 阻断。
+- [x] 定向测试通过：`159 passed in 15.06s`。
+- [x] 全量 `workflow_controller/tests` 通过：`264 passed in 31.38s`。
+- [x] 确认未新增浏览器 UI 或页面。
 - **状态：** complete
 
 ## 关键问题

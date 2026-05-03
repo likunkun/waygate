@@ -155,6 +155,10 @@ def _render_previous_controller_failure_feedback(unit_dir: Path) -> str:
     if verification and verification.get('passed') is False:
         sections.append(_format_failed_verification_feedback(verification))
 
+    simplifier = _read_json_object(unit_dir / 'simplifier-result.json')
+    if simplifier and simplifier.get('status') in {'changes_requested', 'failed'}:
+        sections.append(_format_simplifier_feedback(simplifier))
+
     return '\n\n'.join(section for section in sections if section)
 
 
@@ -200,6 +204,47 @@ Issues:
 
 Failed command results:
 {result_blocks}"""
+
+
+def _format_simplifier_feedback(simplifier: dict[str, Any]) -> str:
+    findings = simplifier.get('findings') or []
+    finding_lines = '\n'.join(
+        f"- {finding.get('severity', 'unknown')} {finding.get('type', 'finding')}: {finding.get('message', '')}"
+        for finding in findings
+        if isinstance(finding, dict)
+    )
+    if not finding_lines:
+        finding_lines = '- CodeSimplifier returned no structured findings.'
+
+    changed_files = '\n'.join(
+        f"- {path}"
+        for path in simplifier.get('changed_files') or []
+        if str(path).strip()
+    )
+    if not changed_files:
+        changed_files = '- No changed files reported.'
+
+    stdout = _tail_text(str(simplifier.get('stdout') or '').strip())
+    stderr = _tail_text(str(simplifier.get('stderr') or '').strip())
+    output_blocks = []
+    if stdout:
+        output_blocks.append(f"stdout tail:\n```text\n{stdout}\n```")
+    if stderr:
+        output_blocks.append(f"stderr tail:\n```text\n{stderr}\n```")
+    output_text = '\n\n'.join(output_blocks) or 'No runner output recorded.'
+
+    return f"""## Previous CodeSimplifier feedback
+
+Status: {simplifier.get('status')}
+
+Changed files:
+{changed_files}
+
+Findings:
+{finding_lines}
+
+Runner output:
+{output_text}"""
 
 
 def _format_failed_command_result(result: dict[str, Any]) -> str:

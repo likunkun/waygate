@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from workflow_controller.acceptance_obligations import active_must_obligations
 from workflow_controller.gates.parsers import (
     CONFIRMATION_HEADING,
     CONTROLLER_STATE_PATCH_HEADING,
@@ -78,6 +79,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '## 3. 验收标准',
         '',
         '- 每条验收标准应使用稳定 AC ID，并写明固定测试数据或 fixture、操作路径、可断言的期望值。',
+        '- 每条 AC 必须声明 verification layer：unit / integration / e2e / manual，推荐格式：`AC-ID [verification: e2e]`。',
         '- 用户可见闭环或数据流验收应能生成可执行 E2E 测试；截图或人工观察不能替代断言。',
     ]
     done_when = unit.get('done_when') or []
@@ -87,7 +89,37 @@ def _requirements_body(state: dict[str, Any]) -> str:
         lines.append('- 当前上下文中的目标验收标准均已满足。')
     lines.extend([
         '',
-        '## 4. 测试策略（Test Strategy）',
+        '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）',
+        '',
+        '- 每个 active must AO 必须映射到一个 AC，或显式标记为 `deferred` / `rejected` / `out_of_scope` 并写明原因。',
+        '- Status 只能填写 covered/deferred/rejected/out_of_scope；covered 行必须填写 AC ID 和 Verification Layer。',
+        '- Verification Layer 只能填写 unit / integration / e2e / manual。',
+        '',
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |',
+        '| --- | --- | --- | --- | --- |',
+    ])
+    obligations = active_must_obligations(state)
+    if obligations:
+        for obligation in obligations:
+            lines.append(
+                f"| {obligation.get('id')} | 待补 AC ID | pending | 待补 | {obligation.get('title', '待补证据或原因')} |"
+            )
+    else:
+        lines.append('| 无 active must AO | 待补 AC ID | pending | 待补 | 待补证据或原因 |')
+    lines.extend([
+        '',
+        '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）',
+        '',
+        '- 每条 covered AC 必须映射到产品设计引用和技术架构引用。',
+        '- Product Design Ref 指向用户流程、界面/状态、API/CLI 输出或无 UI 场景的产品行为说明。',
+        '- Technical Architecture Ref 指向模块边界、数据流、外部依赖或主要技术风险说明。',
+        '- 这里先记录设计/架构引用；Verifier evidence schema 留到后续版本处理。',
+        '',
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |',
+        '| --- | --- | --- | --- |',
+        '| 待补 AC ID | 待补产品设计引用 | 待补技术架构引用 | 待补说明 |',
+        '',
+        '## 5. 测试策略（Test Strategy）',
     ])
     if commands:
         lines.extend(f'- `{command}`' for command in commands)
@@ -95,7 +127,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         lines.append('- 确认前至少补充一个验证命令或明确的人工证据。')
     lines.extend([
         '',
-        '## 5. 范围外',
+        '## 6. 范围外',
     ])
     non_goals = unit.get('non_goals') or []
     if non_goals:
@@ -104,21 +136,23 @@ def _requirements_body(state: dict[str, Any]) -> str:
         lines.append('- 未更新本确认门禁前，不扩展到请求目标之外。')
     lines.extend([
         '',
-        '## 6. 产品设计概要',
+        '## 7. 产品设计概要',
         '- **主要用户流程**：补充用户完成核心功能的关键步骤，包括正常路径和主要异常路径。',
         '- **关键页面/状态**：补充关键界面、关键系统状态，或无 UI 场景下的 API/CLI 输出示意。',
         '- **验收示意**：补充"什么样算完成"的直观表现，方便快速评审。',
         '',
-        '## 7. 架构概要',
+        '## 8. 架构概要',
         '- **模块边界**：补充涉及的模块、组件及职责划分。',
         '- **数据流**：补充核心输入、处理、输出路径。',
         '- **外部依赖**：补充依赖的系统、服务、第三方 API 或运行环境。',
         '- **主要风险**：补充兼容性、约束或技术风险。',
         '',
-        '## 8. 人工审阅清单',
+        '## 9. 人工审阅清单',
         '- [ ] 需求描述准确。',
         '- [ ] 用户旅程覆盖适用的正常、异常、角色、权限、重试和持久化路径。',
         '- [ ] 验收标准足以判断是否完成。',
+        '- [ ] 每条 AC 都声明了 verification layer。',
+        '- [ ] 每个 active must AO 都映射到 AC，或已明确 deferred/rejected/out_of_scope 及原因。',
         '- [ ] 测试策略足以验证请求目标。',
         '- [ ] 产品设计概要足以帮助评审者形成具体产品形态认知。',
         '- [ ] 架构概要足以帮助评审者理解模块边界、数据流和主要风险。',
@@ -139,8 +173,8 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         '',
         '## 测试用例矩阵（Test Case Matrix）',
         '',
-        '| 验收标准 | 测试用例 | 层级 | 测试数据/Fixture | 命令/证据 | 预期结果 |',
-        '|---|---|---|---|---|---|',
+        '| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |',
+        '|---|---|---|---|---|---|---|---|',
     ])
     for unit in state.get('units', []):
         test_cases = _unit_test_cases(unit)
@@ -152,13 +186,27 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
             criterion = str(case.get('acceptance_criterion') or case.get('acceptanceCriterion') or '未指定')
             case_id = str(case.get('id') or case.get('name') or '未指定')
             layer = str(case.get('layer') or '未指定')
+            product_design_refs = _case_trace_refs(
+                case,
+                'product_design_refs',
+                'productDesignRefs',
+                'product_design_ref',
+                'productDesignRef',
+            )
+            technical_architecture_refs = _case_trace_refs(
+                case,
+                'technical_architecture_refs',
+                'technicalArchitectureRefs',
+                'technical_architecture_ref',
+                'technicalArchitectureRef',
+            )
             fixture = str(case.get('fixture') or case.get('test_data') or case.get('testData') or '未指定')
             command_or_evidence = str(case.get('command') or case.get('evidence') or '未指定')
             expected = str(case.get('expected') or case.get('expected_result') or case.get('expectedResult') or '未指定')
             golden_path = ' · Golden Path' if case.get('golden_path') is True else ''
-            lines.append(f'| {criterion} | {case_id}{golden_path} | {layer} | {fixture} | {command_or_evidence} | {expected} |')
-    if lines[-1] == '|---|---|---|---|---|---|':
-        lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | 补充 fixture 或测试数据 | 补充命令或人工证据 | 补充预期结果 |')
+            lines.append(f'| {criterion} | {case_id}{golden_path} | {layer} | {product_design_refs} | {technical_architecture_refs} | {fixture} | {command_or_evidence} | {expected} |')
+    if lines[-1] == '|---|---|---|---|---|---|---|---|':
+        lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | 补充产品设计引用 | 补充技术架构引用 | 补充 fixture 或测试数据 | 补充命令或人工证据 | 补充预期结果 |')
     lines.extend([
         '',
         '## 执行单元',
@@ -443,3 +491,22 @@ def _is_final_acceptance_rejection_routing_heading(line: str) -> bool:
         'Rejection Routing' in stripped
         or '返工路由' in stripped
     )
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if value is None:
+        return []
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _case_trace_refs(case: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        refs = _string_list(case.get(key))
+        if refs:
+            return ', '.join(refs)
+    return '未指定'

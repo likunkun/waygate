@@ -31,6 +31,7 @@ from workflow_controller.gates.validators import (  # noqa: F401
     validate_required_artifacts,
     validate_review_verdict,
     validate_unit_plan_acceptance_obligation_coverage,
+    validate_unit_plan_design_architecture_traceability,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,

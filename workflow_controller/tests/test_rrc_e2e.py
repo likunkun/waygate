@@ -75,6 +75,24 @@ from pathlib import Path
 
 if sys.argv[1:2] == ["paste-buffer"]:
     prompt = (Path(os.environ["RRC_RUN_DIR"]) / "prompt.md").read_text(encoding="utf-8")
+    match = re.search(r"Result artifact: `([^`]+simplifier-result\\.json)`", prompt)
+    if match:
+        result_path = Path(match.group(1).strip())
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps({
+                "unit_id": "1.1-delivery",
+                "status": "ok",
+                "changed_files": ["delivery.txt"],
+                "findings": [],
+            }),
+            encoding="utf-8",
+        )
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({"status": "done", "summary": "simplifier ok", "run_id": os.environ["RRC_RUN_ID"]}),
+            encoding="utf-8",
+        )
+        raise SystemExit(0)
     match = re.search(r"Write the Markdown body to this exact file:\\n(.+)", prompt)
     if match:
         body_path = Path(match.group(1).strip())

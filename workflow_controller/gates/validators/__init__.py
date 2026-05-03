@@ -46,6 +46,30 @@ def validate_verification_verdict(verification_path: Path) -> dict[str, Any]:
     return verification
 
 
+def validate_simplifier_result(result_path: Path) -> dict[str, Any]:
+    result = _load_json(result_path)
+    if not isinstance(result, dict):
+        raise ValueError(f'Simplifier result must be a JSON object: {result_path}')
+
+    status = result.get('status')
+    if status not in {'ok', 'changes_requested', 'failed', 'skipped'}:
+        raise ValueError(f'Simplifier result has invalid status: {result_path}')
+
+    mode = result.get('mode')
+    if mode not in {'disabled', 'dry-run', 'role-runner', 'no-workspace'}:
+        raise ValueError(f'Simplifier result has invalid mode: {result_path}')
+
+    if not isinstance(result.get('changed_files'), list):
+        raise ValueError(f'Simplifier result changed_files must be a list: {result_path}')
+    if not isinstance(result.get('findings'), list):
+        raise ValueError(f'Simplifier result findings must be a list: {result_path}')
+    if not isinstance(result.get('runner_metadata'), dict):
+        raise ValueError(f'Simplifier result runner_metadata must be an object: {result_path}')
+    if 'generated_at' not in result:
+        raise ValueError(f'Simplifier result missing generated_at: {result_path}')
+    return result
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding='utf-8'))
 
@@ -131,6 +155,126 @@ def validate_unit_plan_acceptance_obligation_coverage(
             for obligation in missing
         )
         raise ValueError('missing Acceptance Obligation coverage: ' + summary)
+
+
+def validate_unit_plan_design_architecture_traceability(
+    requirements_path: Path,
+    unit_plan_path: Path,
+    state: dict[str, Any],
+) -> None:
+    if not requirements_path.exists() or not unit_plan_path.exists():
+        return
+    requirements_content = gate_body(requirements_path.read_text(encoding='utf-8'))
+    required_trace = _requirements_design_architecture_traceability(requirements_content)
+    if not required_trace:
+        return
+
+    missing: list[str] = []
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict) or bool(unit.get('passes')):
+            continue
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        for case in _unit_test_cases(unit):
+            if not isinstance(case, dict):
+                continue
+            ac_ids = _requirements_ac_ids_in_text(
+                str(case.get('acceptance_criterion') or case.get('acceptanceCriterion') or '')
+            )
+            for ac_id in sorted(ac_ids & set(required_trace)):
+                required = required_trace[ac_id]
+                product_refs = _trace_refs_from_case(
+                    case,
+                    'product_design_refs',
+                    'productDesignRefs',
+                    'product_design_ref',
+                    'productDesignRef',
+                    'design_refs',
+                    'designRefs',
+                )
+                architecture_refs = _trace_refs_from_case(
+                    case,
+                    'technical_architecture_refs',
+                    'technicalArchitectureRefs',
+                    'technical_architecture_ref',
+                    'technicalArchitectureRef',
+                    'architecture_refs',
+                    'architectureRefs',
+                )
+                product_refs_ok = required['product_design_refs'].issubset(product_refs)
+                architecture_refs_ok = required['technical_architecture_refs'].issubset(architecture_refs)
+                if not product_refs_ok or not architecture_refs_ok:
+                    missing.append(
+                        f'unit {unit_id} test case {case.get("id", "unknown-test")} for {ac_id} '
+                        'missing design/architecture traceability'
+                    )
+    if missing:
+        raise ValueError('unit plan design/architecture traceability is incomplete: ' + '; '.join(missing))
+
+
+def validate_requirements_acceptance_quality(
+    requirements_path: Path,
+    state: dict[str, Any],
+) -> None:
+    if not requirements_path.exists():
+        return
+
+    content = gate_body(requirements_path.read_text(encoding='utf-8'))
+    ac_ids = _requirements_acceptance_criterion_ids(content)
+    ac_layers = _requirements_acceptance_criterion_layers(content)
+    missing_layers = [
+        ac_id
+        for ac_id in sorted(ac_ids)
+        if ac_id not in ac_layers
+    ]
+
+    issues: list[str] = []
+    if missing_layers:
+        issues.append(
+            ', '.join(f'{ac_id} missing verification layer' for ac_id in missing_layers)
+            + '; add one of unit, integration, e2e, or manual in the AC line '
+            + 'or Requirements Traceability Matrix'
+        )
+
+    obligations = active_must_obligations(state)
+    if obligations:
+        trace = _requirements_obligation_traceability(content)
+        missing_obligations = [
+            obligation
+            for obligation in obligations
+            if str(obligation.get('id') or '').upper() not in trace
+        ]
+        if missing_obligations:
+            summary = ', '.join(
+                f"{obligation.get('id')} {obligation.get('title', '')}".strip()
+                for obligation in missing_obligations
+            )
+            issues.append(
+                'missing Acceptance Obligation requirements mapping: '
+                + summary
+                + '; map every active must AO to an AC, or mark it deferred, '
+                + 'rejected, or out_of_scope with a reason'
+            )
+
+    if _requirements_has_design_architecture_matrix(content):
+        design_architecture_trace = _requirements_design_architecture_traceability(content)
+        missing_design_architecture = [
+            ac_id
+            for ac_id in sorted(ac_ids)
+            if ac_id not in design_architecture_trace
+            or not design_architecture_trace[ac_id]['product_design_refs']
+            or not design_architecture_trace[ac_id]['technical_architecture_refs']
+        ]
+        if missing_design_architecture:
+            issues.append(
+                ', '.join(
+                    f'{ac_id} missing design/architecture traceability'
+                    for ac_id in missing_design_architecture
+                )
+                + '; add Product Design Ref and Technical Architecture Ref for every AC'
+            )
+
+    if issues:
+        raise ValueError('; '.join(issues))
 
 
 
@@ -363,6 +507,236 @@ def _normalize_patch_coverage(
         item['status'] = status
         normalized_coverage.append(item)
     return normalized_coverage
+
+
+_REQUIREMENTS_RESOLUTION_STATUSES = {'deferred', 'rejected', 'out_of_scope'}
+
+
+def _requirements_has_design_architecture_matrix(content: str) -> bool:
+    return bool(_markdown_section(content, 'Design/Architecture Traceability Matrix'))
+
+
+def _requirements_design_architecture_traceability(content: str) -> dict[str, dict[str, set[str]]]:
+    section = _markdown_section(content, 'Design/Architecture Traceability Matrix')
+    trace: dict[str, dict[str, set[str]]] = {}
+    if not section:
+        return trace
+
+    for line in section.splitlines():
+        cells = _markdown_table_cells(line)
+        if len(cells) < 3:
+            continue
+        ac_ids = _requirements_ac_ids_in_text(cells[0])
+        if not ac_ids:
+            continue
+        product_design_refs = _requirements_trace_refs_from_cell(cells[1])
+        technical_architecture_refs = _requirements_trace_refs_from_cell(cells[2])
+        for ac_id in ac_ids:
+            item = trace.setdefault(
+                ac_id,
+                {'product_design_refs': set(), 'technical_architecture_refs': set()},
+            )
+            item['product_design_refs'].update(product_design_refs)
+            item['technical_architecture_refs'].update(technical_architecture_refs)
+    return trace
+
+
+def _requirements_acceptance_criterion_ids(content: str) -> set[str]:
+    return {match.group(0).upper() for match in re.finditer(r'\bAC-\d+(?:[-.]\d+)*\b', content, re.IGNORECASE)}
+
+
+def _requirements_acceptance_criterion_layers(content: str) -> dict[str, str]:
+    layers: dict[str, str] = {}
+    for line in content.splitlines():
+        ac_ids = _requirements_ac_ids_in_text(line)
+        if not ac_ids:
+            continue
+        layer = _requirements_verification_layer_from_line(line)
+        if not layer:
+            continue
+        for ac_id in ac_ids:
+            layers.setdefault(ac_id, layer)
+    return layers
+
+
+def _requirements_obligation_traceability(content: str) -> set[str]:
+    traceable: set[str] = set()
+    for line in content.splitlines():
+        ao_ids = _requirements_ao_ids_in_text(line)
+        if not ao_ids:
+            continue
+        if _requirements_ac_ids_in_text(line):
+            traceable.update(ao_ids)
+            continue
+        if _requirements_line_resolves_obligation(line):
+            traceable.update(ao_ids)
+    return traceable
+
+
+def _requirements_ac_ids_in_text(text: str) -> set[str]:
+    return {match.group(0).upper() for match in re.finditer(r'\bAC-\d+(?:[-.]\d+)*\b', text, re.IGNORECASE)}
+
+
+def _requirements_ao_ids_in_text(text: str) -> set[str]:
+    return {match.group(0).upper() for match in re.finditer(r'\bAO-\d+\b', text, re.IGNORECASE)}
+
+
+def _requirements_verification_layer_from_line(line: str) -> str | None:
+    if _is_markdown_table_separator(line):
+        return None
+    cells = _markdown_table_cells(line)
+    if cells:
+        for cell in cells:
+            layer = _normalize_requirements_verification_layer(cell)
+            if layer:
+                return layer
+
+    structured_patterns = [
+        r'\bverification(?:\s+layer)?\s*[:：=]\s*([A-Za-z0-9_-]+)\b',
+        r'\b验证(?:层级|层|方式)?\s*[:：]\s*([A-Za-z0-9_-]+|单元|集成|端到端|人工)\b',
+        r'\[\s*verification\s*:\s*([A-Za-z0-9_-]+)\s*\]',
+        r'\(\s*(unit|functional|integration|e2e|manual)\s*\)',
+    ]
+    for pattern in structured_patterns:
+        match = re.search(pattern, line, re.IGNORECASE)
+        if not match:
+            continue
+        layer = _normalize_requirements_verification_layer(match.group(1))
+        if layer:
+            return layer
+
+    leading_layer = re.search(
+        r'^\s*(?:[-*+]\s*)?(unit|functional|integration|e2e|manual)\b',
+        line,
+        re.IGNORECASE,
+    )
+    if leading_layer:
+        return _normalize_requirements_verification_layer(leading_layer.group(1))
+    return None
+
+
+def _normalize_requirements_verification_layer(value: str) -> str | None:
+    normalized = re.sub(r'[\s`*_，。:：;；]+', ' ', str(value).strip().lower()).strip()
+    if not normalized:
+        return None
+    aliases = {
+        'unit': ('unit', 'unit test', 'unit tests', '单元', '单元测试'),
+        'functional': ('functional', 'api', 'api test', 'api tests', '功能', '功能测试', '接口', '接口测试'),
+        'integration': ('integration', 'integration test', 'integration tests', '集成', '集成测试'),
+        'e2e': ('e2e', 'end-to-end', 'end to end', 'playwright', 'browser', '端到端', '浏览器'),
+        'manual': ('manual', 'manual acceptance', 'uat', '人工', '人工验收', '手工'),
+    }
+    for layer, candidates in aliases.items():
+        if normalized in candidates:
+            return layer
+    for layer, candidates in aliases.items():
+        if any(re.search(rf'\b{re.escape(candidate)}\b', normalized) for candidate in candidates if re.match(r'^[a-z0-9 -]+$', candidate)):
+            return layer
+    return None
+
+
+def _requirements_line_resolves_obligation(line: str) -> bool:
+    normalized = line.lower()
+    if not any(status in normalized for status in _REQUIREMENTS_RESOLUTION_STATUSES):
+        return False
+    cells = _markdown_table_cells(line)
+    if cells:
+        return any(_requirements_resolution_reason_is_meaningful(cell) for cell in cells)
+    parts = re.split(r'\b(?:deferred|rejected|out_of_scope)\b', line, maxsplit=1, flags=re.IGNORECASE)
+    return len(parts) == 2 and _requirements_resolution_reason_is_meaningful(parts[1])
+
+
+def _requirements_resolution_reason_is_meaningful(text: str) -> bool:
+    stripped = str(text).strip()
+    if not stripped:
+        return False
+    lowered = stripped.lower().strip('`*_ -')
+    if lowered in {
+        'ao',
+        'ac',
+        'status',
+        'verification layer',
+        'evidence/reason',
+        'reason',
+        'deferred',
+        'rejected',
+        'out_of_scope',
+        'manual',
+        'unit',
+        'functional',
+        'integration',
+        'e2e',
+        'pending',
+        'todo',
+        'tbd',
+        'n/a',
+    }:
+        return False
+    if _requirements_ao_ids_in_text(stripped) or _requirements_ac_ids_in_text(stripped):
+        return False
+    if _normalize_requirements_verification_layer(stripped):
+        return False
+    return True
+
+
+def _requirements_trace_refs_from_cell(value: str) -> set[str]:
+    refs: set[str] = set()
+    for part in re.split(r'(?:<br\s*/?>|[,，;；、])', str(value), flags=re.IGNORECASE):
+        ref = part.strip().strip('`*_')
+        if _requirements_trace_ref_is_meaningful(ref):
+            refs.add(ref)
+    return refs
+
+
+def _trace_refs_from_case(case: dict[str, Any], *keys: str) -> set[str]:
+    refs: set[str] = set()
+    for key in keys:
+        value = case.get(key)
+        if isinstance(value, list):
+            for item in value:
+                refs.update(_requirements_trace_refs_from_cell(str(item)))
+        elif value is not None:
+            refs.update(_requirements_trace_refs_from_cell(str(value)))
+    return refs
+
+
+def _requirements_trace_ref_is_meaningful(value: str) -> bool:
+    normalized = re.sub(r'\s+', ' ', value.strip().lower())
+    if not normalized:
+        return False
+    if normalized in {
+        '-',
+        'n/a',
+        'na',
+        'none',
+        'pending',
+        'todo',
+        'tbd',
+        '待补',
+        '未指定',
+        '无',
+        '无 active must ao',
+        'product design ref',
+        'technical architecture ref',
+        '设计引用',
+        '架构引用',
+    }:
+        return False
+    return True
+
+
+def _markdown_table_cells(line: str) -> list[str]:
+    stripped = line.strip()
+    if not stripped.startswith('|') or '|' not in stripped[1:]:
+        return []
+    if _is_markdown_table_separator(stripped):
+        return []
+    return [cell.strip() for cell in stripped.strip('|').split('|')]
+
+
+def _is_markdown_table_separator(line: str) -> bool:
+    stripped = line.strip()
+    return bool(re.fullmatch(r'\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?', stripped))
 
 
 def _required_test_layers(content: str) -> set[str]:

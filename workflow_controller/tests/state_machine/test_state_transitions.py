@@ -127,8 +127,10 @@ class TestReconcileState:
     def test_sets_test_strategist_enabled_default(self, tmp_path: Path) -> None:
         state = _make_state()
         state.pop('testStrategistEnabled', None)
+        state.pop('codeSimplifierEnabled', None)
         result = reconcile_state(state, tmp_path)
         assert result['testStrategistEnabled'] is False
+        assert result['codeSimplifierEnabled'] is True
 
 
 class TestValidateObjectiveCoverage:

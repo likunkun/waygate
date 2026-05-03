@@ -42,6 +42,7 @@ def test_init_creates_session_and_events_files(tmp_path: Path) -> None:
     assert state['currentStep'] == 'PLAN_CREATED'
     assert state['status'] == 'active'
     assert state['testStrategistEnabled'] is False
+    assert state['codeSimplifierEnabled'] is True
 
 
 def test_init_with_target_and_workspace_without_ralph_creates_target_acceptance_state(tmp_path: Path) -> None:
@@ -115,6 +116,48 @@ def test_init_test_strategist_flag_without_extras_uses_defaults(tmp_path: Path) 
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['testStrategistEnabled'] is True
     assert 'roleRunners' not in state or 'test_strategist' not in state.get('roleRunners', {})
+
+
+def test_init_with_code_simplifier_flag_configures_refiner_runner_only(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+
+    result = run_rrc(
+        'init',
+        '--state-dir', str(state_dir),
+        '--runner', 'tmux-claude',
+        '--tmux-target', '1.2',
+        '--code-simplifier',
+        '--code-simplifier-command', 'codex exec -',
+        '--code-simplifier-env', 'SECRET_TOKEN',
+        '--test-strategist',
+        '--test-strategist-env', 'HTTP_PROXY=http://127.0.0.1:7890',
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['codeSimplifierEnabled'] is True
+    assert state['testStrategistEnabled'] is True
+    assert state['roleRunners']['refiner'] == {
+        'runner': 'subprocess',
+        'command': 'codex exec -',
+        'env': {'SECRET_TOKEN': ''},
+    }
+    assert state['roleRunners']['test_strategist'] == {
+        'runner': 'subprocess',
+        'env': {'HTTP_PROXY': 'http://127.0.0.1:7890'},
+    }
+    assert 'refiner' in state['roleRunners']
+    assert 'test_strategist' in state['roleRunners']
+
+
+def test_init_can_disable_default_code_simplifier(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+
+    result = run_rrc('init', '--state-dir', str(state_dir), '--no-code-simplifier')
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['codeSimplifierEnabled'] is False
 
 
 def test_status_reports_current_step_and_next_action(tmp_path: Path) -> None:
@@ -1955,6 +1998,120 @@ def test_repeated_verification_failure_blocks_before_another_retry(tmp_path: Pat
     assert 'runtime database missing' in second['blockedReason']
 
 
+def _write_simplifier_result(unit_dir: Path, status: str, findings: list[dict[str, str]] | None = None) -> None:
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        'unit_id': 'unit-01',
+        'status': status,
+        'mode': 'role-runner',
+        'changed_files': ['src/login.py'],
+        'findings': findings or [],
+        'runner_metadata': {},
+        'exit_code': 0,
+        'stdout': '',
+        'stderr': '',
+        'generated_at': '2026-05-03T00:00:00+00:00',
+    }
+    (unit_dir / 'simplifier-result.json').write_text(json.dumps(payload), encoding='utf-8')
+    (unit_dir / 'refinement-summary.json').write_text(json.dumps(payload), encoding='utf-8')
+
+
+def _refiner_controller_state(workspace: Path) -> dict[str, Any]:
+    return {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'currentStep': 'REFINE_UNIT',
+        'lastVerifiedStep': 'PLAN_CREATED',
+        'status': 'active',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'workspacePath': str(workspace),
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [
+            {
+                'id': 'unit-01',
+                'name': 'Delivery',
+                'passes': False,
+            },
+        ],
+    }
+
+
+def test_controller_routes_ok_simplifier_result_to_reviewer(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_refiner_controller_state(workspace), force=True)
+
+    def fake_run_refiner(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> None:
+        _write_simplifier_result(unit_dir, 'ok')
+
+    monkeypatch.setattr('workflow_controller.rrc_controller.run_refiner', fake_run_refiner)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'REVIEW_UNIT'
+    assert state['status'] == 'active'
+
+
+def test_controller_routes_changes_requested_simplifier_result_back_to_builder(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_refiner_controller_state(workspace), force=True)
+
+    def fake_run_refiner(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> None:
+        _write_simplifier_result(
+            unit_dir,
+            'changes_requested',
+            [{'type': 'over_nested_branch', 'message': 'Flatten the new login branch before review.'}],
+        )
+
+    monkeypatch.setattr('workflow_controller.rrc_controller.run_refiner', fake_run_refiner)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state['status'] == 'active'
+    assert state['lastFailure']['stage'] == 'REFINE_UNIT'
+    assert state['lastFailure']['details']['issues'][0]['type'] == 'over_nested_branch'
+
+
+def test_controller_failed_simplifier_result_does_not_reach_reviewer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    initial_state = _refiner_controller_state(workspace)
+    initial_state['sameFailureMaxRetries'] = 0
+    controller.init_state(initial_state, force=True)
+
+    def fake_run_refiner(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> None:
+        _write_simplifier_result(
+            unit_dir,
+            'failed',
+            [{'type': 'missing_simplifier_result', 'message': 'CodeSimplifier output was malformed.'}],
+        )
+
+    monkeypatch.setattr('workflow_controller.rrc_controller.run_refiner', fake_run_refiner)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'REFINE_UNIT'
+    assert state['status'] == 'blocked'
+    assert 'Repeated REFINE_UNIT failure' in state['blockedReason']
+
+
 def test_verifier_blocks_when_required_database_url_cannot_be_inferred(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -3100,6 +3257,153 @@ def test_drive_blocks_unit_plan_approval_when_acceptance_obligation_is_missing(t
     assert state['blockedReason'].startswith('unit plan gate invalid:')
 
 
+def test_requirements_approval_blocks_unmapped_acceptance_obligation(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'acceptanceObligations': [
+                {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+                {'id': 'AO-002', 'title': '15 个材料没有覆盖', 'priority': 'must', 'status': 'open'},
+            ],
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: integration]: 六步 UX 清楚展示。
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+""",
+    )
+
+    with pytest.raises(ValueError, match='requirements gate invalid:.*AO-002'):
+        controller.approve_human_gate('requirements', actor='tester')
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requirementsAccepted'] is False
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['blockedReason'].startswith('requirements gate invalid:')
+
+
+def test_run_rejects_preapproved_requirements_missing_ac_verification_layer(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'acceptanceObligations': [
+                {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+            ],
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1: 六步 UX 清楚展示。
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| AO-001 | AC-1 | covered |  | pytest tests/test_delivery.py -q |
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['requirementsAccepted'] is False
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['blockedReason'].startswith('requirements gate invalid:')
+    assert 'AC-1' in state['blockedReason']
+    assert 'verification layer' in state['blockedReason']
+
+
+def test_requirements_revision_feedback_includes_controller_validation_error(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'acceptanceObligations': [
+                {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+            ],
+            'blockedReason': 'requirements gate invalid: AC-1 missing verification layer',
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(gate_path, '# 需求与验收确认\n\n## 3. 验收标准\n- AC-1: 六步 UX 清楚展示。\n')
+
+    feedback = controller._revision_feedback_for_gate('requirements', gate_path)
+
+    assert '## Controller Validation Error' in feedback
+    assert 'requirements gate invalid: AC-1 missing verification layer' in feedback
+
+
 
 def test_run_rejects_preapproved_unit_plan_missing_acceptance_obligation(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
@@ -3183,6 +3487,93 @@ def test_run_rejects_preapproved_unit_plan_missing_acceptance_obligation(tmp_pat
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['unitPlanAccepted'] is False
     assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['blockedReason'].startswith('unit plan gate invalid:')
+
+
+def test_run_rejects_preapproved_unit_plan_missing_design_architecture_traceability(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: integration]: Delivery behavior works.
+
+## Design/Architecture Traceability Matrix
+| AC | Product Design Ref | Technical Architecture Ref | Notes |
+| --- | --- | --- | --- |
+| AC-1 | PD-AC1-delivery-flow | TA-AC1-delivery-service | delivery flow |
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery",
+      "passes": false,
+      "test_cases": [
+        {
+          "id": "TC-1",
+          "acceptance_criterion": "AC-1",
+          "layer": "integration",
+          "command": "pytest tests/test_delivery.py -q",
+          "expected": "Delivery behavior works"
+        }
+      ],
+      "verification_commands": ["pytest tests/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is False
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert 'design/architecture traceability' in state['blockedReason']
     assert state['blockedReason'].startswith('unit plan gate invalid:')
 
 

@@ -254,11 +254,19 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     )
 
     assert '每条验收标准必须有稳定 ID' in requirements_prompt
+    assert '每条验收标准必须声明 verification layer' in requirements_prompt
+    assert '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）' in requirements_prompt
+    assert '| AO | AC | Status | Verification Layer | Evidence/Reason |' in requirements_prompt
+    assert 'covered/deferred/rejected/out_of_scope' in requirements_prompt
+    assert '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）' in requirements_prompt
+    assert '| AC | Product Design Ref | Technical Architecture Ref | Notes |' in requirements_prompt
     assert '固定测试数据或 fixture' in requirements_prompt
     assert '可断言的期望值' in requirements_prompt
     assert '不能用截图或人工观察替代断言' in requirements_prompt
     assert '`acceptance_criterion`' in unit_plan_prompt
     assert '`fixture`' in unit_plan_prompt
+    assert '`product_design_refs`' in unit_plan_prompt
+    assert '`technical_architecture_refs`' in unit_plan_prompt
     assert '测试命令退出码为 0 且断言覆盖 AC' in unit_plan_prompt
     assert '对不适合 E2E 的 AC' in unit_plan_prompt
     requirements_body = render_requirements_gate_body(state)
@@ -268,8 +276,11 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '覆盖了哪些 AC' in builder_prompt
     assert '不要伪造通过证据' in builder_prompt
     assert '稳定 AC ID' in requirements_body
+    assert '需求可追溯矩阵' in requirements_body
+    assert '设计与架构可追溯矩阵' in requirements_body
+    assert '每个 active must AO' in requirements_body
     assert '截图或人工观察不能替代断言' in requirements_body
-    assert '| 验收标准 | 测试用例 | 层级 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
+    assert '| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
     assert 'E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言' in unit_plan_body
 
 
@@ -298,10 +309,11 @@ def test_requirements_and_unit_plan_prompts_require_simplified_chinese(tmp_path:
 
     assert '使用简体中文' in requirements_prompt
     assert '# 需求与验收确认' in requirements_prompt
-    assert '## 4. 测试策略（Test Strategy）' in requirements_prompt
-    assert '## 6. 产品设计概要' in requirements_prompt
-    assert '## 7. 架构概要' in requirements_prompt
-    assert '## 8. 人工审阅清单' in requirements_prompt
+    assert '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）' in requirements_prompt
+    assert '## 5. 测试策略（Test Strategy）' in requirements_prompt
+    assert '## 7. 产品设计概要' in requirements_prompt
+    assert '## 8. 架构概要' in requirements_prompt
+    assert '## 9. 人工审阅清单' in requirements_prompt
     assert '使用简体中文' in unit_plan_prompt
     assert '# 单元计划确认（Unit Plan Confirmation）' in unit_plan_prompt
     assert '## 测试用例矩阵（Test Case Matrix）' in unit_plan_prompt
@@ -363,10 +375,11 @@ def test_controller_generated_gate_bodies_are_chinese_first(tmp_path: Path) -> N
     final_body = final_path.read_text(encoding='utf-8')
 
     assert '# 需求与验收确认' in requirements_body
-    assert '## 4. 测试策略（Test Strategy）' in requirements_body
-    assert '## 6. 产品设计概要' in requirements_body
-    assert '## 7. 架构概要' in requirements_body
-    assert '## 8. 人工审阅清单' in requirements_body
+    assert '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）' in requirements_body
+    assert '## 5. 测试策略（Test Strategy）' in requirements_body
+    assert '## 7. 产品设计概要' in requirements_body
+    assert '## 8. 架构概要' in requirements_body
+    assert '## 9. 人工审阅清单' in requirements_body
     assert '# 单元计划确认（Unit Plan Confirmation）' in unit_plan_body
     assert '## 目标覆盖矩阵' in unit_plan_body
     assert '## Controller State Patch' in unit_plan_body

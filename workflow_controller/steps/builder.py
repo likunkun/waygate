@@ -24,6 +24,7 @@ from workflow_controller.steps._common import (
     _approval_requested_by_state,
     _write_json,
     _write_json_result,
+    _read_json_object,
     _issue,
     _find_unit,
     _find_objective_for_unit,
@@ -229,35 +230,338 @@ def _allows_verification_only_acceptance(state: dict[str, Any], builder: dict[st
 
 
 def run_refiner(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> StepResult:
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    current_unit_id = str(state.get('currentUnitId') or 'unknown-unit')
+    changed_files = _read_changed_files(unit_dir)
+
     if dry_run:
-        return _write_json_result(
-            unit_dir / 'refinement-summary.json',
-            {
-                'unit_id': state.get('currentUnitId'),
-                'status': 'ok',
-                'mode': 'dry-run',
-                'changes': ['simplified example logic'],
-                'generated_at': _now_iso(),
-            },
+        payload = _base_simplifier_result(
+            state=state,
+            unit_id=current_unit_id,
+            status='ok',
+            mode='dry-run',
+            changed_files=changed_files,
+        )
+        _write_simplifier_artifacts(unit_dir, payload)
+        return StepResult(
             summary='dry-run refinement complete',
+            outputs=['simplifier-result.json', 'refinement-summary.json'],
         )
 
-    current_unit_id = state.get('currentUnitId')
-    changed_files_path = unit_dir / 'changed-files.txt'
-    changed_files = []
-    if changed_files_path.exists():
-        changed_files = [line.strip() for line in changed_files_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    if not state.get('codeSimplifierEnabled', True):
+        payload = _base_simplifier_result(
+            state=state,
+            unit_id=current_unit_id,
+            status='skipped',
+            mode='disabled',
+            changed_files=changed_files,
+        )
+        _write_simplifier_artifacts(unit_dir, payload)
+        return StepResult(
+            summary='refinement skipped',
+            outputs=['simplifier-result.json', 'refinement-summary.json'],
+        )
 
-    refinement_payload = {
-        'unit_id': current_unit_id,
-        'status': 'ok',
-        'mode': 'local-heuristic-refiner',
-        'changes': [f'reviewed {len(changed_files)} changed file(s) for simplification opportunities'],
-        'changed_files': changed_files,
+    workspace_path = state.get('executionWorkspacePath') or state.get('workspacePath')
+    if not workspace_path:
+        payload = _base_simplifier_result(
+            state=state,
+            unit_id=current_unit_id,
+            status='skipped',
+            mode='no-workspace',
+            changed_files=changed_files,
+            findings=[_issue('refiner_workspace_missing', 'CodeSimplifier is enabled but no execution workspace is configured')],
+        )
+        _write_simplifier_artifacts(unit_dir, payload)
+        return StepResult(
+            summary='refinement skipped',
+            outputs=['simplifier-result.json', 'refinement-summary.json'],
+        )
+
+    prompt_path = unit_dir / 'code-simplifier-prompt.md'
+    prompt_path.write_text(
+        _render_code_simplifier_prompt(state, unit_dir, changed_files),
+        encoding='utf-8',
+    )
+
+    result_path = unit_dir / 'simplifier-result.json'
+    if result_path.exists():
+        result_path.unlink()
+
+    runner = make_runner(state, role='refiner')
+    workspace_dir = Path(workspace_path)
+    agent_result = run_agent_backend(
+        RunnerRequest(
+            backend=runner.backend,
+            workspace_dir=workspace_dir,
+            prompt_path=prompt_path,
+            artifact_dir=unit_dir,
+            unit_id=current_unit_id,
+            agent_command=runner.agent_command,
+            tmux_target=runner.tmux_target,
+            role='refiner',
+            env=runner.env,
+        )
+    )
+
+    raw_payload = _read_json_object(result_path)
+    payload = _normalize_simplifier_result(
+        raw_payload,
+        state=state,
+        unit_id=current_unit_id,
+        changed_files=changed_files,
+        agent_result=agent_result,
+        runner_metadata=runner.to_metadata(),
+        env=runner.env,
+    )
+    _write_simplifier_artifacts(unit_dir, payload)
+    return StepResult(
+        summary='refinement failed' if payload['status'] == 'failed' else 'refinement complete',
+        outputs=['code-simplifier-prompt.md', 'simplifier-result.json', 'refinement-summary.json'],
+    )
+
+
+def _read_changed_files(unit_dir: Path) -> list[str]:
+    changed_files_path = unit_dir / 'changed-files.txt'
+    if not changed_files_path.exists():
+        return []
+    return [
+        line.strip()
+        for line in changed_files_path.read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+
+
+def _base_simplifier_result(
+    *,
+    state: dict[str, Any],
+    unit_id: str,
+    status: str,
+    mode: str,
+    changed_files: list[str],
+    findings: list[dict[str, Any]] | None = None,
+    runner_metadata: dict[str, Any] | None = None,
+    exit_code: int | None = None,
+    stdout: str = '',
+    stderr: str = '',
+) -> dict[str, Any]:
+    return {
+        'unit_id': unit_id,
+        'status': status,
+        'mode': mode,
+        'changed_files': list(changed_files),
+        'findings': findings or [],
+        'runner_metadata': runner_metadata or {},
+        'exit_code': exit_code,
+        'stdout': stdout,
+        'stderr': stderr,
         'generated_at': _now_iso(),
     }
-    _write_json(unit_dir / 'refinement-summary.json', refinement_payload)
-    return StepResult(summary='refinement complete', outputs=['refinement-summary.json'])
+
+
+def _render_code_simplifier_prompt(state: dict[str, Any], unit_dir: Path, changed_files: list[str]) -> str:
+    unit = _find_unit(state, state.get('currentUnitId'))
+    builder_summary = _read_json_object(unit_dir / 'builder-summary.json') or {}
+    changed_file_lines = '\n'.join(f"- {path}" for path in changed_files) or '- No changed files recorded'
+    return f"""# CodeSimplifier Refiner
+
+You are the behavior-preserving CodeSimplifier for one workflow-controller unit.
+
+Unit id: `{state.get('currentUnitId')}`
+Result artifact: `{unit_dir / 'simplifier-result.json'}`
+
+## Current Unit
+```json
+{json.dumps(unit, ensure_ascii=False, indent=2)}
+```
+
+## Builder Summary
+```json
+{json.dumps(builder_summary, ensure_ascii=False, indent=2)}
+```
+
+## Changed Files
+{changed_file_lines}
+
+## Refinement Rules
+- Preserve behavior exactly. Improve clarity, consistency, and maintainability only.
+- Do not expand scope beyond the current unit, its changed files, and its approved non-goals.
+- Focus only on recently changed code unless a tiny adjacent cleanup is required to keep behavior clear.
+- Do not introduce unrelated refactors, new dependencies, or broad architectural changes.
+- If cleanup is safe and complete, write `status: "ok"`.
+- If the Builder must rework the unit before review, write `status: "changes_requested"` with actionable findings.
+- If you cannot inspect or complete the refinement safely, write `status: "failed"` with findings.
+
+## Required JSON
+Always write this JSON object to the result artifact path:
+
+```json
+{{
+  "unit_id": "{state.get('currentUnitId')}",
+  "status": "ok | changes_requested | failed",
+  "changed_files": [],
+  "findings": []
+}}
+```
+"""
+
+
+def _normalize_simplifier_result(
+    raw_payload: dict[str, Any] | None,
+    *,
+    state: dict[str, Any],
+    unit_id: str,
+    changed_files: list[str],
+    agent_result: Any,
+    runner_metadata: dict[str, Any],
+    env: dict[str, str],
+) -> dict[str, Any]:
+    metadata = _sanitize_runner_metadata(agent_result.runner_metadata or runner_metadata, runner_metadata, env)
+    stdout = _redact_env_values(agent_result.stdout or '', env)
+    stderr = _redact_env_values(agent_result.stderr or '', env)
+
+    if raw_payload is None:
+        return _base_simplifier_result(
+            state=state,
+            unit_id=unit_id,
+            status='failed',
+            mode='role-runner',
+            changed_files=changed_files,
+            findings=[_issue('missing_simplifier_result', 'CodeSimplifier did not write simplifier-result.json')],
+            runner_metadata=metadata,
+            exit_code=agent_result.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    status = raw_payload.get('status')
+    if status not in {'ok', 'changes_requested', 'failed', 'skipped'}:
+        return _base_simplifier_result(
+            state=state,
+            unit_id=unit_id,
+            status='failed',
+            mode='role-runner',
+            changed_files=changed_files,
+            findings=[_issue('invalid_simplifier_result', 'simplifier-result.json has an invalid status')],
+            runner_metadata=metadata,
+            exit_code=agent_result.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    if 'changed_files' in raw_payload and not isinstance(raw_payload.get('changed_files'), list):
+        return _invalid_simplifier_payload(
+            state=state,
+            unit_id=unit_id,
+            changed_files=changed_files,
+            metadata=metadata,
+            exit_code=agent_result.returncode,
+            stdout=stdout,
+            stderr=stderr,
+            message='simplifier-result.json changed_files must be a list',
+        )
+
+    if 'findings' in raw_payload and not isinstance(raw_payload.get('findings'), list):
+        return _invalid_simplifier_payload(
+            state=state,
+            unit_id=unit_id,
+            changed_files=changed_files,
+            metadata=metadata,
+            exit_code=agent_result.returncode,
+            stdout=stdout,
+            stderr=stderr,
+            message='simplifier-result.json findings must be a list',
+        )
+
+    if agent_result.returncode != 0 and status != 'failed':
+        status = 'failed'
+        findings = [_issue('refiner_runner_failed', f'CodeSimplifier exited with code {agent_result.returncode}')]
+    else:
+        findings = raw_payload.get('findings') if isinstance(raw_payload.get('findings'), list) else []
+
+    raw_changed_files = raw_payload.get('changed_files')
+    if isinstance(raw_changed_files, list):
+        result_changed_files = [str(path) for path in raw_changed_files if str(path)]
+    else:
+        result_changed_files = changed_files
+
+    payload = _base_simplifier_result(
+        state=state,
+        unit_id=str(raw_payload.get('unit_id') or unit_id),
+        status=str(status),
+        mode='role-runner',
+        changed_files=result_changed_files,
+        findings=[finding for finding in findings if isinstance(finding, dict)],
+        runner_metadata=metadata,
+        exit_code=agent_result.returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+    if raw_payload.get('generated_at'):
+        payload['generated_at'] = str(raw_payload['generated_at'])
+    return payload
+
+
+def _invalid_simplifier_payload(
+    *,
+    state: dict[str, Any],
+    unit_id: str,
+    changed_files: list[str],
+    metadata: dict[str, Any],
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    message: str,
+) -> dict[str, Any]:
+    return _base_simplifier_result(
+        state=state,
+        unit_id=unit_id,
+        status='failed',
+        mode='role-runner',
+        changed_files=changed_files,
+        findings=[_issue('invalid_simplifier_result', message)],
+        runner_metadata=metadata,
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _sanitize_runner_metadata(
+    metadata: dict[str, Any],
+    fallback: dict[str, Any],
+    env: dict[str, str],
+) -> dict[str, Any]:
+    env_keys = metadata.get('env_keys', fallback.get('env_keys', []))
+    if not isinstance(env_keys, list):
+        env_keys = []
+    return {
+        'role': metadata.get('role', fallback.get('role')),
+        'backend': metadata.get('backend', fallback.get('backend')),
+        'agent_command': _redact_env_values(str(metadata.get('agent_command', fallback.get('agent_command', ''))), env),
+        'tmux_target': metadata.get('tmux_target', fallback.get('tmux_target')),
+        'env_keys': sorted(str(key) for key in env_keys),
+    }
+
+
+def _redact_env_values(text: str, env: dict[str, str]) -> str:
+    redacted = text
+    for value in env.values():
+        if value:
+            redacted = redacted.replace(value, '[redacted]')
+    return redacted
+
+
+def _write_simplifier_artifacts(unit_dir: Path, payload: dict[str, Any]) -> None:
+    _write_json(unit_dir / 'simplifier-result.json', payload)
+    _write_json(unit_dir / 'refinement-summary.json', {
+        'unit_id': payload.get('unit_id'),
+        'status': payload.get('status'),
+        'mode': payload.get('mode'),
+        'changed_files': payload.get('changed_files') or [],
+        'findings': payload.get('findings') or [],
+        'generated_at': payload.get('generated_at'),
+    })
 
 
 def run_reviewer(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> StepResult:

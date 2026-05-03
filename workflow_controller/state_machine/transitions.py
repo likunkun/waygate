@@ -16,6 +16,7 @@ def reconcile_state(state: dict[str, Any], artifacts_root: Path) -> dict[str, An
     """
     state = dict(state)
     state.setdefault('testStrategistEnabled', False)
+    state.setdefault('codeSimplifierEnabled', True)
     state['units'] = [
         dict(unit)
         for unit in state.get('units', [])

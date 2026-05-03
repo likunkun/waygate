@@ -33,9 +33,12 @@ from workflow_controller.acceptance_obligations import (
 from workflow_controller.gates.validators import (
     apply_unit_plan_state_patch_from_gate,
     migrate_unit_plan_gate_to_state_patch,
+    validate_requirements_acceptance_quality,
     validate_required_artifacts,
     validate_review_verdict,
+    validate_simplifier_result,
     validate_unit_plan_acceptance_obligation_coverage,
+    validate_unit_plan_design_architecture_traceability,
     validate_unit_plan_golden_path,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
@@ -88,6 +91,7 @@ DEFAULT_INITIAL_STATE: dict[str, Any] = {
     'scopeApproved': False,
     'autoApprove': False,
     'testStrategistEnabled': False,
+    'codeSimplifierEnabled': True,
     'currentUnitNeedsUiDesign': False,
     'objectiveCoverage': [
         {
@@ -173,6 +177,7 @@ COMPACT_RESULT_LABELS = {
 }
 
 COMPACT_RETRY_REASONS = {
+    'refinement failed': '精修未通过',
     'review failed': '评审未通过',
     'verification failed': '验证未通过',
 }
@@ -306,6 +311,7 @@ class RalphRefinerController:
             state = dict(initial_state or DEFAULT_INITIAL_STATE)
         state['autoApprove'] = self.auto_approve
         state.setdefault('testStrategistEnabled', False)
+        state.setdefault('codeSimplifierEnabled', True)
         if strategist_overrides:
             state.update(strategist_overrides)
         self._save_state(state)
@@ -361,13 +367,20 @@ class RalphRefinerController:
         state: dict[str, Any],
         gate_path: Path,
     ) -> None:
-        if gate != 'unit-plan':
+        if gate == 'requirements':
+            reason = self._requirements_gate_invalid_reason(state, gate_path)
+        elif gate == 'unit-plan':
+            reason = self._unit_plan_gate_invalid_reason(state, gate_path)
+        else:
             return
-        reason = self._unit_plan_gate_invalid_reason(state, gate_path)
         if reason:
             write_gate_file(gate_path, gate_body(gate_path.read_text(encoding='utf-8')))
-            state['unitPlanAccepted'] = False
-            state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+            if gate == 'requirements':
+                state['requirementsAccepted'] = False
+                state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+            else:
+                state['unitPlanAccepted'] = False
+                state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
             state['blockedReason'] = reason
             self._save_state(state)
             raise ValueError(reason)
@@ -398,10 +411,22 @@ class RalphRefinerController:
             )
             validate_unit_plan_test_case_coverage(gate_path, candidate_state)
             validate_unit_plan_acceptance_obligation_coverage(gate_path, candidate_state)
+            validate_unit_plan_design_architecture_traceability(
+                self.approvals_dir / 'requirements-and-acceptance.md',
+                gate_path,
+                candidate_state,
+            )
             validate_unit_plan_verification_environment(candidate_state)
             validate_unit_plan_golden_path(candidate_state)
         except ValueError as exc:
             return f'unit plan gate invalid: {exc}'
+        return None
+
+    def _requirements_gate_invalid_reason(self, state: dict[str, Any], gate_path: Path) -> str | None:
+        try:
+            validate_requirements_acceptance_quality(gate_path, state)
+        except ValueError as exc:
+            return f'requirements gate invalid: {exc}'
         return None
 
     def revise_human_gate(self, gate: str) -> Path:
@@ -446,6 +471,8 @@ class RalphRefinerController:
         state = self.store.load_state()
         reason = str(state.get('blockedReason') or '').strip()
         if gate == 'unit-plan' and reason.startswith('unit plan gate invalid:'):
+            return reason
+        if gate == 'requirements' and reason.startswith('requirements gate invalid:'):
             return reason
         return None
 
@@ -909,6 +936,13 @@ class RalphRefinerController:
             gate = check_gate_file(gate_path)
             state['requirementsAccepted'] = gate.approved
             if gate.approved:
+                reason = self._requirements_gate_invalid_reason(state, gate_path)
+                if reason:
+                    state['requirementsAccepted'] = False
+                    state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+                    state['blockedReason'] = reason
+                    self._save_state(state)
+                    return state
                 state['requirementsAcceptedHash'] = gate.content_hash
                 state['requirementsAcceptedBy'] = gate.confirmed_by
                 state['blockedReason'] = None
@@ -945,6 +979,11 @@ class RalphRefinerController:
                     )
                     validate_unit_plan_test_case_coverage(gate_path, state)
                     validate_unit_plan_acceptance_obligation_coverage(gate_path, state)
+                    validate_unit_plan_design_architecture_traceability(
+                        self.approvals_dir / 'requirements-and-acceptance.md',
+                        gate_path,
+                        state,
+                    )
                     validate_unit_plan_verification_environment(state)
                     validate_unit_plan_golden_path(state)
                 except ValueError as exc:
@@ -1025,8 +1064,26 @@ class RalphRefinerController:
 
         if action == 'run_refiner':
             run_refiner(state, unit_dir, dry_run=self.dry_run)
-            validate_required_artifacts(unit_dir, ['refinement-summary.json'])
-            state['currentStep'] = 'REVIEW_UNIT'
+            validate_required_artifacts(unit_dir, ['simplifier-result.json', 'refinement-summary.json'])
+            simplifier = validate_simplifier_result(unit_dir / 'simplifier-result.json')
+            simplifier_status = simplifier.get('status')
+            if simplifier_status in {'ok', 'skipped'}:
+                _clear_last_failure(state)
+                state['currentStep'] = 'REVIEW_UNIT'
+            elif simplifier_status == 'changes_requested':
+                _record_or_block_repeated_failure(
+                    state,
+                    stage='REFINE_UNIT',
+                    verdict=_simplifier_failure_verdict(simplifier),
+                    retry_step='EXECUTE_UNIT',
+                )
+            else:
+                _record_or_block_repeated_failure(
+                    state,
+                    stage='REFINE_UNIT',
+                    verdict=_simplifier_failure_verdict(simplifier),
+                    retry_step='REFINE_UNIT',
+                )
             self._save_state(state)
             return state
 
@@ -1689,6 +1746,35 @@ def _record_or_block_repeated_failure(
     state['blockedReason'] = None
 
 
+def _simplifier_failure_verdict(result: dict[str, Any]) -> dict[str, Any]:
+    issues: list[dict[str, str]] = []
+    for finding in result.get('findings') or []:
+        if not isinstance(finding, dict):
+            continue
+        finding_type = str(finding.get('type') or result.get('status') or 'simplifier_feedback')
+        message = str(
+            finding.get('message')
+            or finding.get('detail')
+            or finding.get('description')
+            or finding_type
+        )
+        issues.append({'type': finding_type, 'message': message})
+
+    if not issues:
+        status = str(result.get('status') or 'failed')
+        issues.append({
+            'type': f'simplifier_{status}',
+            'message': f'CodeSimplifier returned status {status}',
+        })
+
+    return {
+        'issues': issues,
+        'simplifier_status': result.get('status'),
+        'mode': result.get('mode'),
+        'changed_files': result.get('changed_files') or [],
+    }
+
+
 def _clear_last_failure(state: dict[str, Any]) -> None:
     state.pop('lastFailure', None)
     if state.get('status') != 'blocked':
@@ -1813,7 +1899,11 @@ class _CompactDriveReporter:
             return
         if action == 'run_refiner':
             self._ensure_attempt()
-            self.stage_results['Refiner'] = 'ok'
+            failed = after_state.get('currentStep') in {'EXECUTE_UNIT', 'REFINE_UNIT'}
+            self.stage_results['Refiner'] = 'failed' if failed else 'ok'
+            if failed:
+                self._print_attempt_summary()
+                self._print_retry('refinement failed', _compact_failure_reason(after_state))
             return
         if action == 'run_reviewer':
             self._ensure_attempt()
@@ -2383,6 +2473,10 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--test-strategist', action='store_true', default=False, help='Enable Test Strategist for Unit Plan draft')
     init_parser.add_argument('--test-strategist-command', default=None, help='Override Test Strategist runner command')
     init_parser.add_argument('--test-strategist-env', action='append', metavar='KEY=VALUE', dest='test_strategist_env', help='Inject env var into Test Strategist subprocess only (repeatable)')
+    init_parser.add_argument('--code-simplifier', action='store_true', default=None, help='Enable CodeSimplifier for the Refiner stage')
+    init_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
+    init_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
+    init_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
 
     status_parser = subparsers.add_parser(
         'status',
@@ -2448,6 +2542,13 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--plannotator-port', type=int, default=20000, help='Port exported to Plannotator as PLANNOTATOR_PORT')
     start_parser.add_argument('--verbose', action='store_true', help='Show raw per-step progress and execution lines')
     start_parser.add_argument('--color', choices=COLOR_MODES, default='auto', help='Color compact output: auto, always, or never')
+    start_parser.add_argument('--test-strategist', action='store_true', default=False, help='Enable Test Strategist for Unit Plan draft')
+    start_parser.add_argument('--test-strategist-command', default=None, help='Override Test Strategist runner command')
+    start_parser.add_argument('--test-strategist-env', action='append', metavar='KEY=VALUE', dest='test_strategist_env', help='Inject env var into Test Strategist subprocess only (repeatable)')
+    start_parser.add_argument('--code-simplifier', action='store_true', default=None, help='Enable CodeSimplifier for the Refiner stage')
+    start_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
+    start_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
+    start_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
 
     drive_parser = subparsers.add_parser(
         'drive',
@@ -2511,6 +2612,40 @@ def _build_strategist_overrides(args: argparse.Namespace) -> dict[str, Any] | No
     return overrides
 
 
+def _build_code_simplifier_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
+    enabled = getattr(args, 'code_simplifier', None)
+    command = getattr(args, 'code_simplifier_command', None)
+    raw_env = getattr(args, 'code_simplifier_env', None) or []
+    if enabled is None and not command and not raw_env:
+        return None
+    overrides: dict[str, Any] = {'codeSimplifierEnabled': enabled is not False}
+    if command or raw_env:
+        role_runner: dict[str, Any] = {'runner': 'subprocess'}
+        if command:
+            role_runner['command'] = command
+        if raw_env:
+            env: dict[str, str] = {}
+            for pair in raw_env:
+                k, _, v = pair.partition('=')
+                env[k] = v
+            role_runner['env'] = env
+        overrides['roleRunners'] = {'refiner': role_runner}
+    return overrides
+
+
+def _build_role_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    for overrides in (_build_strategist_overrides(args), _build_code_simplifier_overrides(args)):
+        if not overrides:
+            continue
+        for key, value in overrides.items():
+            if key == 'roleRunners' and isinstance(value, dict):
+                merged.setdefault('roleRunners', {}).update(value)
+            else:
+                merged[key] = value
+    return merged or None
+
+
 def render_status_line(state: dict[str, Any]) -> str:
     next_action = state.get('nextAction') or compute_next_allowed_action(state)
     return (
@@ -2537,7 +2672,7 @@ def main() -> None:
     )
 
     if args.command == 'init':
-        strategist_overrides = _build_strategist_overrides(args)
+        strategist_overrides = _build_role_overrides(args)
         state = controller.init_state(force=args.force, from_ralph=args.from_ralph, strategist_overrides=strategist_overrides)
         print(render_status_line(state))
         return
@@ -2584,6 +2719,7 @@ def main() -> None:
                 verbose=args.verbose,
                 color_mode=args.color,
                 actor=args.actor,
+                strategist_overrides=_build_role_overrides(args),
             )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)

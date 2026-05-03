@@ -2,6 +2,39 @@
 
 ## 会话：2026-05-03
 
+### V0.3.4 Product Design / Technical Architecture Traceability
+- **状态：** complete
+- V0.3.4 范围明确为 Requirements + Unit Plan 的设计/架构可追溯链路，不包含 Verifier evidence schema 或 Final Acceptance evidence matrix。
+- Requirements draft prompt 和本地 gate template 新增 `Design/Architecture Traceability Matrix`。
+- Requirements approval 在矩阵存在时要求每条 AC 同时具备 Product Design Ref 和 Technical Architecture Ref；旧 requirements 无该矩阵时保持兼容。
+- Unit Plan prompt 和 Test Case Matrix template 新增产品设计引用、技术架构引用字段。
+- Unit Plan approval 会校验 test case 是否保留 requirements 中对应 AC 的设计/架构引用。
+- 已验证定向测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/gates/test_gates_structure.py workflow_controller/tests/test_rrc_controller.py -q` -> `159 passed in 15.06s`
+- 已验证全量测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `264 passed in 31.38s`
+
+### V0.3.3 Requirements Quality Gate 完成
+- **状态：** complete
+- Requirements approval 现在会在写入 accepted 前执行质量预检。
+- 每个 active `must` AO 必须在 Requirements Traceability Matrix 或等价结构中映射到 AC，或显式标记为 `deferred` / `rejected` / `out_of_scope` 并写明原因。
+- 每条 AC 必须声明 verification layer；支持 `unit`、`integration`、`e2e`、`manual`，并兼容既有 `functional/API` 语义。
+- `approve_human_gate('requirements')` 和已预批准 gate 的 `check_requirements_acceptance` 都会阻断无效 requirements，不会进入 Unit Plan。
+- requirements gate invalid 会写入 `blockedReason`，并在 requirements revision prompt 中追加 `Controller Validation Error`。
+- Requirements draft prompt 和本地 gate template 已新增 `## 4. 需求可追溯矩阵（Requirements Traceability Matrix）`。
+- 已验证：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `259 passed in 30.51s`
+
+### V0.3.2 CodeSimplifier 集成完成
+- **状态：** complete
+- 已将 Builder 后的本地 Refiner 占位升级为默认开启的 CodeSimplifier/Refiner role runner。
+- 新增 CLI 配置：`--no-code-simplifier`、`--code-simplifier`、`--code-simplifier-command`、`--code-simplifier-env KEY=VALUE`，支持 `init` 和 `start`。
+- 新增状态字段 `codeSimplifierEnabled=true`，旧 session reconcile 时默认补齐为开启。
+- Refiner 现在总是写入 `simplifier-result.json`，并继续写 `refinement-summary.json` 作为 reviewer 兼容 artifact。
+- disabled 模式写 `status=skipped` 并进入 Reviewer；enabled 模式渲染 `code-simplifier-prompt.md` 并调用 `role='refiner'` runner。
+- CodeSimplifier runner 输出缺失、状态非法或 schema 明显错误时会落为 `status=failed`，不会静默进入 Reviewer。
+- `changes_requested` 会通过既有重复失败 guard 回到 Builder，并把 CodeSimplifier findings 注入下一轮 Builder prompt。
+- `failed` 会停留在 Refiner 重试/阻断路径，不进入 Reviewer。
+- runner metadata 只记录 env key；stdout/stderr 中配置的 env value 会被 redacted。
+- 已验证：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `252 passed in 30.76s`
+
 ### V0.3.1 Acceptance Obligation Ledger 完成
 - **状态：** complete
 - 已新增 AO Ledger：人工反馈、Plannotator annotations、Requirements/Unit Plan 返工和 Final Acceptance rejection 会进入 `acceptanceObligations`。

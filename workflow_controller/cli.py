@@ -34,6 +34,40 @@ def _build_strategist_overrides(args: argparse.Namespace) -> dict[str, Any] | No
     return overrides
 
 
+def _build_code_simplifier_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
+    enabled = getattr(args, 'code_simplifier', None)
+    command = getattr(args, 'code_simplifier_command', None)
+    raw_env = getattr(args, 'code_simplifier_env', None) or []
+    if enabled is None and not command and not raw_env:
+        return None
+    overrides: dict[str, Any] = {'codeSimplifierEnabled': enabled is not False}
+    if command or raw_env:
+        role_runner: dict[str, Any] = {'runner': 'subprocess'}
+        if command:
+            role_runner['command'] = command
+        if raw_env:
+            env: dict[str, str] = {}
+            for pair in raw_env:
+                k, _, v = pair.partition('=')
+                env[k] = v
+            role_runner['env'] = env
+        overrides['roleRunners'] = {'refiner': role_runner}
+    return overrides
+
+
+def _build_role_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    for overrides in (_build_strategist_overrides(args), _build_code_simplifier_overrides(args)):
+        if not overrides:
+            continue
+        for key, value in overrides.items():
+            if key == 'roleRunners' and isinstance(value, dict):
+                merged.setdefault('roleRunners', {}).update(value)
+            else:
+                merged[key] = value
+    return merged or None
+
+
 def render_status_line(state: dict[str, Any]) -> str:
     next_action = state.get('nextAction') or compute_next_allowed_action(state)
     return (
@@ -65,6 +99,10 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--test-strategist', action='store_true', default=False, help='Enable Test Strategist for Unit Plan draft')
     init_parser.add_argument('--test-strategist-command', default=None, help='Override Test Strategist runner command')
     init_parser.add_argument('--test-strategist-env', action='append', metavar='KEY=VALUE', dest='test_strategist_env', help='Inject env var into Test Strategist subprocess only (repeatable)')
+    init_parser.add_argument('--code-simplifier', action='store_true', default=None, help='Enable CodeSimplifier for the Refiner stage')
+    init_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
+    init_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
+    init_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
 
     status_parser = subparsers.add_parser(
         'status',
@@ -140,6 +178,10 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--test-strategist', action='store_true', default=False, help='Enable Test Strategist for Unit Plan draft')
     start_parser.add_argument('--test-strategist-command', default=None, help='Override Test Strategist runner command')
     start_parser.add_argument('--test-strategist-env', action='append', metavar='KEY=VALUE', dest='test_strategist_env', help='Inject env var into Test Strategist subprocess only (repeatable)')
+    start_parser.add_argument('--code-simplifier', action='store_true', default=None, help='Enable CodeSimplifier for the Refiner stage')
+    start_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
+    start_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
+    start_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
 
     drive_parser = subparsers.add_parser(
         'drive',
@@ -199,7 +241,7 @@ def main() -> None:
     )
 
     if args.command == 'init':
-        strategist_overrides = _build_strategist_overrides(args)
+        strategist_overrides = _build_role_overrides(args)
         state = controller.init_state(force=args.force, from_ralph=args.from_ralph, strategist_overrides=strategist_overrides)
         print(render_status_line(state))
         return
@@ -255,7 +297,7 @@ def main() -> None:
                 verbose=args.verbose,
                 color_mode=args.color,
                 actor=args.actor,
-                strategist_overrides=_build_strategist_overrides(args),
+                strategist_overrides=_build_role_overrides(args),
             )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)

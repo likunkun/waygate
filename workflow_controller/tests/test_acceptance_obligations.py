@@ -9,6 +9,8 @@ from workflow_controller.acceptance_obligations import (
     render_acceptance_obligations_markdown,
 )
 from workflow_controller.gates.validators import validate_unit_plan_acceptance_obligation_coverage
+from workflow_controller.gates.validators import validate_requirements_acceptance_quality
+from workflow_controller.gates.validators import validate_unit_plan_design_architecture_traceability
 
 
 def test_plannotator_annotations_become_distinct_acceptance_obligations() -> None:
@@ -217,3 +219,217 @@ def test_unit_plan_approval_passes_when_all_must_obligations_are_covered(tmp_pat
     }
 
     validate_unit_plan_acceptance_obligation_coverage(gate, state)
+
+
+def test_requirements_approval_blocks_unmapped_must_obligation(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: integration]: 六步 UX 清楚展示。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+            {'id': 'AO-002', 'title': '15 个材料没有覆盖', 'priority': 'must', 'status': 'open'},
+        ],
+    }
+
+    with pytest.raises(ValueError, match='AO-002'):
+        validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_approval_requires_verification_layer_for_each_ac(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1: 六步 UX 清楚展示。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-001 | AC-1 | covered |  | pytest tests/test_delivery.py -q |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+        ],
+    }
+
+    with pytest.raises(ValueError, match='AC-1.*verification layer'):
+        validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_approval_does_not_count_layer_words_in_ac_description(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1: Manual import behavior works with fixed data.\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-001 | AC-1 | covered |  | pytest tests/test_delivery.py -q |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '手工导入行为需明确', 'priority': 'must', 'status': 'open'},
+        ],
+    }
+
+    with pytest.raises(ValueError, match='AC-1.*verification layer'):
+        validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_approval_accepts_mapped_and_explicitly_deferred_obligations(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: integration]: 六步 UX 清楚展示。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |\n'
+        '| AO-002 | deferred | deferred | manual | 本版本不包含 15 个材料导入，已记录到后续范围。 |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+            {'id': 'AO-002', 'title': '15 个材料没有覆盖', 'priority': 'must', 'status': 'open'},
+        ],
+    }
+
+    validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_approval_requires_design_and_architecture_refs_for_each_ac(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: integration]: 六步 UX 清楚展示。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-1 | PD-1 |  | missing architecture |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+        ],
+    }
+
+    with pytest.raises(ValueError, match='AC-1.*design/architecture traceability'):
+        validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_approval_accepts_design_and_architecture_traceability(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: integration]: 六步 UX 清楚展示。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-1 | PD-AC1-six-step-flow | TA-AC1-state-model | runtime design and module boundary |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+        ],
+    }
+
+    validate_requirements_acceptance_quality(gate, state)
+
+
+def test_unit_plan_approval_requires_test_cases_to_preserve_design_architecture_refs(tmp_path: Path) -> None:
+    requirements = tmp_path / 'requirements-and-acceptance.md'
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: integration]: 六步 UX 清楚展示。\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-1 | PD-AC1-six-step-flow | TA-AC1-state-model | runtime design and module boundary |\n',
+        encoding='utf-8',
+    )
+    unit_plan = tmp_path / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n', encoding='utf-8')
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-1',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'integration',
+                        'command': 'pytest tests/test_delivery.py -q',
+                        'expected': 'AO-001 works',
+                    }
+                ],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match='AC-1.*design/architecture traceability'):
+        validate_unit_plan_design_architecture_traceability(requirements, unit_plan, state)
+
+
+def test_unit_plan_approval_accepts_test_case_design_architecture_refs(tmp_path: Path) -> None:
+    requirements = tmp_path / 'requirements-and-acceptance.md'
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: integration]: 六步 UX 清楚展示。\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-1 | PD-AC1-six-step-flow | TA-AC1-state-model | runtime design and module boundary |\n',
+        encoding='utf-8',
+    )
+    unit_plan = tmp_path / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n', encoding='utf-8')
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-1',
+                        'acceptance_criterion': 'AC-1',
+                        'product_design_refs': ['PD-AC1-six-step-flow'],
+                        'technical_architecture_refs': ['TA-AC1-state-model'],
+                        'layer': 'integration',
+                        'command': 'pytest tests/test_delivery.py -q',
+                        'expected': 'AO-001 works',
+                    }
+                ],
+            }
+        ]
+    }
+
+    validate_unit_plan_design_architecture_traceability(requirements, unit_plan, state)

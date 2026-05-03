@@ -27,6 +27,7 @@ Acceptance Obligation Ledger:
 ```
 
 Every must AO must be covered by at least one Acceptance Criterion, or explicitly deferred/rejected/out_of_scope with reason.
+Use the Requirements Traceability Matrix to record that decision for every active must AO.
 Do not collapse multiple AO items into one vague requirement.
 """
     revision_feedback = state.get('requirementsRevisionFeedback')
@@ -54,6 +55,8 @@ Write the Markdown body to this exact file:
 不要包含 `## Human Confirmation` 段落；controller 会自动追加确认段落和内容 hash。
 不要修改应用源代码；这是规划/门禁文档生成任务。
 使用 `test-strategy` skill 将每条验收标准映射到适当验证层级、具体测试用例、命令、fixture、环境和人工证据。
+Requirements approval 会被 controller 预检：每条 AC 必须声明 verification layer；每个 active must AO 必须映射到 AC，或显式 deferred/rejected/out_of_scope 并写明原因。
+V0.3.4 还要求每条 covered AC 在 Design/Architecture Traceability Matrix 中同时映射 Product Design Ref 和 Technical Architecture Ref。
 
 目标：
 - 请求目标：`{state.get('requestedOutcome')}`
@@ -93,24 +96,54 @@ Write the Markdown body to this exact file:
 
 使用可观察、可测试的标准。每条标准都要说明可证明它的证据。
 每条验收标准必须有稳定 ID（如 `AC-01`、`AC-02`），并描述可观察行为；不要写“体验良好”“流程正常”等不可测试表述。
+每条验收标准必须声明 verification layer：unit / integration / e2e / manual，推荐格式：`- AC-01 [verification: e2e]: ...`。
 涉及用户可见闭环、数据流、导入导出、列表、状态流转、权限或持久化的 AC，必须包含固定测试数据或 fixture、操作路径、可断言的期望值（如字段值、数量、排序、状态、错误文案、导出内容）。
 后续 E2E 必须从这些 AC 生成测试用例，不能用截图或人工观察替代断言。
 
-## 4. 测试策略（Test Strategy）
+## 4. 需求可追溯矩阵（Requirements Traceability Matrix）
+
+必须包含这个表头：
+
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+
+规则：
+- 每个 active must AO 必须有一行。
+- `covered` 行必须填写 AC ID 和 verification layer。
+- 不能在一个模糊 AC 里合并多个 AO；如果多个 AO 共享同一个 AC，也要逐行列出 AO。
+- 如果 AO 不进入本版本，Status 必须是 `deferred`、`rejected` 或 `out_of_scope`，并在 Evidence/Reason 写明原因。
+- Status 只能使用 covered/deferred/rejected/out_of_scope。
+- Verification Layer 只能使用 unit / integration / e2e / manual。
+
+## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）
+
+必须包含这个表头：
+
+| AC | Product Design Ref | Technical Architecture Ref | Notes |
+| --- | --- | --- | --- |
+
+规则：
+- 每条 covered AC 必须有一行。
+- Product Design Ref 必须指向本文件 `## 7. 产品设计概要` 中的具体用户流程、关键页面/状态、API/CLI 输出或产品行为说明。
+- Technical Architecture Ref 必须指向本文件 `## 8. 架构概要` 中的具体模块边界、数据流、外部依赖或风险说明。
+- 不要使用 `TBD`、`pending`、`待补`、`无` 作为引用值；不确定时应补完整设计/架构概要，而不是让 gate 通过。
+- 这一节只建立 requirements 层设计/架构引用；Verifier evidence schema 不在本版本实现。
+
+## 5. 测试策略（Test Strategy）
 
 按适用情况区分单元测试、功能/API 测试、集成检查和 E2E/人工验收。
 
-## 5. 范围外
+## 6. 范围外
 
-## 6. 产品设计概要
+## 7. 产品设计概要
 
 描述核心用户流程（正常路径 + 主要异常路径）、关键页面或系统状态的文字/ASCII 示意；如果没有 UI，就描述 API 响应结构、CLI 输出或关键状态变化；再补充"完成后应该长什么样"的验收示意。
 
-## 7. 架构概要
+## 8. 架构概要
 
 描述参与本次变更的模块边界与职责划分、核心数据流（输入 → 处理 → 输出）、外部依赖（系统/服务/API/环境），以及主要技术风险和约束。
 
-## 8. 人工审阅清单
+## 9. 人工审阅清单
 
 使用未勾选的 Markdown checkbox。
 """
