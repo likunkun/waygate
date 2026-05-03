@@ -522,8 +522,11 @@ class RalphRefinerController:
             feedback_text=rejection_feedback,
             annotations=rejection_annotations,
         )
-        patch_list = extract_patch_list(gate_content) if route in {'implementation', 'defect_fix'} else None
-        state['finalAcceptanceRejectionFeedback'] = patch_list if patch_list else rejection_feedback
+        state['finalAcceptanceRejectionFeedback'] = _final_acceptance_rejection_feedback(
+            route,
+            gate_content,
+            rejection_feedback,
+        )
         state['finalAcceptanceRejectionRoute'] = route
         state['finalAcceptanceRejectionCount'] = int(state.get('finalAcceptanceRejectionCount') or 0) + 1
         state['finalAcceptanceAccepted'] = False
@@ -1575,6 +1578,34 @@ def _final_acceptance_rejection_route(content: str) -> str:
         if route in selected:
             return route
     raise ValueError('Final acceptance rejection routing selected an unknown option.')
+
+
+def _final_acceptance_rejection_feedback(
+    route: str,
+    gate_content: str,
+    rejection_feedback: str,
+) -> str:
+    if route not in {'implementation', 'defect_fix'}:
+        return rejection_feedback
+    patch_list = extract_patch_list(gate_content)
+    if not patch_list:
+        return rejection_feedback
+    matrix_context = _final_acceptance_evidence_matrix_context(gate_content)
+    if not matrix_context:
+        return patch_list
+    return patch_list.rstrip() + '\n\n' + matrix_context
+
+
+def _final_acceptance_evidence_matrix_context(content: str) -> str | None:
+    body = gate_body(content)
+    match = re.search(
+        r'(?ms)^##\s+验收证据矩阵（Final Acceptance Evidence Matrix）\s*$.*?(?=^##\s+|\Z)',
+        body,
+    )
+    if not match:
+        return None
+    context = match.group(0).strip()
+    return context or None
 
 
 def _strip_html_comments(content: str) -> str:

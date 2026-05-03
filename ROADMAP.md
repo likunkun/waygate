@@ -83,11 +83,14 @@ Builder → CodeSimplifier/Refiner → Reviewer → Verifier → Final Acceptanc
 - 定向测试：`169 passed in 17.97s`
 - 全量测试：`267 passed in 29.94s`
 
-**V0.3.6 Final Acceptance Evidence Matrix（规划中）：**
+**V0.3.6 Final Acceptance Evidence Matrix（已完成）：**
 
 - 引入 evidence schema：最终验收 gate 按结构化模板渲染（AO id、AC 编号、验证层、命令、预期结果），替代纯文本 checklist
 - 最终验收 gate 基于 Verifier evidence schema 渲染可审阅矩阵
 - 拒绝时保留 AO/AC/Test Case/Evidence 定位，便于路由到 requirements、unit_plan、defect_fix 或 implementation
+- patch list 返工路径会附带 evidence matrix context，避免 Builder/defect-fix unit 丢失验收定位
+- 定向测试：`147 passed in 14.76s`
+- 全量测试：`268 passed in 30.15s`
 
 **可选：**
 

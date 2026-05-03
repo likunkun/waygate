@@ -4639,6 +4639,10 @@ def test_patch_list_in_final_acceptance_gate_is_extracted_for_builder(tmp_path: 
     gate_body = (
         '# 最终验收确认\n\n'
         '## 结果\n- 状态: active\n\n'
+        '## 验收证据矩阵（Final Acceptance Evidence Matrix）\n\n'
+        '| AO | AC | Test Case | Layer | Status | Evidence | Expected | Artifacts | Golden Path |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        '| AO-001 | AC-1 | TC-AC1-GOLDEN | e2e | passed | `pytest tests/test_delivery.py -q` | delivery visible | verification.json | yes |\n\n'
         '## 修改清单\n\n'
         '- [ ] 登录按钮文字改为"立即登录"\n'
         '- [ ] 错误提示消失时间从 5s 改为 3s\n\n'
@@ -4655,6 +4659,8 @@ def test_patch_list_in_final_acceptance_gate_is_extracted_for_builder(tmp_path: 
     feedback = saved['finalAcceptanceRejectionFeedback']
     assert '立即登录' in feedback
     assert '5s 改为 3s' in feedback
+    assert '## 验收证据矩阵（Final Acceptance Evidence Matrix）' in feedback
+    assert 'TC-AC1-GOLDEN' in feedback
     assert '## 结果' not in feedback, 'Full gate content should not be in feedback when patch list is present'
     assert '## 覆盖情况' not in feedback
 

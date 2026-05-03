@@ -100,11 +100,18 @@
 
 ## 2026-05-04 V0.3.5 Verifier Evidence Schema 发现
 
-- V0.3.5 的合理边界是 verifier artifact schema，不改 Final Acceptance gate；最终验收矩阵留给 V0.3.6 消费 `evidence_rows`。
+- V0.3.5 的合理边界是 verifier artifact schema，不改 Final Acceptance gate；最终验收矩阵已由 V0.3.6 消费 `evidence_rows`。
 - `verification.json` 需要保持旧字段兼容，因为 reviewer、final acceptance summary 和既有测试仍读取 `passed`、`results`、`evidence_files`。
 - Evidence row 应以 Unit Plan test case 为主；没有 test cases 的历史 session 保持兼容，允许空 `evidence_rows`，但 schema version 和 rows 字段必须存在。
 - 自动化命令 row 通过 command 与 verification result 匹配；手工证据 row 保留 `manual_evidence` 和 artifact refs，不伪装成自动化 pass。
-- Controller 不能只看 `passed=true`；schema malformed 也必须走验证失败返工，否则后续 V0.3.6 无法可靠渲染证据矩阵。
+- Controller 不能只看 `passed=true`；schema malformed 也必须走验证失败返工，否则 V0.3.6 无法可靠渲染证据矩阵。
+
+## 2026-05-04 V0.3.6 Final Acceptance Evidence Matrix 发现
+
+- Final Acceptance gate 应消费 V0.3.5 的 `evidence_rows`，但不能删除旧证据摘要；旧摘要仍服务于快速浏览和历史 artifact 兼容。
+- patch list 能减少 Builder 噪声，但不能丢掉证据定位；因此 patch list 返工反馈需要附带 evidence matrix context。
+- 没有 `evidence_rows` 的历史 `verification.json` 不能让 final acceptance gate 崩掉，应显示 missing schema row 指向 `verification.json`。
+- V0.3.6 只增强 gate 渲染和反馈上下文，不新增最终验收路由；更复杂的 defect-fix gate 属于 V0.4。
 
 ## 2026-05-01 版本规划发现
 

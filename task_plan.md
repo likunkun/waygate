@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）和 V0.3.5 Verifier Evidence Schema（阶段 26）。当前继续以 `ROADMAP.md` 为版本规划基线推进 workflow-controller。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）和 V0.3.6 Final Acceptance Evidence Matrix（阶段 27）。当前继续以 `ROADMAP.md` 为版本规划基线推进 workflow-controller。
 
 ## 各阶段
 
@@ -237,6 +237,17 @@
 - [x] 兼容既有 `passed/issues/results/evidence_files` 字段。
 - [x] 定向测试通过：`169 passed in 17.97s`。
 - [x] 全量 `workflow_controller/tests` 通过：`267 passed in 29.94s`。
+- [x] 确认未新增浏览器 UI 或页面。
+- **状态：** complete
+
+### 阶段 27：V0.3.6 Final Acceptance Evidence Matrix
+- [x] 完成 Unit 1：Final Acceptance gate 从 `verification.json.evidence_rows` 渲染 `## 验收证据矩阵（Final Acceptance Evidence Matrix）`。
+- [x] 矩阵展示 AO、AC、Test Case、Layer、Status、Evidence、Expected、Artifacts 和 Golden Path。
+- [x] 旧 verification 没有 `evidence_rows` 时保持兼容，显示 missing schema row 并保留原证据摘要。
+- [x] 完成 Unit 2：最终验收 patch list 返工反馈附带 evidence matrix context。
+- [x] 拒绝时保留 AO/AC/Test Case/Evidence 定位，便于路由到 requirements、unit_plan、defect_fix 或 implementation。
+- [x] 定向测试通过：`147 passed in 14.76s`。
+- [x] 全量 `workflow_controller/tests` 通过：`268 passed in 30.15s`。
 - [x] 确认未新增浏览器 UI 或页面。
 - **状态：** complete
 

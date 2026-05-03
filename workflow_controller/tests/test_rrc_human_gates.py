@@ -2095,6 +2095,79 @@ def test_final_acceptance_gate_summarizes_execution_evidence(tmp_path: Path) -> 
     assert '- [ ] 阻塞:' in content
 
 
+def test_final_acceptance_gate_renders_v035_evidence_matrix(tmp_path: Path) -> None:
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'status': 'active',
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+        ],
+    }
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    (unit_dir / 'changed-files.txt').write_text('src/delivery.py\n', encoding='utf-8')
+    (unit_dir / 'builder-summary.json').write_text(
+        json.dumps({'runner_status': 'done', 'done_payload': {'summary': 'Delivery implemented'}}),
+        encoding='utf-8',
+    )
+    (unit_dir / 'review.json').write_text(
+        json.dumps({'passed': True, 'issues': [], 'reviewer': 'real-runtime-reviewer'}),
+        encoding='utf-8',
+    )
+    (unit_dir / 'verification.json').write_text(
+        json.dumps({
+            'passed': True,
+            'commands': ['pytest tests/test_delivery.py -q'],
+            'evidence_schema_version': 'v0.3.5',
+            'evidence_rows': [
+                {
+                    'unit_id': 'unit-01',
+                    'test_case_id': 'TC-AC1-GOLDEN',
+                    'acceptance_criterion': 'AC-1',
+                    'acceptance_obligations': ['AO-001'],
+                    'layer': 'e2e',
+                    'command': 'pytest tests/test_delivery.py -q',
+                    'manual_evidence': None,
+                    'expected': 'delivery is visible with status complete',
+                    'status': 'passed',
+                    'result_index': 0,
+                    'returncode': 0,
+                    'artifact_refs': ['green-test.txt', 'verification.json'],
+                    'golden_path': True,
+                },
+                {
+                    'unit_id': 'unit-01',
+                    'test_case_id': 'TC-AC2-MANUAL',
+                    'acceptance_criterion': 'AC-2',
+                    'acceptance_obligations': ['AO-002'],
+                    'layer': 'manual',
+                    'command': None,
+                    'manual_evidence': 'approvals/unit-plan.md confirms manual acceptance',
+                    'expected': 'manual acceptance is recorded',
+                    'status': 'manual',
+                    'result_index': None,
+                    'returncode': None,
+                    'artifact_refs': ['approvals/unit-plan.md'],
+                    'golden_path': False,
+                },
+            ],
+        }),
+        encoding='utf-8',
+    )
+
+    gate_path = ensure_final_acceptance_gate(state, tmp_path / 'approvals', artifacts_dir, force=True)
+
+    content = gate_path.read_text(encoding='utf-8')
+    assert '## 验收证据矩阵（Final Acceptance Evidence Matrix）' in content
+    assert '| AO | AC | Test Case | Layer | Status | Evidence | Expected | Artifacts | Golden Path |' in content
+    assert '| AO-001 | AC-1 | TC-AC1-GOLDEN | e2e | passed | `pytest tests/test_delivery.py -q` | delivery is visible with status complete | green-test.txt, verification.json | yes |' in content
+    assert '| AO-002 | AC-2 | TC-AC2-MANUAL | manual | manual | approvals/unit-plan.md confirms manual acceptance | manual acceptance is recorded | approvals/unit-plan.md | no |' in content
+    assert '拒绝时请引用矩阵中的 AO、AC、Test Case 或 Evidence' in content
+
+
 def test_builder_prompt_includes_final_acceptance_defect_list_for_defect_fix_units(tmp_path: Path) -> None:
     approvals_dir = tmp_path / 'approvals'
     unit_dir = tmp_path / 'artifacts' / 'v2-2-fix-branding'

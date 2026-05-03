@@ -113,7 +113,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '- 每条 covered AC 必须映射到产品设计引用和技术架构引用。',
         '- Product Design Ref 指向用户流程、界面/状态、API/CLI 输出或无 UI 场景的产品行为说明。',
         '- Technical Architecture Ref 指向模块边界、数据流、外部依赖或主要技术风险说明。',
-        '- 这里先记录设计/架构引用；Verifier evidence schema 会在验证阶段消费 Unit Plan test cases，最终验收矩阵留到后续版本处理。',
+        '- 这里先记录设计/架构引用；Verifier evidence schema 会在验证阶段消费 Unit Plan test cases，并进入最终验收矩阵。',
         '',
         '| AC | Product Design Ref | Technical Architecture Ref | Notes |',
         '| --- | --- | --- | --- |',
@@ -301,6 +301,7 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
             returncode = result.get('returncode')
             suffix = f' (exit {returncode})' if returncode not in {None, 0} else ''
             lines.append(f'  - `{command}` -> {result_status}{suffix}')
+    lines.extend(_final_acceptance_evidence_matrix_lines(verification))
     lines.extend(_golden_path_result_lines(state, verification))
     lines.extend([
         '',
@@ -331,6 +332,61 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
         '     留空则 Agent 收到完整验收文档作为参考。-->',
     ])
     return _with_final_acceptance_rejection_routing('\n'.join(lines) + '\n')
+
+
+def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> list[str]:
+    rows = [
+        row for row in verification.get('evidence_rows') or []
+        if isinstance(row, dict)
+    ]
+    lines = [
+        '',
+        '## 验收证据矩阵（Final Acceptance Evidence Matrix）',
+        '',
+        '拒绝时请引用矩阵中的 AO、AC、Test Case 或 Evidence，便于路由到 requirements、unit_plan、defect_fix 或 implementation。',
+        '',
+        '| AO | AC | Test Case | Layer | Status | Evidence | Expected | Artifacts | Golden Path |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ]
+    if not rows:
+        lines.append('| 未指定 | 未指定 | 未指定 | 未指定 | missing | verification.json 未包含 evidence_rows | 请检查 Verifier evidence schema | verification.json | no |')
+        return lines
+
+    for row in rows:
+        lines.append(
+            '| '
+            + ' | '.join([
+                _markdown_cell(_join_strings(row.get('acceptance_obligations')) or '未指定'),
+                _markdown_cell(row.get('acceptance_criterion') or '未指定'),
+                _markdown_cell(row.get('test_case_id') or '未指定'),
+                _markdown_cell(row.get('layer') or '未指定'),
+                _markdown_cell(row.get('status') or 'missing'),
+                _markdown_cell(_evidence_cell(row)),
+                _markdown_cell(row.get('expected') or '未指定'),
+                _markdown_cell(_join_strings(row.get('artifact_refs')) or 'verification.json'),
+                'yes' if row.get('golden_path') is True else 'no',
+            ])
+            + ' |'
+        )
+    return lines
+
+
+def _evidence_cell(row: dict[str, Any]) -> str:
+    command = str(row.get('command') or '').strip()
+    if command:
+        return f'`{command}`'
+    manual_evidence = str(row.get('manual_evidence') or '').strip()
+    return manual_evidence or '未指定'
+
+
+def _join_strings(value: Any) -> str:
+    if isinstance(value, list):
+        return ', '.join(str(item).strip() for item in value if str(item).strip())
+    return str(value).strip() if value is not None else ''
+
+
+def _markdown_cell(value: Any) -> str:
+    return str(value).replace('|', '\\|').replace('\n', '<br>').strip()
 
 
 def _golden_path_result_lines(state: dict[str, Any], verification: dict[str, Any]) -> list[str]:
