@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）和 V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）。当前继续以 `ROADMAP.md` 为版本规划基线推进 workflow-controller。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）和 V0.3.5 Verifier Evidence Schema（阶段 26）。当前继续以 `ROADMAP.md` 为版本规划基线推进 workflow-controller。
 
 ## 各阶段
 
@@ -226,6 +226,17 @@
 - [x] 保持历史兼容：旧 requirements 没有设计/架构矩阵时不会被 V0.3.4 新 gate 阻断。
 - [x] 定向测试通过：`159 passed in 15.06s`。
 - [x] 全量 `workflow_controller/tests` 通过：`264 passed in 31.38s`。
+- [x] 确认未新增浏览器 UI 或页面。
+- **状态：** complete
+
+### 阶段 26：V0.3.5 Verifier Evidence Schema
+- [x] 完成 Unit 1：`verification.json` 新增 `evidence_schema_version=v0.3.5` 和结构化 `evidence_rows`。
+- [x] Evidence rows 覆盖 test case id、AC、AO、layer、command/manual evidence、expected、status、result index、returncode、artifact refs 和 golden path。
+- [x] 完成 Unit 2：新增 Verifier evidence schema validator，并接入 controller Verifier 通过路径。
+- [x] malformed evidence schema 会按验证失败回到 `EXECUTE_UNIT`，不会进入 `UNIT_COMPLETE`。
+- [x] 兼容既有 `passed/issues/results/evidence_files` 字段。
+- [x] 定向测试通过：`169 passed in 17.97s`。
+- [x] 全量 `workflow_controller/tests` 通过：`267 passed in 29.94s`。
 - [x] 确认未新增浏览器 UI 或页面。
 - **状态：** complete
 

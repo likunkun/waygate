@@ -74,11 +74,14 @@ Builder → CodeSimplifier/Refiner → Reviewer → Verifier → Final Acceptanc
 - 兼容旧 requirements：没有设计/架构可追溯矩阵的历史 gate 不会被 V0.3.4 新规则阻断
 - 全量测试：`264 passed in 31.38s`
 
-**V0.3.5 Verifier Evidence Schema（规划中）：**
+**V0.3.5 Verifier Evidence Schema（已完成）：**
 
 - Verifier evidence schema 记录 AO/AC/Test Case/Evidence 对账矩阵
 - Verifier artifact 从纯命令结果扩展为结构化 evidence rows
 - 证据 schema 需要兼容手工证据、自动化测试命令和 golden path 结果
+- Controller 在 Verifier 通过后校验 `evidence_schema_version` 和 `evidence_rows`，schema 无效时按验证失败返工，不进入 Unit Complete
+- 定向测试：`169 passed in 17.97s`
+- 全量测试：`267 passed in 29.94s`
 
 **V0.3.6 Final Acceptance Evidence Matrix（规划中）：**
 

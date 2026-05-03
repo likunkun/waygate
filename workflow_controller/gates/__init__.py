@@ -35,5 +35,6 @@ from workflow_controller.gates.validators import (  # noqa: F401
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,
+    validate_verification_evidence_schema,
     validate_verification_verdict,
 )

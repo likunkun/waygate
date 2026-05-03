@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import workflow_controller.rrc_controller as rrc_controller_module
 from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
 from workflow_controller.steps._common import TestStrategistBlocked as StrategistBlocked
 from workflow_controller.state_machine.transitions import reconcile_state, validate_objective_coverage
@@ -1996,6 +1997,60 @@ def test_repeated_verification_failure_blocks_before_another_retry(tmp_path: Pat
     assert second['lastFailure']['count'] == 2
     assert 'Repeated VERIFY_UNIT failure' in second['blockedReason']
     assert 'runtime database missing' in second['blockedReason']
+
+
+def test_run_verifier_rejects_malformed_evidence_schema_before_unit_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'VERIFY_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'Delivery',
+                    'passes': False,
+                    'verification_commands': ['pytest tests/test_delivery.py -q'],
+                },
+            ],
+        },
+        force=True,
+    )
+
+    def fake_run_verifier(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'verification.json').write_text(
+            json.dumps({
+                'unit_id': 'unit-01',
+                'passed': True,
+                'commands': ['pytest tests/test_delivery.py -q'],
+                'evidence_files': ['green-test.txt'],
+                'verified_at': '2026-05-04T00:00:00+00:00',
+            }),
+            encoding='utf-8',
+        )
+
+    monkeypatch.setattr(rrc_controller_module, 'run_verifier', fake_run_verifier)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state['lastFailure']['stage'] == 'VERIFY_UNIT'
+    assert state['lastFailure']['details']['issues'][0]['type'] == 'invalid_evidence_schema'
+    assert 'evidence_schema_version' in state['lastFailure']['details']['issues'][0]['message']
 
 
 def _write_simplifier_result(unit_dir: Path, status: str, findings: list[dict[str, str]] | None = None) -> None:

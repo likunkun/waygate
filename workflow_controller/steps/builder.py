@@ -6,6 +6,8 @@ from typing import Any, Callable
 
 from workflow_controller.runners import make_runner, run_agent_backend, RunnerRequest
 from workflow_controller.gates import check_gate_file
+from workflow_controller.gates.parsers import _unit_test_cases
+from workflow_controller.gates.validators import VERIFICATION_EVIDENCE_SCHEMA_VERSION
 from workflow_controller.rrc_real_runtime import (
     collect_git_changed_files,
     run_agent_for_current_step,
@@ -673,6 +675,12 @@ def run_verifier(
                 'passed': True,
                 'commands': ['pytest tests/test_example.py -q'],
                 'evidence_files': ['green-test.txt'],
+                'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
+                'evidence_rows': _verification_evidence_rows(
+                    state=state,
+                    results=[],
+                    evidence_files=['green-test.txt'],
+                ),
                 'verified_at': _now_iso(),
             },
             summary='dry-run verification passed',
@@ -706,6 +714,12 @@ def run_verifier(
             'commands': commands,
             'results': results,
             'evidence_files': ['green-test.txt'],
+            'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
+            'evidence_rows': _verification_evidence_rows(
+                state=state,
+                results=results,
+                evidence_files=['green-test.txt', 'verification.json'],
+            ),
             'verified_at': _now_iso(),
         }
         _write_json(unit_dir / 'verification.json', verification_payload)
@@ -733,10 +747,154 @@ def run_verifier(
         'issues': issues,
         'commands': ['inspect green-test.txt for pass evidence'],
         'evidence_files': evidence_files,
+        'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
+        'evidence_rows': _verification_evidence_rows(
+            state=state,
+            results=[],
+            evidence_files=evidence_files,
+        ),
         'verified_at': _now_iso(),
     }
     _write_json(unit_dir / 'verification.json', verification_payload)
     return StepResult(summary='verification passed' if not issues else 'verification failed', outputs=['verification.json'])
+
+
+def _verification_evidence_rows(
+    *,
+    state: dict[str, Any],
+    results: list[dict[str, Any]],
+    evidence_files: list[str],
+) -> list[dict[str, Any]]:
+    unit_id = str(state.get('currentUnitId') or 'unknown-unit')
+    unit = _find_unit(state, unit_id)
+    test_cases = [case for case in _unit_test_cases(unit) if isinstance(case, dict)]
+    if not test_cases:
+        return [
+            _evidence_row_from_command_result(unit_id, index, result, evidence_files)
+            for index, result in enumerate(results)
+            if isinstance(result, dict)
+        ]
+
+    rows: list[dict[str, Any]] = []
+    for case in test_cases:
+        command = _optional_str(case.get('command'))
+        result_index, result = _matching_verification_result(command, results)
+        rows.append(_evidence_row_from_test_case(
+            unit_id=unit_id,
+            case=case,
+            command=command,
+            result_index=result_index,
+            result=result,
+            evidence_files=evidence_files,
+        ))
+    return rows
+
+
+def _evidence_row_from_test_case(
+    *,
+    unit_id: str,
+    case: dict[str, Any],
+    command: str | None,
+    result_index: int | None,
+    result: dict[str, Any] | None,
+    evidence_files: list[str],
+) -> dict[str, Any]:
+    return {
+        'unit_id': unit_id,
+        'test_case_id': _optional_str(case.get('id') or case.get('name')),
+        'acceptance_criterion': _optional_str(case.get('acceptance_criterion') or case.get('acceptanceCriterion')),
+        'acceptance_obligations': _string_list(case.get('covers_obligations') or case.get('coversObligations')),
+        'layer': _optional_str(case.get('layer')),
+        'command': command,
+        'manual_evidence': _optional_str(case.get('evidence')),
+        'expected': _optional_str(case.get('expected') or case.get('expected_result') or case.get('expectedResult')),
+        'status': _evidence_status(command, result),
+        'result_index': result_index,
+        'returncode': result.get('returncode') if isinstance(result, dict) else None,
+        'artifact_refs': _artifact_refs_for_evidence_row(command, result, evidence_files),
+        'golden_path': case.get('golden_path') is True,
+    }
+
+
+def _evidence_row_from_command_result(
+    unit_id: str,
+    result_index: int,
+    result: dict[str, Any],
+    evidence_files: list[str],
+) -> dict[str, Any]:
+    return {
+        'unit_id': unit_id,
+        'test_case_id': None,
+        'acceptance_criterion': None,
+        'acceptance_obligations': [],
+        'layer': None,
+        'command': _optional_str(result.get('command')),
+        'manual_evidence': None,
+        'expected': None,
+        'status': 'passed' if result.get('ok') else 'failed',
+        'result_index': result_index,
+        'returncode': result.get('returncode'),
+        'artifact_refs': _dedupe_strings(evidence_files),
+        'golden_path': False,
+    }
+
+
+def _matching_verification_result(
+    command: str | None,
+    results: list[dict[str, Any]],
+) -> tuple[int | None, dict[str, Any] | None]:
+    if not command:
+        return None, None
+    for index, result in enumerate(results):
+        if not isinstance(result, dict):
+            continue
+        result_command = str(result.get('command') or '').strip()
+        if command == result_command or command in result_command or result_command in command:
+            return index, result
+    return None, None
+
+
+def _evidence_status(command: str | None, result: dict[str, Any] | None) -> str:
+    if command:
+        if result is None:
+            return 'missing'
+        return 'passed' if result.get('ok') else 'failed'
+    return 'manual'
+
+
+def _artifact_refs_for_evidence_row(
+    command: str | None,
+    result: dict[str, Any] | None,
+    evidence_files: list[str],
+) -> list[str]:
+    if command and result is not None:
+        return _dedupe_strings([*evidence_files, 'verification.json'])
+    return _dedupe_strings(evidence_files)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    return stripped or None
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if value is None:
+        return []
+    stripped = str(value).strip()
+    return [stripped] if stripped else []
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for value in values:
+        stripped = str(value).strip()
+        if stripped and stripped not in deduped:
+            deduped.append(stripped)
+    return deduped
 
 
 def ask_human_scope_approval(state: dict[str, Any], approvals_dir: Path, dry_run: bool = False) -> StepResult:

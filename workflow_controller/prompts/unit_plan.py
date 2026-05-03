@@ -73,6 +73,7 @@ Write the Unit Plan Markdown body to this exact file:
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
 - 如果已批准 requirements 包含 `Design/Architecture Traceability Matrix`，每个 test case 还必须保留对应 AC 的 `product_design_refs` 和 `technical_architecture_refs`，并与 requirements 中的 Product Design Ref / Technical Architecture Ref 一致。
+- Verifier 会从 test cases 生成 `verification.json` 的 `evidence_rows`；因此每个 test case 的 AC、AO、layer、command/evidence、expected 和 `golden_path` 必须可直接审计。
 - 至少一个 E2E test case 必须标记 `golden_path: true`，表示人工最终验收前必须先跑通的核心正常流程。
 - `verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`），并包含实际执行这些 E2E 测试和 golden path 的命令；不接受"截图留证"或人工步骤作为完成条件。
 - `done_when` 必须是"测试命令退出码为 0 且断言覆盖 AC"，不接受"截图已上传"、"人工确认"或"浏览器路径已验证"。

@@ -22,6 +22,25 @@ from workflow_controller.gates.parsers import (
 )
 
 
+VERIFICATION_EVIDENCE_SCHEMA_VERSION = 'v0.3.5'
+VERIFICATION_EVIDENCE_ROW_FIELDS = {
+    'unit_id',
+    'test_case_id',
+    'acceptance_criterion',
+    'acceptance_obligations',
+    'layer',
+    'command',
+    'manual_evidence',
+    'expected',
+    'status',
+    'result_index',
+    'returncode',
+    'artifact_refs',
+    'golden_path',
+}
+VERIFICATION_EVIDENCE_ROW_STATUSES = {'passed', 'failed', 'missing', 'manual'}
+
+
 # ---------------------------------------------------------------------------
 # Validators from rrc_validators.py (artifact validation)
 # ---------------------------------------------------------------------------
@@ -43,6 +62,34 @@ def validate_verification_verdict(verification_path: Path) -> dict[str, Any]:
     verification = _load_json(verification_path)
     if 'passed' not in verification:
         raise ValueError(f"Verification verdict missing 'passed': {verification_path}")
+    return verification
+
+
+def validate_verification_evidence_schema(verification_path: Path) -> dict[str, Any]:
+    verification = _load_json(verification_path)
+    if verification.get('evidence_schema_version') != VERIFICATION_EVIDENCE_SCHEMA_VERSION:
+        raise ValueError(f'Verification evidence schema missing evidence_schema_version: {verification_path}')
+
+    rows = verification.get('evidence_rows')
+    if not isinstance(rows, list):
+        raise ValueError(f'Verification evidence_rows must be a list: {verification_path}')
+
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f'Verification evidence row {index} must be an object: {verification_path}')
+        missing_fields = sorted(VERIFICATION_EVIDENCE_ROW_FIELDS - set(row))
+        if missing_fields:
+            raise ValueError(
+                f'Verification evidence row {index} missing field(s) {missing_fields}: {verification_path}'
+            )
+        if row.get('status') not in VERIFICATION_EVIDENCE_ROW_STATUSES:
+            raise ValueError(f'Verification evidence row {index} has invalid status: {verification_path}')
+        if not isinstance(row.get('acceptance_obligations'), list):
+            raise ValueError(f'Verification evidence row {index} acceptance_obligations must be a list: {verification_path}')
+        if not isinstance(row.get('artifact_refs'), list):
+            raise ValueError(f'Verification evidence row {index} artifact_refs must be a list: {verification_path}')
+        if not isinstance(row.get('golden_path'), bool):
+            raise ValueError(f'Verification evidence row {index} golden_path must be a boolean: {verification_path}')
     return verification
 
 

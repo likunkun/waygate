@@ -784,15 +784,25 @@ raise SystemExit(0)
 def test_run_verifier_executes_verification_commands_in_workspace_and_records_results(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
+    command = "python -c \"from pathlib import Path; Path('verified.txt').write_text('ok'); print('verified')\""
     state = {
         'currentUnitId': '2-runtime',
         'workspacePath': str(workspace),
         'units': [
             {
                 'id': '2-runtime',
-                'verification_commands': [
-                    "python -c \"from pathlib import Path; Path('verified.txt').write_text('ok'); print('verified')\""
+                'test_cases': [
+                    {
+                        'id': 'TC-AC1-CMD',
+                        'acceptance_criterion': 'AC-1',
+                        'covers_obligations': ['AO-001'],
+                        'layer': 'integration',
+                        'command': command,
+                        'expected': 'verified is printed and verified.txt contains ok',
+                        'golden_path': True,
+                    }
                 ],
+                'verification_commands': [command],
             }
         ],
     }
@@ -806,6 +816,57 @@ def test_run_verifier_executes_verification_commands_in_workspace_and_records_re
     assert verification['passed'] is True
     assert verification['results'][0]['returncode'] == 0
     assert 'verified' in verification['results'][0]['stdout']
+    assert verification['evidence_schema_version'] == 'v0.3.5'
+    assert verification['evidence_rows'][0] == {
+        'unit_id': '2-runtime',
+        'test_case_id': 'TC-AC1-CMD',
+        'acceptance_criterion': 'AC-1',
+        'acceptance_obligations': ['AO-001'],
+        'layer': 'integration',
+        'command': command,
+        'manual_evidence': None,
+        'expected': 'verified is printed and verified.txt contains ok',
+        'status': 'passed',
+        'result_index': 0,
+        'returncode': 0,
+        'artifact_refs': ['green-test.txt', 'verification.json'],
+        'golden_path': True,
+    }
+
+
+def test_run_verifier_records_failed_command_evidence_row(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    command = "python -c \"import sys; print('boom'); sys.exit(7)\""
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'test_cases': [
+                    {
+                        'id': 'TC-AC1-FAIL',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'integration',
+                        'command': command,
+                        'expected': 'command exits successfully',
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification failed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['passed'] is False
+    assert verification['evidence_rows'][0]['status'] == 'failed'
+    assert verification['evidence_rows'][0]['result_index'] == 0
+    assert verification['evidence_rows'][0]['returncode'] == 7
 
 
 def test_run_verifier_supports_bash_source_in_approved_verification_command(tmp_path: Path) -> None:

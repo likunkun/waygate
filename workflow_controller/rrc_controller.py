@@ -43,6 +43,7 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,
+    validate_verification_evidence_schema,
     validate_verification_verdict,
 )
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
@@ -1123,6 +1124,17 @@ class RalphRefinerController:
                 self._save_state(state)
                 return state
             verification = validate_verification_verdict(unit_dir / 'verification.json')
+            try:
+                validate_verification_evidence_schema(unit_dir / 'verification.json')
+            except ValueError as exc:
+                verification['passed'] = False
+                verification.setdefault('issues', []).append(
+                    {
+                        'severity': 'high',
+                        'type': 'invalid_evidence_schema',
+                        'message': str(exc),
+                    }
+                )
             if verification['passed']:
                 _clear_last_failure(state)
                 state['lastVerifiedStep'] = 'VERIFY_UNIT'

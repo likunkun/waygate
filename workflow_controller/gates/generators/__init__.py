@@ -113,7 +113,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '- 每条 covered AC 必须映射到产品设计引用和技术架构引用。',
         '- Product Design Ref 指向用户流程、界面/状态、API/CLI 输出或无 UI 场景的产品行为说明。',
         '- Technical Architecture Ref 指向模块边界、数据流、外部依赖或主要技术风险说明。',
-        '- 这里先记录设计/架构引用；Verifier evidence schema 留到后续版本处理。',
+        '- 这里先记录设计/架构引用；Verifier evidence schema 会在验证阶段消费 Unit Plan test cases，最终验收矩阵留到后续版本处理。',
         '',
         '| AC | Product Design Ref | Technical Architecture Ref | Notes |',
         '| --- | --- | --- | --- |',

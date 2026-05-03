@@ -1,5 +1,17 @@
 # 进度日志
 
+## 会话：2026-05-04
+
+### V0.3.5 Verifier Evidence Schema
+- **状态：** complete
+- `verification.json` 现在保留既有 verdict 字段，同时新增 `evidence_schema_version=v0.3.5` 和 `evidence_rows`。
+- Evidence rows 记录 unit、test case、AC、AO、verification layer、command/manual evidence、expected、status、result index、returncode、artifact refs 和 golden path。
+- 自动化命令结果会映射为 `passed` / `failed` / `missing`；无命令的人工证据会映射为 `manual`。
+- Controller 在 verifier 通过后校验 evidence schema；schema 缺失或 malformed 时按验证失败进入既有返工/重复失败保护，不进入 `UNIT_COMPLETE`。
+- V0.3.5 不改变 Final Acceptance gate 渲染；Final Acceptance Evidence Matrix 仍属于 V0.3.6。
+- 已验证定向测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_verifier.py workflow_controller/tests/test_rrc_real_runtime.py workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/gates/test_gates_structure.py -q` -> `169 passed in 17.97s`
+- 已验证全量测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `267 passed in 29.94s`
+
 ## 会话：2026-05-03
 
 ### V0.3.4 Product Design / Technical Architecture Traceability
