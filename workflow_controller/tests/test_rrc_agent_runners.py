@@ -5,14 +5,10 @@ import stat
 import time
 from pathlib import Path
 
-from workflow_controller.rrc_agent_runners import (
-    RunnerRequest,
-    _subprocess_agent_command,
-    _tmux_idle_poll_seconds,
-    _tmux_pane_looks_idle,
-    make_runner,
-    run_agent_backend,
-)
+from workflow_controller.runners.base import RunnerRequest, DEFAULT_AGENT_TIMEOUT_SECONDS
+from workflow_controller.runners.codex import _subprocess_agent_command
+from workflow_controller.runners.tmux_claude import _tmux_idle_poll_seconds
+from workflow_controller.runners import make_runner, run_agent_backend
 
 
 def _write(path: Path, content: str) -> None:
@@ -177,7 +173,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert f'load-buffer {result.prompt_path}' not in log
 
 
-def test_tmux_claude_runner_clears_claude_session_before_dispatch(tmp_path: Path) -> None:
+def test_tmux_claude_runner_does_not_clear_claude_session_by_default(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     prompt_path = workspace / 'prompt.md'
@@ -199,6 +195,54 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not 
     )
 """,
     )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    log_lines = tmux_log.read_text(encoding='utf-8').splitlines()
+    assert 'send-keys -t 1.2 C-u' not in log_lines
+    assert 'send-keys -t 1.2 /clear C-m' not in log_lines
+    assert log_lines[:3] == [
+        f'load-buffer {result.run_dir / "dispatch.md"}',
+        'paste-buffer -t 1.2',
+        'send-keys -t 1.2 C-m',
+    ]
+
+
+def test_tmux_claude_runner_clears_only_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not in sys.argv:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "tmux finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+    monkeypatch.setenv('RRC_TMUX_CLEAR_BEFORE_DISPATCH', '1')
 
     request = RunnerRequest(
         backend='tmux-claude',
@@ -331,7 +375,7 @@ raise SystemExit(0)
     assert 'write done.json' in result.stderr
 
 
-def test_tmux_claude_timeout_reports_idle_pane_without_done_file(tmp_path: Path) -> None:
+def test_tmux_claude_timeout_reports_idle_pane_without_done_file(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     prompt_path = workspace / 'prompt.md'
@@ -342,10 +386,14 @@ def test_tmux_claude_timeout_reports_idle_pane_without_done_file(tmp_path: Path)
 import sys
 if sys.argv[1:2] == ["capture-pane"]:
     print("Claude finished the work but did not write done.json")
-    print("❯")
 raise SystemExit(0)
 """,
     )
+    monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
+    monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_MAX_NUDGES', '0')
+    monkeypatch.setenv('RRC_TMUX_CLEAR_DELAY_SECONDS', '0')
 
     request = RunnerRequest(
         backend='tmux-claude',
@@ -355,7 +403,7 @@ raise SystemExit(0)
         unit_id='unit-idle',
         agent_command=str(fake_tmux),
         tmux_target='1.2',
-        timeout_seconds=1,
+        timeout_seconds=2,
     )
 
     result = run_agent_backend(request)
@@ -363,7 +411,7 @@ raise SystemExit(0)
     assert result.status == 'agent_idle_without_done'
     assert result.returncode == 124
     assert result.done_path is not None
-    assert 'tmux pane appears idle' in result.stderr
+    assert 'tmux pane output stopped changing' in result.stderr
     assert 'Claude finished the work' in result.stderr
     assert result.run_dir.name in result.stderr
 
@@ -382,12 +430,13 @@ def test_tmux_claude_runner_fails_fast_when_pane_returns_idle_after_dispatch(
 import sys
 if sys.argv[1:2] == ["capture-pane"]:
     print("Claude ignored the new prompt and returned to idle")
-    print("❯")
 raise SystemExit(0)
 """,
     )
     monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
     monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
+    monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_MAX_NUDGES', '0')
     monkeypatch.setenv('RRC_TMUX_CLEAR_DELAY_SECONDS', '0')
 
     request = RunnerRequest(
@@ -419,31 +468,19 @@ def test_tmux_claude_runner_idle_poll_default_is_60s(
     assert _tmux_idle_poll_seconds() == 60.0
 
 
-def test_tmux_idle_detection_accepts_claude_prompt_with_insert_status() -> None:
-    pane_tail = """
-────────────────────────────────────────────────────────────────────────────────
-❯ 
-────────────────────────────────────────────────────────────────────────────────
-  -- INSERT -- ⏵⏵ bypass permissions on (shift+tab to cycle)
-"""
-
-    assert _tmux_pane_looks_idle(pane_tail) is True
 
 
-def test_tmux_idle_detection_rejects_claude_active_status_with_prompt_area() -> None:
-    pane_tail = """
-● Read(/tmp/prompt.md)
-  ⎿  Read 931 lines
 
-✢ Actualizing… (2m 9s · ↓ 3.6k tokens · almost done thinking)
+def test_runner_request_default_timeout_is_two_hours() -> None:
+    assert DEFAULT_AGENT_TIMEOUT_SECONDS == 7200
+    assert RunnerRequest(
+        backend='subprocess',
+        workspace_dir=Path('/workspace'),
+        prompt_path=Path('/workspace/prompt.md'),
+        artifact_dir=Path('/workspace/artifacts'),
+        unit_id='unit-1',
+    ).timeout_seconds == 7200
 
-────────────────────────────────────────────────────────────────────────────────
-❯ 
-────────────────────────────────────────────────────────────────────────────────
-  -- INSERT -- ⏵⏵ bypass permissions on (shift+tab to cycle)
-"""
-
-    assert _tmux_pane_looks_idle(pane_tail) is False
 
 
 def test_make_runner_maps_state_to_backend() -> None:
@@ -681,7 +718,7 @@ raise SystemExit(0)
 def test_tmux_claude_runner_idle_nudge_disabled_when_nudge_seconds_is_zero_and_no_env(
     monkeypatch,
 ) -> None:
-    from workflow_controller.rrc_agent_runners import _tmux_idle_nudge_seconds
+    from workflow_controller.runners.tmux_claude import _tmux_idle_nudge_seconds
     monkeypatch.delenv('RRC_TMUX_IDLE_NUDGE_SECONDS', raising=False)
 
     assert _tmux_idle_nudge_seconds() == 120.0

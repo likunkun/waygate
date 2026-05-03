@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成 workflow-controller 可靠性增强、Plannotator 人工 gate 集成、Unit Plan 审批预检、历史单元 rollup 校验修复、Unit Plan 确认后直接进入 Builder 的状态机修复、最终验收缺陷修复 `defect_fix` 流程、Unit Plan 测试用例矩阵/测试策略预检、旧 Final Acceptance gate 路由迁移修复，以及非 Ralph 新目标初始化修复。当前变更已同步到实际运行目录，尚未提交。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）和 V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）。当前继续以 `ROADMAP.md` 为版本规划基线推进 workflow-controller。
 
 ## 各阶段
 
@@ -180,6 +180,22 @@
 - [x] 新增并通过 `TC-E2E01-enabled-full-unit-plan-strategy-flow`
 - [x] 全量 `workflow_controller/tests` 通过：`144 passed in 40.34s`
 - [x] 确认未新增浏览器 UI 或页面
+- **状态：** complete
+
+### 阶段 22：V0.3.1 Acceptance Obligation Ledger
+- [x] Phase 0: Initialize — 复用并更新现有 `task_plan.md`、`findings.md`、`progress.md`
+- [x] Phase 1: Brainstorm — 完成 AO Ledger 最小可交付设计，并统一当前实施计划位置为 `/home/lichangkun/.claude/plans/glowing-kindling-engelbart.md`
+- [x] Phase 1.5: Design System — skipped（非 UI 任务）
+- [x] Phase 2: Write Plan — 完成 V0.3.1 实施计划
+- [x] Phase 2.5: Plan Review — 用户确认按已讨论 V0.3.1 方向执行
+- [x] Phase 3: Execute — 完成 AO helper、feedback 接入、prompt 注入、Unit Plan AO 覆盖 gate 和回归测试
+  - Implementation plan: `/home/lichangkun/.claude/plans/glowing-kindling-engelbart.md`
+  - Scale: single-unit
+  - Completion promise: TASK COMPLETE
+- [x] Phase 3.5: Simplify — 已完成最小实现整理，未引入额外抽象
+- [x] Phase 3.7: Browser Verify — skipped（无用户可见 UI）
+- [x] Phase 4: Verify and Finish — `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `240 passed in 32.12s`
+- **目标：** 新增 Acceptance Obligation Ledger，让人工反馈/验收失败问题以稳定 AO id 贯穿 Requirements、Unit Plan、Verifier evidence 和 Final Acceptance，避免多条问题被压缩成单个 closure unit。
 - **状态：** complete
 
 ## 关键问题

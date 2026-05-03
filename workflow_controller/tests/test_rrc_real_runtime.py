@@ -8,10 +8,14 @@ import sys
 from pathlib import Path
 
 from workflow_controller.rrc_controller import RalphRefinerController
-from workflow_controller.rrc_human_gates import approve_gate_file
-from workflow_controller.rrc_human_gates import write_gate_file
-from workflow_controller.rrc_real_runtime import run_agent_for_current_step
-from workflow_controller.rrc_steps import run_builder, run_verifier
+from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+from workflow_controller.runners.base import DEFAULT_AGENT_TIMEOUT_SECONDS
+from workflow_controller.rrc_real_runtime import (
+    find_target_context_files,
+    infer_execution_workspace,
+    run_agent_for_current_step,
+)
+from workflow_controller.steps.builder import run_builder, run_verifier
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -250,6 +254,40 @@ def test_target_acceptance_prompt_keeps_relevant_context_compact(tmp_path: Path)
     assert len(prompt) < 12000
 
 
+def test_target_context_files_ignore_global_claude_plans(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'fusion-soc-os'
+    _write(workspace / 'task_plan.md', '# Fusion SOC OS Plan\n\nV0.5 acceptance.\n')
+    home = tmp_path / 'home'
+    _write(
+        home / '.claude' / 'plans' / 'composed-sleeping-dolphin.md',
+        '# OpenMAIC Plan\n\n客户交付 批量 AI 课程包工厂 course-mgmt-v1 OpenMAIC\n',
+    )
+    monkeypatch.setenv('HOME', str(home))
+
+    context_files = find_target_context_files(workspace, target='V0.5')
+
+    assert context_files == [workspace / 'task_plan.md']
+
+
+def test_target_context_files_ignore_project_specific_nested_paths(tmp_path: Path) -> None:
+    workspace = tmp_path / 'fusion-soc-os'
+    _write(workspace / 'task_plan.md', '# Fusion SOC OS Plan\n')
+    _write(workspace / 'OpenMAIC' / 'task_plan.md', '# Wrong nested project plan\n')
+    _write(workspace / 'OpenMAIC' / '.worktrees' / 'course-mgmt-v1' / 'progress.md', '# Wrong worktree progress\n')
+
+    context_files = find_target_context_files(workspace, target='V0.5')
+
+    assert context_files == [workspace / 'task_plan.md']
+
+
+def test_infer_execution_workspace_does_not_select_project_specific_nested_worktree(tmp_path: Path) -> None:
+    workspace = tmp_path / 'fusion-soc-os'
+    _write(workspace / 'package.json', '{}\n')
+    _write(workspace / 'OpenMAIC' / '.worktrees' / 'course-mgmt-v1' / 'package.json', '{}\n')
+
+    assert infer_execution_workspace(workspace) == workspace
+
+
 def test_run_builder_executes_configured_agent_in_workspace_and_writes_real_artifacts(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -326,6 +364,40 @@ print("ARGS=" + " ".join(sys.argv[1:]))
     ]
     assert summary['agent_command'][-1] == '-'
     assert (unit_dir / 'changed-files.txt').read_text(encoding='utf-8') == 'codex-generated.txt\n'
+
+
+def test_run_agent_for_current_step_uses_two_hour_default_timeout(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Inspect timeout.')
+    captured: dict[str, int] = {}
+
+    def fake_run_agent_backend(request):
+        captured['timeout_seconds'] = request.timeout_seconds
+        from workflow_controller.runners.base import RunnerResult
+        return RunnerResult(
+            backend='subprocess',
+            status='done',
+            command=['agent'],
+            returncode=0,
+            stdout='',
+            stderr='',
+            run_dir=tmp_path / 'run',
+            prompt_path=prompt_path,
+        )
+
+    monkeypatch.setattr('workflow_controller.rrc_real_runtime.run_agent_backend', fake_run_agent_backend)
+
+    run_agent_for_current_step(
+        {'currentUnitId': 'unit-01', 'agentRunner': 'subprocess', 'agentCommand': 'agent'},
+        workspace,
+        prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+    )
+
+    assert captured['timeout_seconds'] == DEFAULT_AGENT_TIMEOUT_SECONDS == 7200
+
 
 
 def test_run_agent_for_current_step_uses_role_specific_runner_env_and_redacted_metadata(tmp_path: Path, monkeypatch) -> None:
@@ -622,6 +694,17 @@ if sys.argv[1:2] == ["paste-buffer"]:
                     "workflow_validation_level": "closure",
                     "scope": ["Delivery."],
                     "verification_commands": ["python -c \\"print('verified')\\""],
+                    "test_cases": [
+                        {
+                            "id": "TC-delivery-golden-path",
+                            "acceptance_criterion": "Delivery objective",
+                            "layer": "e2e",
+                            "golden_path": True,
+                            "fixture": "Delivery fixture creates a normal delivery flow.",
+                            "command": "python -c \\"print('verified')\\"",
+                            "expected": "verification command prints verified for the normal delivery flow",
+                        }
+                    ],
                 }
             ],
         }

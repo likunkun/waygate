@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from workflow_controller.rrc_steps import run_verifier
+from workflow_controller.steps.builder import run_verifier
 
 
 def _write(path: Path, content: str) -> None:

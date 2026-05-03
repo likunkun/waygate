@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from workflow_controller.rrc_human_gates import approve_gate_file, write_gate_file
-from workflow_controller.rrc_steps import prepare_builder_prompt, run_builder
+from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+from workflow_controller.steps.builder import prepare_builder_prompt, run_builder
 
 
 def test_run_builder_generates_real_builder_artifacts_from_state(tmp_path: Path) -> None:

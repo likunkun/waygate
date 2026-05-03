@@ -11,22 +11,36 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from workflow_controller.rrc_human_gates import (
-    FINAL_ACCEPTANCE_REJECTION_ROUTE_ALIASES,
-    apply_unit_plan_state_patch_from_gate,
-    approve_gate_file,
-    check_gate_file,
+from workflow_controller.gates.generators import (
     ensure_final_acceptance_gate,
     ensure_requirements_gate,
     ensure_unit_plan_gate,
+    normalize_final_acceptance_rejection_routing,
+)
+from workflow_controller.gates.parsers import (
+    FINAL_ACCEPTANCE_REJECTION_ROUTE_ALIASES,
+    approve_gate_file,
+    check_gate_file,
     extract_patch_list,
     gate_body,
+    write_gate_file,
+)
+from workflow_controller.acceptance_obligations import (
+    append_acceptance_obligations,
+    render_acceptance_obligations_markdown,
+    write_acceptance_obligation_artifacts,
+)
+from workflow_controller.gates.validators import (
+    apply_unit_plan_state_patch_from_gate,
     migrate_unit_plan_gate_to_state_patch,
-    normalize_final_acceptance_rejection_routing,
+    validate_required_artifacts,
+    validate_review_verdict,
+    validate_unit_plan_acceptance_obligation_coverage,
+    validate_unit_plan_golden_path,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,
-    write_gate_file,
+    validate_verification_verdict,
 )
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import (
@@ -35,19 +49,18 @@ from workflow_controller.rrc_real_runtime import (
     build_state_from_target_acceptance,
     render_target_acceptance_prompt,
 )
-from workflow_controller.rrc_state_store import StateStore
-from workflow_controller.rrc_validators import (
-    compute_next_allowed_action,
+from workflow_controller.state_machine.actions import compute_next_allowed_action
+from workflow_controller.state_machine.store import StateStore
+from workflow_controller.state_machine.transitions import (
     reconcile_state,
     rollback_to_last_verified_step,
     validate_objective_coverage,
-    validate_required_artifacts,
-    validate_review_verdict,
-    validate_verification_verdict,
 )
-from workflow_controller.rrc_steps import (
+from workflow_controller.steps._common import (
     TestStrategistBlocked,
     TestStrategistFallbackBlocked,
+)
+from workflow_controller.steps.builder import (
     ask_human_release_approval,
     ask_human_scope_approval,
     mark_current_unit_covered,
@@ -55,13 +68,13 @@ from workflow_controller.rrc_steps import (
     run_builder,
     run_refiner,
     run_reviewer,
-    run_requirements_drafter,
-    run_unit_plan_drafter,
     run_ui_design_if_needed,
     run_verifier,
     select_next_unit,
     target_acceptance_covered,
 )
+from workflow_controller.steps.requirements import run_requirements_drafter
+from workflow_controller.steps.unit_plan import run_unit_plan_drafter
 
 
 DEFAULT_INITIAL_STATE: dict[str, Any] = {
@@ -384,7 +397,9 @@ class RalphRefinerController:
                 candidate_state,
             )
             validate_unit_plan_test_case_coverage(gate_path, candidate_state)
+            validate_unit_plan_acceptance_obligation_coverage(gate_path, candidate_state)
             validate_unit_plan_verification_environment(candidate_state)
+            validate_unit_plan_golden_path(candidate_state)
         except ValueError as exc:
             return f'unit plan gate invalid: {exc}'
         return None
@@ -397,8 +412,12 @@ class RalphRefinerController:
         raise ValueError(f'Unsupported gate revision: {gate}')
 
     def _revision_feedback_for_gate(self, gate: str, gate_path: Path) -> str:
+        feedback, _ = self._revision_feedback_and_annotations_for_gate(gate, gate_path)
+        return feedback
+
+    def _revision_feedback_and_annotations_for_gate(self, gate: str, gate_path: Path) -> tuple[str, list[Any] | None]:
         gate_content = gate_path.read_text(encoding='utf-8')
-        plannotator_feedback, pending_reason = _read_plannotator_submitted_feedback(
+        plannotator_feedback, plannotator_annotations, pending_reason = _read_plannotator_submitted_feedback(
             self.state_dir,
             gate,
             gate_path,
@@ -410,7 +429,7 @@ class RalphRefinerController:
                 f'{pending_reason}。'
             )
         validation_feedback = self._validation_feedback_for_gate(gate)
-        feedback = gate_content.rstrip()
+        feedback = _strip_html_comments(gate_content).rstrip()
         if validation_feedback:
             feedback += (
                 '\n\n## Controller Validation Error\n\n'
@@ -421,7 +440,7 @@ class RalphRefinerController:
                 '\n\n## Plannotator Feedback\n\n'
                 + plannotator_feedback.rstrip()
             )
-        return feedback + '\n'
+        return feedback + '\n', plannotator_annotations
 
     def _validation_feedback_for_gate(self, gate: str) -> str | None:
         state = self.store.load_state()
@@ -429,6 +448,24 @@ class RalphRefinerController:
         if gate == 'unit-plan' and reason.startswith('unit plan gate invalid:'):
             return reason
         return None
+
+    def _append_acceptance_obligations_from_feedback(
+        self,
+        state: dict[str, Any],
+        *,
+        source: str,
+        source_ref: str,
+        feedback_text: str,
+        annotations: list[Any] | None = None,
+    ) -> None:
+        append_acceptance_obligations(
+            state,
+            source=source,
+            source_ref=source_ref,
+            feedback_text=feedback_text,
+            annotations=annotations,
+        )
+        write_acceptance_obligation_artifacts(state, self.artifacts_dir)
 
     def _consume_plannotator_feedback(self, gate: str, revision_count: int | None) -> None:
         summary_path = _plannotator_summary_path(self.state_dir, gate)
@@ -449,7 +486,14 @@ class RalphRefinerController:
         gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
         gate_content = gate_path.read_text(encoding='utf-8')
         route = _final_acceptance_rejection_route(gate_content)
-        rejection_feedback = self._revision_feedback_for_gate('final-acceptance', gate_path)
+        rejection_feedback, rejection_annotations = self._revision_feedback_and_annotations_for_gate('final-acceptance', gate_path)
+        self._append_acceptance_obligations_from_feedback(
+            state,
+            source='final_acceptance_rejection',
+            source_ref=f"final-acceptance:rejection-{int(state.get('finalAcceptanceRejectionCount') or 0) + 1}",
+            feedback_text=rejection_feedback,
+            annotations=rejection_annotations,
+        )
         patch_list = extract_patch_list(gate_content) if route in {'implementation', 'defect_fix'} else None
         state['finalAcceptanceRejectionFeedback'] = patch_list if patch_list else rejection_feedback
         state['finalAcceptanceRejectionRoute'] = route
@@ -581,8 +625,15 @@ class RalphRefinerController:
                 f'Requirements gate not found: {gate_path}. Run the requirements drafter first.'
             )
 
-        state['requirementsRevisionFeedback'] = self._revision_feedback_for_gate('requirements', gate_path)
+        state['requirementsRevisionFeedback'], requirements_annotations = self._revision_feedback_and_annotations_for_gate('requirements', gate_path)
         state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
+        self._append_acceptance_obligations_from_feedback(
+            state,
+            source='requirements_feedback',
+            source_ref=f"requirements:revision-{state['requirementsRevisionCount']}",
+            feedback_text=state['requirementsRevisionFeedback'],
+            annotations=requirements_annotations,
+        )
         state['requirementsAccepted'] = False
         state['unitPlanAccepted'] = False
         state.pop('requirementsAcceptedHash', None)
@@ -625,8 +676,15 @@ class RalphRefinerController:
                 f'Unit plan gate not found: {gate_path}. Run the unit plan drafter first.'
             )
 
-        state['unitPlanRevisionFeedback'] = self._revision_feedback_for_gate('unit-plan', gate_path)
+        state['unitPlanRevisionFeedback'], unit_plan_annotations = self._revision_feedback_and_annotations_for_gate('unit-plan', gate_path)
         state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
+        self._append_acceptance_obligations_from_feedback(
+            state,
+            source='unit_plan_feedback',
+            source_ref=f"unit-plan:revision-{state['unitPlanRevisionCount']}",
+            feedback_text=state['unitPlanRevisionFeedback'],
+            annotations=unit_plan_annotations,
+        )
         state['unitPlanAccepted'] = False
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
@@ -688,6 +746,7 @@ class RalphRefinerController:
         input_func: Callable[[str], str] = input,
         output_func: Callable[[str], None] = print,
         timestamp_output: bool = True,
+        strategist_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if timestamp_output:
             output_func = _timestamped_output(output_func)
@@ -695,14 +754,14 @@ class RalphRefinerController:
         if self.store.session_path.exists():
             if force:
                 output_func('[初始化] --force 已指定，重新创建 controller 状态')
-                self.init_state(force=True, from_ralph=from_ralph)
+                self.init_state(force=True, from_ralph=from_ralph, strategist_overrides=strategist_overrides)
             else:
                 existing_state = self.store.load_state()
                 self._validate_start_compatible(existing_state)
                 output_func(f'[继续] 使用已有状态：{self.store.session_path}')
         else:
             output_func('[初始化] 创建新的 controller 状态')
-            self.init_state(force=False, from_ralph=from_ralph)
+            self.init_state(force=False, from_ralph=from_ralph, strategist_overrides=strategist_overrides)
 
         return self.drive(
             max_steps=max_steps,
@@ -885,7 +944,9 @@ class RalphRefinerController:
                         state,
                     )
                     validate_unit_plan_test_case_coverage(gate_path, state)
+                    validate_unit_plan_acceptance_obligation_coverage(gate_path, state)
                     validate_unit_plan_verification_environment(state)
+                    validate_unit_plan_golden_path(state)
                 except ValueError as exc:
                     state['unitPlanAccepted'] = False
                     state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
@@ -1445,6 +1506,11 @@ def _final_acceptance_rejection_route(content: str) -> str:
         if route in selected:
             return route
     raise ValueError('Final acceptance rejection routing selected an unknown option.')
+
+
+def _strip_html_comments(content: str) -> str:
+    return re.sub(r'<!--.*?-->', '', content, flags=re.DOTALL)
+
 
 
 def _defect_fix_unit_plan_revision_feedback(rejection_feedback: str) -> str:
@@ -2104,19 +2170,20 @@ def _read_plannotator_submitted_feedback(
     gate: str,
     gate_path: Path,
     gate_content: str,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, list[Any] | None, str | None]:
     decision = _read_plannotator_decision(state_dir, gate, gate_path, gate_content)
     if decision.get('status') == 'stale' and gate == 'final-acceptance':
         decision = _read_plannotator_decision(state_dir, gate, gate_path)
     if decision.get('status') in {'missing', 'stale', 'path-mismatch'}:
-        return None, None
+        return None, None, None
     if decision.get('status') == 'feedback':
-        return str(decision.get('feedback') or '').strip(), None
+        annotations = decision.get('annotations') if isinstance(decision.get('annotations'), list) else None
+        return str(decision.get('feedback') or '').strip(), annotations, None
     if decision.get('status') == 'pending':
-        return None, '请先在 Plannotator 浏览器完成当前审阅，等待其提交决策后再输入 r'
+        return None, None, '请先在 Plannotator 浏览器完成当前审阅，等待其提交决策后再输入 r'
     if decision.get('status') == 'approved':
-        return None, 'Plannotator 已返回 Approve；如需通过请直接输入 a，或重新打开审阅'
-    return None, 'Plannotator 没有返回返工反馈；如需返工，请在确认文件里写批注后输入 r'
+        return None, None, 'Plannotator 已返回 Approve；如需通过请直接输入 a，或重新打开审阅'
+    return None, None, 'Plannotator 没有返回返工反馈；如需返工，请在确认文件里写批注后输入 r'
 
 
 def _gate_changed_after_plannotator_review(summary_path: Path, gate_path: Path, gate_content: str) -> bool:

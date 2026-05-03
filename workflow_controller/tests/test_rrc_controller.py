@@ -11,8 +11,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
-from workflow_controller.rrc_steps import TestStrategistBlocked as StrategistBlocked
-from workflow_controller.rrc_validators import reconcile_state, validate_objective_coverage
+from workflow_controller.steps._common import TestStrategistBlocked as StrategistBlocked
+from workflow_controller.state_machine.transitions import reconcile_state, validate_objective_coverage
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -2466,7 +2466,7 @@ def test_drive_auto_approves_gate_when_plannotator_approves(
         },
         force=True,
     )
-    from workflow_controller.rrc_human_gates import approve_gate_file, write_gate_file
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
 
     requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
@@ -2565,7 +2565,7 @@ def test_drive_announces_plannotator_feedback_before_revising_gate(
         },
         force=True,
     )
-    from workflow_controller.rrc_human_gates import approve_gate_file, write_gate_file
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
 
     requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
@@ -2843,7 +2843,7 @@ def test_drive_waits_for_plannotator_approval_after_printing_link(
         force=True,
     )
     gate_path = state_dir / 'approvals' / 'unit-plan.md'
-    from workflow_controller.rrc_human_gates import approve_gate_file, write_gate_file
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
 
     requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
@@ -2953,7 +2953,7 @@ def test_drive_can_approve_unit_plan_gate_and_continue(tmp_path: Path) -> None:
         '## Human Confirmation\n\nStatus: approved\nConfirmed by: tester\nConfirmed at: now\nContent hash: sha256:legacy\n',
         encoding='utf-8',
     )
-    from workflow_controller.rrc_human_gates import approve_gate_file, write_gate_file
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
 
     write_gate_file(
         requirements_path,
@@ -3010,6 +3010,182 @@ def test_drive_can_approve_unit_plan_gate_and_continue(tmp_path: Path) -> None:
     assert state['currentStep'] == 'PLAN_CREATED'
 
 
+def test_drive_blocks_unit_plan_approval_when_acceptance_obligation_is_missing(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'acceptanceObligations': [
+                {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+                {'id': 'AO-002', 'title': '15 个材料没有覆盖', 'priority': 'must', 'status': 'open'},
+            ],
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Test Case Matrix
+| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |
+| --- | --- | --- | --- | --- |
+| AC-1 covers AO-001 | TC-1 | integration | pytest tests/test_delivery.py -q | AO-001 works |
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery",
+      "passes": false,
+      "test_cases": [
+        {
+          "id": "TC-1",
+          "acceptance_criterion": "AC-1",
+          "covers_obligations": ["AO-001"],
+          "layer": "integration",
+          "command": "pytest tests/test_delivery.py -q",
+          "expected": "AO-001 works"
+        }
+      ],
+      "verification_commands": ["pytest tests/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--max-steps',
+        '3',
+        input_text='a\nq\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'missing Acceptance Obligation coverage' in result.stdout
+    assert 'AO-002' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['unitPlanAccepted'] is False
+    assert state['blockedReason'].startswith('unit plan gate invalid:')
+
+
+
+def test_run_rejects_preapproved_unit_plan_missing_acceptance_obligation(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'acceptanceObligations': [
+                {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+                {'id': 'AO-002', 'title': '15 个材料没有覆盖', 'priority': 'must', 'status': 'open'},
+            ],
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Test Case Matrix
+| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |
+| --- | --- | --- | --- | --- |
+| AC-1 covers AO-001 | TC-1 | integration | pytest tests/test_delivery.py -q | AO-001 works |
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery",
+      "passes": false,
+      "test_cases": [
+        {
+          "id": "TC-1",
+          "acceptance_criterion": "AC-1",
+          "covers_obligations": ["AO-001"],
+          "layer": "integration",
+          "command": "pytest tests/test_delivery.py -q",
+          "expected": "AO-001 works"
+        }
+      ],
+      "verification_commands": ["pytest tests/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is False
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert 'missing Acceptance Obligation coverage' in state['blockedReason']
+    assert 'AO-002' in state['blockedReason']
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['unitPlanAccepted'] is False
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['blockedReason'].startswith('unit plan gate invalid:')
+
+
 def test_drive_blocks_unit_plan_approval_when_plan_is_invalid(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -3035,7 +3211,7 @@ def test_drive_blocks_unit_plan_approval_when_plan_is_invalid(tmp_path: Path) ->
         },
         force=True,
     )
-    from workflow_controller.rrc_human_gates import write_gate_file
+    from workflow_controller.gates.parsers import write_gate_file
 
     gate_path = state_dir / 'approvals' / 'unit-plan.md'
     write_gate_file(
@@ -3108,7 +3284,7 @@ def test_drive_refreshes_stale_unit_plan_invalid_reason_from_current_gate(tmp_pa
         },
         force=True,
     )
-    from workflow_controller.rrc_human_gates import write_gate_file
+    from workflow_controller.gates.parsers import write_gate_file
 
     gate_path = state_dir / 'approvals' / 'unit-plan.md'
     write_gate_file(
@@ -3467,7 +3643,7 @@ def test_drive_defect_fix_route_migrates_old_final_acceptance_gate_and_keeps_pla
         },
         force=True,
     )
-    from workflow_controller.rrc_human_gates import write_gate_file
+    from workflow_controller.gates.parsers import write_gate_file
 
     approvals_dir = state_dir / 'approvals'
     approvals_dir.mkdir(parents=True, exist_ok=True)
@@ -3525,6 +3701,7 @@ def test_drive_defect_fix_route_migrates_old_final_acceptance_gate_and_keeps_pla
     assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
     assert state['finalAcceptanceRejectionRoute'] == 'defect_fix'
     assert 'playback logo needs dark-mode asset' in state['finalAcceptanceDefectFeedback']
+    assert 'playback logo needs dark-mode asset' in state['finalAcceptanceRejectionFeedback']
     content = gate_path.read_text(encoding='utf-8')
     assert '- [x] 验收缺陷修复:' in content
     assert '- [ ] 需求变更:' in content
@@ -3590,6 +3767,12 @@ def test_reject_final_acceptance_routes_to_defect_fix_unit_plan_revision(tmp_pat
     assert 'homepage logo is still text-only' in state['finalAcceptanceDefectFeedback']
     assert state['unitPlanRevisionMode'] == 'defect_fix'
     assert all(unit['passes'] is True for unit in state['units'])
+    obligations = state['acceptanceObligations']
+    assert [item['id'] for item in obligations] == ['AO-001']
+    assert obligations[0]['source'] == 'final_acceptance_rejection'
+    assert 'homepage logo is still text-only' in obligations[0]['description']
+    assert (state_dir / 'artifacts' / 'acceptance-obligations' / 'acceptance-obligations.json').exists()
+    assert 'AO-001' in (state_dir / 'artifacts' / 'acceptance-obligations' / 'acceptance-obligations.md').read_text(encoding='utf-8')
 
 
 def test_reject_final_acceptance_routes_to_unit_plan_revision(tmp_path: Path) -> None:
@@ -3871,7 +4054,7 @@ def test_drive_threads_output_func_to_unit_plan_drafter(tmp_path: Path, monkeypa
 def test_codex_patcher_fills_gaps_and_marks_patched_test_cases(tmp_path: Path, monkeypatch) -> None:
     """When the initial strategist leaves a gap, a second Codex run patches it
     and marks each added test_case with codex_patch=True."""
-    from workflow_controller.rrc_steps import _run_test_strategist_if_enabled
+    from workflow_controller.steps.unit_plan import _run_test_strategist_if_enabled
 
     draft_dir = tmp_path / 'unit-plan-draft'
     draft_dir.mkdir()
@@ -3920,7 +4103,7 @@ def test_codex_patcher_fills_gaps_and_marks_patched_test_cases(tmp_path: Path, m
 
 def test_codex_patch_markers_appear_in_unit_plan_gate(tmp_path: Path) -> None:
     """Patched test cases are rendered in a dedicated section in the gate."""
-    from workflow_controller.rrc_steps import _merge_review_package_into_unit_plan_gate
+    from workflow_controller.steps.unit_plan import _merge_review_package_into_unit_plan_gate
 
     draft_dir = tmp_path / 'unit-plan-draft'
     draft_dir.mkdir()
@@ -3952,7 +4135,7 @@ def test_codex_patch_markers_appear_in_unit_plan_gate(tmp_path: Path) -> None:
 def test_patcher_failure_does_not_block_gate_creation(tmp_path: Path, monkeypatch) -> None:
     """If the patcher Codex run fails, the original test-strategy.json is kept
     and the strategist summary is returned without raising."""
-    from workflow_controller.rrc_steps import _run_test_strategist_if_enabled
+    from workflow_controller.steps.unit_plan import _run_test_strategist_if_enabled
 
     draft_dir = tmp_path / 'unit-plan-draft'
     draft_dir.mkdir()
@@ -3989,7 +4172,8 @@ def test_patcher_failure_does_not_block_gate_creation(tmp_path: Path, monkeypatc
 
 def test_patch_list_in_final_acceptance_gate_is_extracted_for_builder(tmp_path: Path) -> None:
     """When ## 修改清单 has items, finalAcceptanceRejectionFeedback contains only those items."""
-    from workflow_controller.rrc_human_gates import write_gate_file, normalize_final_acceptance_rejection_routing
+    from workflow_controller.gates.parsers import write_gate_file
+    from workflow_controller.gates.generators import normalize_final_acceptance_rejection_routing
 
     state_dir = tmp_path / 'state'
     initial_state = _controller_state_for_unit_plan(tmp_path / 'workspace')
@@ -4031,7 +4215,8 @@ def test_patch_list_in_final_acceptance_gate_is_extracted_for_builder(tmp_path: 
 
 def test_empty_patch_list_falls_back_to_full_gate_for_builder(tmp_path: Path) -> None:
     """When ## 修改清单 is present but empty, builder receives the full gate content."""
-    from workflow_controller.rrc_human_gates import write_gate_file, normalize_final_acceptance_rejection_routing
+    from workflow_controller.gates.parsers import write_gate_file
+    from workflow_controller.gates.generators import normalize_final_acceptance_rejection_routing
 
     state_dir = tmp_path / 'state'
     initial_state = _controller_state_for_unit_plan(tmp_path / 'workspace')
@@ -4052,7 +4237,8 @@ def test_empty_patch_list_falls_back_to_full_gate_for_builder(tmp_path: Path) ->
         '# 最终验收确认\n\n'
         '## 结果\n- 状态: active\n\n'
         '## 修改清单\n\n'
-        '<!-- 留空 -->\n\n'
+        '<!-- 如需 Agent 做定点修改，请在此列出具体事项（每项一行）。\n'
+        '     留空则 Agent 收到完整验收文档作为参考。-->\n\n'
         '## 人工审阅清单\n- [ ] 实际结果满足已批准的验收标准。\n\n'
     )
     gate_body = normalize_final_acceptance_rejection_routing(
@@ -4065,3 +4251,71 @@ def test_empty_patch_list_falls_back_to_full_gate_for_builder(tmp_path: Path) ->
     saved = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     feedback = saved['finalAcceptanceRejectionFeedback']
     assert '# 最终验收确认' in feedback, 'Full gate should be used when patch list is empty'
+    assert '留空则 Agent 收到完整验收文档作为参考' not in feedback
+
+
+def test_plannotator_final_acceptance_feedback_is_not_replaced_by_template_patch_comment(tmp_path: Path) -> None:
+    from workflow_controller.gates.parsers import write_gate_file
+    from workflow_controller.gates.generators import normalize_final_acceptance_rejection_routing
+
+    state_dir = tmp_path / 'state'
+    initial_state = _controller_state_for_unit_plan(tmp_path / 'workspace')
+    initial_state.update({
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'unitPlanDraftGenerated': True,
+        'unitPlanAccepted': True,
+        'scopeApproved': True,
+        'units': [{'id': 'u1', 'passes': True}],
+        'objectiveCoverage': [{'objective': 'obj1', 'status': 'covered', 'units': ['u1']}],
+    })
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(initial_state, force=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    gate_path = approvals_dir / 'final-acceptance.md'
+
+    gate_body = (
+        '# 最终验收确认\n\n'
+        '## 结果\n- 状态: active\n\n'
+        '## 修改清单\n\n'
+        '<!-- 如需 Agent 做定点修改，请在此列出具体事项（每项一行）。\n'
+        '     留空则 Agent 收到完整验收文档作为参考。-->\n\n'
+        '## 人工审阅清单\n- [ ] 实际结果满足已批准的验收标准。\n\n'
+    )
+    gate_body = normalize_final_acceptance_rejection_routing(
+        gate_body, selected_route='implementation'
+    )
+    write_gate_file(gate_path, gate_body)
+
+    plannotator_dir = state_dir / 'plannotator'
+    plannotator_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = plannotator_dir / 'final-acceptance-last-review.stdout.log'
+    stdout_path.write_text(
+        json.dumps(
+            {
+                'decision': 'annotated',
+                'feedback': '# File Feedback\n\n没有给上传材料的入口\n\n实现返工需要补齐上传入口。',
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    (plannotator_dir / 'final-acceptance-last-review.json').write_text(
+        json.dumps(
+            {
+                'gate_path': str(gate_path),
+                'approval_gate_path': str(gate_path),
+                'stdout_path': str(stdout_path),
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+
+    controller.reject_final_acceptance_gate()
+
+    saved = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    feedback = saved['finalAcceptanceRejectionFeedback']
+    assert '没有给上传材料的入口' in feedback
+    assert '实现返工需要补齐上传入口' in feedback
+    assert '留空则 Agent 收到完整验收文档作为参考' not in feedback

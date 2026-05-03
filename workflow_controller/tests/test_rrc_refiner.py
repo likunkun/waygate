@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from workflow_controller.rrc_steps import run_refiner
+from workflow_controller.steps.builder import run_refiner
 
 
 def test_run_refiner_generates_refinement_summary_from_changed_files(tmp_path: Path) -> None:

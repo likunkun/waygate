@@ -6,10 +6,11 @@ import re
 import shlex
 import subprocess
 import time
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from workflow_controller.runners.base import BaseRunner, RunnerRequest, RunnerResult
 
 
 DEFAULT_TMUX_SUBMIT_DELAY_SECONDS = 0.5
@@ -20,147 +21,11 @@ DEFAULT_TMUX_IDLE_NUDGE_SECONDS = 120.0
 DEFAULT_TMUX_IDLE_MAX_NUDGES = 3
 
 
-@dataclass(frozen=True)
-class RunnerConfig:
-    backend: str
-    agent_command: str = ''
-    tmux_target: str | None = None
-    role: str | None = None
-    env: dict[str, str] = field(default_factory=dict)
+class TmuxClaudeRunner(BaseRunner):
+    """Runner that dispatches prompts to a tmux pane and waits for a done signal."""
 
-    def to_metadata(self) -> dict[str, Any]:
-        return {
-            'role': self.role,
-            'backend': self.backend,
-            'agent_command': self.agent_command,
-            'tmux_target': self.tmux_target,
-            'env_keys': sorted(self.env),
-        }
-
-
-DEFAULT_TEST_STRATEGIST_COMMAND = 'codex exec --dangerously-bypass-approvals-and-sandbox -'
-
-
-@dataclass(frozen=True)
-class RunnerRequest:
-    backend: str
-    workspace_dir: Path
-    prompt_path: Path
-    artifact_dir: Path
-    unit_id: str
-    agent_command: str = ''
-    tmux_target: str | None = None
-    role: str | None = None
-    env: dict[str, str] = field(default_factory=dict)
-    timeout_seconds: int = 3600
-
-
-@dataclass(frozen=True)
-class RunnerResult:
-    backend: str
-    status: str
-    command: list[str]
-    returncode: int
-    stdout: str
-    stderr: str
-    run_dir: Path
-    prompt_path: Path
-    done_path: Path | None = None
-    done_payload: dict[str, Any] = field(default_factory=dict)
-    runner_metadata: dict[str, Any] = field(default_factory=dict)
-
-
-def make_runner(state: dict[str, Any], role: str | None = None) -> RunnerConfig:
-    role_config = _role_runner_config(state, role)
-    if role == 'test_strategist' and not role_config:
-        return RunnerConfig(
-            backend='subprocess',
-            agent_command=DEFAULT_TEST_STRATEGIST_COMMAND,
-            role=role,
-        )
-
-    if role_config:
-        default_command = DEFAULT_TEST_STRATEGIST_COMMAND if role == 'test_strategist' else ''
-        return RunnerConfig(
-            backend=str(role_config.get('runner') or role_config.get('backend') or 'subprocess'),
-            agent_command=str(role_config.get('command') or role_config.get('agentCommand') or default_command),
-            tmux_target=role_config.get('tmuxTarget') or role_config.get('tmuxPane'),
-            role=role,
-            env=_string_env(role_config.get('env')),
-        )
-
-    backend = str(state.get('agentRunner') or state.get('runnerBackend') or 'subprocess')
-    return RunnerConfig(
-        backend=backend,
-        agent_command=str(state.get('agentCommand') or ''),
-        tmux_target=state.get('tmuxTarget') or state.get('tmuxPane'),
-        role=role,
-    )
-
-
-def _role_runner_config(state: dict[str, Any], role: str | None) -> dict[str, Any]:
-    if not role:
-        return {}
-    role_runners = state.get('roleRunners')
-    if not isinstance(role_runners, dict):
-        return {}
-    config = role_runners.get(role)
-    return dict(config) if isinstance(config, dict) else {}
-
-
-def _string_env(raw_env: Any) -> dict[str, str]:
-    if not isinstance(raw_env, dict):
-        return {}
-    env: dict[str, str] = {}
-    for key, value in raw_env.items():
-        key_text = str(key).strip()
-        if key_text and value is not None:
-            env[key_text] = str(value)
-    return env
-
-
-def run_agent_backend(request: RunnerRequest) -> RunnerResult:
-    if request.backend == 'subprocess':
-        return _run_subprocess_agent(request)
-    if request.backend == 'tmux-claude':
+    def run(self, request: RunnerRequest) -> RunnerResult:
         return _run_tmux_claude(request)
-    raise ValueError(f'Unsupported agent runner backend: {request.backend}')
-
-
-def _run_subprocess_agent(request: RunnerRequest) -> RunnerResult:
-    prompt = request.prompt_path.read_text(encoding='utf-8')
-    command = _subprocess_agent_command(request.agent_command or 'claude', prompt)
-    completed = subprocess.run(
-        command,
-        cwd=request.workspace_dir,
-        text=True,
-        input=prompt if _uses_stdin_prompt(command) else None,
-        capture_output=True,
-        timeout=request.timeout_seconds,
-        check=False,
-        env={**os.environ, **request.env} if request.env else None,
-    )
-    return RunnerResult(
-        backend='subprocess',
-        status='done' if completed.returncode == 0 else 'failed',
-        command=command,
-        returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-        run_dir=request.artifact_dir,
-        prompt_path=request.prompt_path,
-        runner_metadata=_request_metadata(request),
-    )
-
-
-def _request_metadata(request: RunnerRequest) -> dict[str, Any]:
-    return {
-        'role': request.role,
-        'backend': request.backend,
-        'agent_command': request.agent_command,
-        'tmux_target': request.tmux_target,
-        'env_keys': sorted(request.env),
-    }
 
 
 def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
@@ -348,49 +213,53 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                 workspace_dir=request.workspace_dir,
                 env=env,
             )
-            if _tmux_pane_looks_idle(pane_tail):
-                if pane_tail:
-                    (run_dir / 'tmux-pane-tail.txt').write_text(pane_tail, encoding='utf-8')
-                _append_event(events_path, {
-                    'event': 'agent_idle_without_done',
-                    'pane_tail_path': str(run_dir / 'tmux-pane-tail.txt') if pane_tail else None,
-                })
-                return RunnerResult(
-                    backend='tmux-claude',
-                    status='agent_idle_without_done',
-                    command=dispatch_commands[-1],
-                    returncode=124,
-                    stdout=''.join(stdout_parts),
-                    stderr=''.join(stderr_parts) + _tmux_timeout_message(
-                        done_path=done_path,
-                        run_id=run_id,
-                        pane_tail=pane_tail,
-                        pane_is_idle=True,
-                    ),
-                    run_dir=run_dir,
-                    prompt_path=runner_prompt_path,
-                    done_path=done_path,
-                    runner_metadata=runner_metadata,
-                )
             if pane_tail != last_pane_content:
                 last_pane_content = pane_tail
                 last_pane_change_time = now
-            elif max_nudges > 0 and nudge_count < max_nudges and (now - last_pane_change_time) >= nudge_seconds:
-                _append_event(events_path, {
-                    'event': 'agent_nudge_sent',
-                    'nudge_count': nudge_count + 1,
-                    'seconds_since_change': now - last_pane_change_time,
-                })
-                subprocess.run(
-                    [*tmux_command, 'send-keys', '-t', request.tmux_target, '继续', 'C-m'],
-                    cwd=request.workspace_dir,
-                    capture_output=True,
-                    timeout=5,
-                    check=False,
-                    env=env,
-                )
-                nudge_count += 1
-                last_pane_change_time = now
+            elif (now - last_pane_change_time) >= nudge_seconds:
+                if max_nudges > 0 and nudge_count < max_nudges:
+                    if pane_tail:
+                        (run_dir / 'tmux-pane-tail.txt').write_text(pane_tail, encoding='utf-8')
+                    _append_event(events_path, {
+                        'event': 'agent_nudge_sent',
+                        'nudge_count': nudge_count + 1,
+                        'seconds_since_change': now - last_pane_change_time,
+                    })
+                    subprocess.run(
+                        [*tmux_command, 'send-keys', '-t', request.tmux_target, '继续', 'C-m'],
+                        cwd=request.workspace_dir,
+                        capture_output=True,
+                        timeout=5,
+                        check=False,
+                        env=env,
+                    )
+                    nudge_count += 1
+                    last_pane_change_time = now
+                else:
+                    if pane_tail:
+                        (run_dir / 'tmux-pane-tail.txt').write_text(pane_tail, encoding='utf-8')
+                    _append_event(events_path, {
+                        'event': 'agent_idle_without_done',
+                        'nudge_count': nudge_count,
+                        'pane_tail_path': str(run_dir / 'tmux-pane-tail.txt') if pane_tail else None,
+                    })
+                    timeout_message = _tmux_timeout_message(
+                        done_path=done_path,
+                        run_id=run_id,
+                        pane_tail=pane_tail,
+                    )
+                    return RunnerResult(
+                        backend='tmux-claude',
+                        status='agent_idle_without_done',
+                        command=dispatch_commands[-1],
+                        returncode=124 if last_returncode == 0 else last_returncode,
+                        stdout=''.join(stdout_parts),
+                        stderr=''.join(stderr_parts) + timeout_message,
+                        run_dir=run_dir,
+                        prompt_path=runner_prompt_path,
+                        done_path=done_path,
+                        runner_metadata=runner_metadata,
+                    )
             next_idle_check = now + idle_poll_seconds
         time.sleep(0.2)
 
@@ -402,8 +271,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     )
     if pane_tail:
         (run_dir / 'tmux-pane-tail.txt').write_text(pane_tail, encoding='utf-8')
-    pane_is_idle = _tmux_pane_looks_idle(pane_tail)
-    status = 'agent_idle_without_done' if pane_is_idle else 'timeout'
+    status = 'timeout'
     _append_event(events_path, {
         'event': status,
         'pane_tail_path': str(run_dir / 'tmux-pane-tail.txt') if pane_tail else None,
@@ -412,7 +280,6 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
         done_path=done_path,
         run_id=run_id,
         pane_tail=pane_tail,
-        pane_is_idle=pane_is_idle,
     )
     return RunnerResult(
         backend='tmux-claude',
@@ -448,6 +315,8 @@ Execute the task below in the workspace. When finished, write DONE_FILE as JSON:
 If blocked, write DONE_FILE as JSON:
 {{"status": "blocked", "summary": "<exact blocker>", "run_id": "{run_id}"}}
 
+IMPORTANT: The summary value must not contain ASCII double quotes ("). Use single quotes, Chinese quotes「」, or rephrase instead. The file must be valid JSON.
+
 Original task:
 
 {original_prompt}
@@ -467,31 +336,8 @@ When finished, write DONE_FILE as JSON with the exact RUN_ID:
 {{"status":"done","summary":"<short summary>","run_id":"{run_id}"}}
 If blocked, write:
 {{"status":"blocked","summary":"<exact blocker>","run_id":"{run_id}"}}
+IMPORTANT: summary must not contain ASCII double quotes ("). Use single quotes or 「」 to avoid breaking JSON.
 """
-
-
-def _subprocess_agent_command(agent_command: str, prompt: str) -> list[str]:
-    parts = shlex.split(agent_command)
-    executable = Path(parts[0]).name if parts else agent_command
-    if 'claude' in executable:
-        return [
-            *parts,
-            '-p',
-            prompt,
-            '--permission-mode',
-            'bypassPermissions',
-        ]
-    if 'codex' in executable:
-        if len(parts) > 1 and parts[1] == 'exec':
-            command = list(parts)
-        else:
-            command = [*parts, 'exec']
-        if '--dangerously-bypass-approvals-and-sandbox' not in command:
-            command.append('--dangerously-bypass-approvals-and-sandbox')
-        if '-' not in command[2:]:
-            command.append('-')
-        return command
-    return [*parts, prompt]
 
 
 def _tmux_command(agent_command: str) -> list[str]:
@@ -508,8 +354,8 @@ def _tmux_submit_delay_seconds() -> float:
 def _tmux_clear_before_dispatch_enabled() -> bool:
     raw_value = os.environ.get('RRC_TMUX_CLEAR_BEFORE_DISPATCH')
     if raw_value is None:
-        return True
-    return raw_value.strip().lower() not in {'0', 'false', 'no', 'off'}
+        return False
+    return raw_value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 def _tmux_clear_delay_seconds() -> float:
@@ -548,11 +394,6 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _uses_stdin_prompt(command: list[str]) -> bool:
-    executable = Path(command[0]).name if command else ''
-    return 'codex' in executable and command[-1:] == ['-']
-
-
 def _new_run_dir(artifact_dir: Path, unit_id: str) -> Path:
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     return artifact_dir / 'runs' / f'{unit_id}-{timestamp}'
@@ -583,55 +424,15 @@ def _capture_tmux_pane(
     return completed.stdout.strip()
 
 
-def _tmux_pane_looks_idle(pane_tail: str) -> bool:
-    lines = [line.strip() for line in pane_tail.splitlines() if line.strip()]
-    if not lines:
-        return False
-    if _tmux_pane_has_active_claude_status(lines):
-        return False
-    last_line = lines[-1]
-    if re.search(r'(^|\s)(❯|>|[$#])\s*$', last_line):
-        return True
-    tail_lines = lines[-8:]
-    if any(re.search(r'(^|\s)(❯|>|[$#])\s*$', line) for line in tail_lines):
-        return True
-    lowered_tail = pane_tail.lower()
-    return 'no active conversation' in lowered_tail or 'press enter to continue' in lowered_tail
-
-
-def _tmux_pane_has_active_claude_status(lines: list[str]) -> bool:
-    active_patterns = (
-        'actualizing',
-        'thinking',
-        'drizzling',
-        'running',
-        'processing',
-        'working',
-        'esc to interrupt',
-    )
-    for line in lines[-20:]:
-        lowered = line.lower()
-        if any(pattern in lowered for pattern in active_patterns):
-            if '…' in line or '...' in line or re.search(r'\(\d+[smh]', line):
-                return True
-    return False
-
-
-def _tmux_timeout_message(*, done_path: Path, run_id: str, pane_tail: str, pane_is_idle: bool) -> str:
-    idle_hint = ''
-    if pane_is_idle:
-        idle_hint = (
-            ' The tmux pane appears idle without the completion file, so the agent likely stopped '
-            'or returned to the prompt before writing DONE_FILE.'
-        )
+def _tmux_timeout_message(*, done_path: Path, run_id: str, pane_tail: str) -> str:
     pane_hint = ''
     if pane_tail:
         pane_hint = f'\n\nLast captured tmux pane output:\n{_tail_text(pane_tail, max_chars=4000)}'
     return (
         f'tmux-claude timed out waiting for DONE_FILE: {done_path} (run_id={run_id}).'
-        f'{idle_hint} '
-        'If the agent finished in the pane, ask it to write done.json there, '
-        'or write done.json manually with '
+        ' The tmux pane output stopped changing, so the agent likely finished or stalled without writing DONE_FILE.'
+        ' If the agent finished in the pane, ask it to write done.json there,'
+        ' or write done.json manually with '
         f'{{"status":"done","summary":"<short summary>","run_id":"{run_id}"}} and rerun the controller.'
         f'{pane_hint}'
     )
@@ -651,8 +452,29 @@ def _append_event(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _read_done_payload(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding='utf-8')
     try:
-        payload = json.loads(path.read_text(encoding='utf-8'))
+        payload = json.loads(text)
+        return payload if isinstance(payload, dict) else {'status': 'invalid_done_file', 'summary': 'done.json is not an object'}
     except json.JSONDecodeError:
-        return {'status': 'invalid_done_file', 'summary': 'done.json is not valid JSON'}
-    return payload if isinstance(payload, dict) else {'status': 'invalid_done_file', 'summary': 'done.json is not an object'}
+        pass
+    # Fallback: extract status and run_id via regex when summary contains unescaped quotes
+    status_m = re.search(r'"status"\s*:\s*"([^"]+)"', text)
+    run_id_m = re.search(r'"run_id"\s*:\s*"([^"]+)"', text)
+    if status_m and run_id_m:
+        return {
+            'status': status_m.group(1),
+            'run_id': run_id_m.group(1),
+            'summary': '(summary unparseable — done.json contained unescaped quotes)',
+        }
+    return {'status': 'invalid_done_file', 'summary': 'done.json is not valid JSON'}
+
+
+def _request_metadata(request: RunnerRequest) -> dict[str, Any]:
+    return {
+        'role': request.role,
+        'backend': request.backend,
+        'agent_command': request.agent_command,
+        'tmux_target': request.tmux_target,
+        'env_keys': sorted(request.env),
+    }

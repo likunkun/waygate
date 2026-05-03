@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from workflow_controller.rrc_agent_runners import RunnerRequest, make_runner, run_agent_backend
+from workflow_controller.runners.base import RunnerRequest
+from workflow_controller.runners import make_runner, run_agent_backend
+from workflow_controller.runners.base import DEFAULT_AGENT_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -252,52 +254,8 @@ def find_target_context_files(workspace_dir: Path, target: str | None = None) ->
         workspace_dir / 'task_plan.md',
         workspace_dir / 'progress.md',
         workspace_dir / 'findings.md',
-        workspace_dir / 'OpenMAIC' / '.worktrees' / 'course-mgmt-v1' / 'task_plan.md',
-        workspace_dir / 'OpenMAIC' / '.worktrees' / 'course-mgmt-v1' / 'progress.md',
-        workspace_dir / 'OpenMAIC' / '.worktrees' / 'course-mgmt-v1' / 'findings.md',
-        workspace_dir / 'OpenMAIC' / 'task_plan.md',
-        workspace_dir / 'OpenMAIC' / 'progress.md',
-        workspace_dir / 'OpenMAIC' / 'findings.md',
     ]
-    found = [path for path in candidates if path.exists()]
-    found.extend(find_relevant_claude_plans(target))
-    return list(dict.fromkeys(found))
-
-
-def find_relevant_claude_plans(target: str | None) -> list[Path]:
-    if not target:
-        return []
-
-    plans_dir = Path.home() / '.claude' / 'plans'
-    if not plans_dir.exists():
-        return []
-
-    target_markers = set(_target_markers(target))
-    acceptance_markers = {
-        'customer delivery/import acceptance',
-        '客户平台导入',
-        '客户交付',
-        '批量 AI 课程包工厂',
-        '批量AI课程包工厂',
-    }
-    domain_markers = {'OpenMAIC', 'course-mgmt-v1', '课程'}
-    scored: list[tuple[int, Path]] = []
-    for path in plans_dir.glob('*.md'):
-        try:
-            content = path.read_text(encoding='utf-8')
-        except OSError:
-            continue
-        target_score = sum(content.count(marker) for marker in target_markers if marker)
-        acceptance_score = sum(content.count(marker) for marker in acceptance_markers)
-        domain_score = sum(content.count(marker) for marker in domain_markers)
-        if not ((target_score > 0 and domain_score > 0) or acceptance_score > 0):
-            continue
-        score = target_score + (acceptance_score * 5) + (domain_score * 2)
-        if score > 0:
-            scored.append((score, path))
-
-    scored.sort(key=lambda item: (-item[0], str(item[1])))
-    return [path for _, path in scored[:3]]
+    return [path for path in candidates if path.exists()]
 
 
 def _target_markers(target: str | None) -> list[str]:
@@ -305,15 +263,6 @@ def _target_markers(target: str | None) -> list[str]:
         target or '',
         f'V{target}' if target else '',
         f'v{target}' if target else '',
-        'Phase 7',
-        '工作流 G',
-        'customer delivery/import acceptance',
-        '客户平台导入',
-        '客户交付',
-        '批量 AI 课程包工厂',
-        '批量AI课程包工厂',
-        'V1.1',
-        'v1.1',
     ]
     return [marker for marker in markers if marker]
 
@@ -330,11 +279,6 @@ def infer_workspace_verification_commands(workspace_dir: Path) -> list[str]:
 
 
 def infer_execution_workspace(workspace_dir: Path) -> Path:
-    worktree = workspace_dir / 'OpenMAIC' / '.worktrees' / 'course-mgmt-v1'
-    if (worktree / 'package.json').exists():
-        return worktree
-    if (workspace_dir / 'package.json').exists():
-        return workspace_dir
     return workspace_dir
 
 
@@ -392,7 +336,7 @@ def run_agent_for_current_step(
     artifact_dir: Path | None = None,
     role: str | None = None,
 ) -> AgentRunResult:
-    timeout = int(state.get('agentTimeoutSeconds') or 3600)
+    timeout = int(state.get('agentTimeoutSeconds') or DEFAULT_AGENT_TIMEOUT_SECONDS)
     runner = make_runner(state, role=role)
     result = run_agent_backend(
         RunnerRequest(

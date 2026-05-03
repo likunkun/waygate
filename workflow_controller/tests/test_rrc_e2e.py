@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from workflow_controller.rrc_human_gates import approve_gate_file
+from workflow_controller.gates.parsers import approve_gate_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -112,6 +112,17 @@ if sys.argv[1:2] == ["paste-buffer"]:
                     "passes": False,
                     "workflow_validation_level": "closure",
                     "scope": ["Produce delivery artifact."],
+                    "test_cases": [
+                        {
+                            "id": "TC-delivery-golden-path",
+                            "acceptance_criterion": "Verification command passes.",
+                            "layer": "e2e",
+                            "golden_path": True,
+                            "fixture": "workspace delivery artifact",
+                            "command": "python -c \\"from pathlib import Path; assert Path('delivery.txt').read_text(encoding='utf-8') == 'ready\\\\n'; print('delivery verified')\\"",
+                            "expected": "delivery.txt contains ready newline",
+                        }
+                    ],
                     "verification_commands": [
                         "python -c \\"from pathlib import Path; assert Path('delivery.txt').read_text(encoding='utf-8') == 'ready\\\\n'; print('delivery verified')\\""
                     ],

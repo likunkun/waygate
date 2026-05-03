@@ -1,5 +1,47 @@
 # 进度日志
 
+## 会话：2026-05-03
+
+### V0.3.1 Acceptance Obligation Ledger 完成
+- **状态：** complete
+- 已新增 AO Ledger：人工反馈、Plannotator annotations、Requirements/Unit Plan 返工和 Final Acceptance rejection 会进入 `acceptanceObligations`。
+- 已写入 AO artifacts：`artifacts/acceptance-obligations/acceptance-obligations.json` 和 `acceptance-obligations.md`。
+- Requirements / Unit Plan prompt 会注入 AO Ledger，并要求每条 must AO 进入 AC、测试用例或人工证据映射。
+- Unit Plan approval 会阻断缺失 active must AO 覆盖的计划，并列出缺失 AO id 与标题；已修复审查发现的 approved gate bypass。
+- AO coverage 只计算结构化 `test_cases[].covers_obligations` 或 Test Case Matrix 中有 test case、layer、command/evidence、expected 的映射，不再把复制的 ledger/prose AO id 视为覆盖。
+- Plannotator structured annotations 会传入 AO 创建逻辑，避免多条浏览器批注被压成一条 AO。
+- 已修复 E2E fixture：closure unit 必须包含 `golden_path` test case。
+- 已验证：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `240 passed in 32.12s`
+
+### V0.3.1 Acceptance Obligation Ledger 启动
+- **状态：** complete
+- 目标：完成 V0.3.1 最小可交付功能，让人工反馈、验收失败和关键需求问题进入结构化 AO Ledger，后续 Unit Plan 和 Verifier 必须逐条覆盖。
+- Phase 0：复用现有 planning-with-files 文件，并在 `task_plan.md` 追加阶段 22。
+- Phase 1：已按已讨论的 V0.3.1 方向完成设计，不再拆 MVP 选项。
+- 视觉辅助：跳过，本任务不是 UI/视觉设计任务。
+
+## 会话：2026-05-01
+
+### V0.2 版本规划确认
+- **状态：** complete
+- 背景：
+  - requirements-drafting agent 将 V0.2 的"背景"写成"V0.1 完成了 Test Strategist 接入"，被 Plannotator 标注为全错。
+  - 根因：工作区内没有版本规划文档，agent 只能从 progress.md 最近记录推断，推断错误。
+  - `composed-sleeping-dolphin.md`（OpenMAIC 课程管理计划）误被放入 targetContextFiles，对 V0.2 规划无帮助。
+- 已确认版本路线图（用户确认版）：
+  - **V0.1**：Test Strategist 接入（已完成，144 passed）
+  - **V0.2**：全面重构（架构分层：state_machine/、gates/、runners/、prompts/、steps/、controller.py、cli.py）
+  - **V0.3**：需求质量 + 证据标准化
+  - **V0.4**：需求协商 + Bug Fix 环节（新 bug-fix gate，替代原 defect_fix → Unit Plan 路径）
+  - **V0.5**：Agent 灵活性（opencode runner、per-role 配置）
+- 已完成：
+  - 创建 `ROADMAP.md`，记录确认版版本路线图
+  - 更新 `task_plan.md` 的当前阶段描述
+  - 更新 `findings.md` 记录 V0.2 真实范围
+- 影响：
+  - V0.2 的真实范围是**全面架构重构**，不是 idle 逻辑修复（那只是当前已完成的增量改动，应归入已提交变更）
+  - requirements-body.md 的描述需要以架构重构为主线重写（等待 controller 下一轮 requirements revision）
+
 ## 会话：2026-04-29
 
 ### 阶段 9：Plannotator 与人工 Gate 集成

@@ -7,19 +7,20 @@ import sys
 from pathlib import Path
 
 from workflow_controller.rrc_controller import RalphRefinerController
-from workflow_controller.rrc_human_gates import (
+from workflow_controller.gates.parsers import (
     approve_gate_file,
-    ensure_final_acceptance_gate,
     extract_unit_plan_state_patch,
-    render_requirements_gate_body,
-    render_unit_plan_gate_body,
     write_gate_file,
 )
-from workflow_controller.rrc_steps import (
-    _render_requirements_draft_prompt,
-    _render_unit_plan_draft_prompt,
-    prepare_builder_prompt,
+from workflow_controller.gates.generators import (
+    ensure_final_acceptance_gate,
+    render_requirements_gate_body,
+    render_unit_plan_gate_body,
 )
+from workflow_controller.prompts.builder import _render_builder_execution_prompt
+from workflow_controller.prompts.requirements import _render_requirements_draft_prompt
+from workflow_controller.prompts.unit_plan import _render_unit_plan_draft_prompt
+from workflow_controller.steps.builder import prepare_builder_prompt
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -127,6 +128,49 @@ def test_unit_plan_prompt_defect_fix_mode_requires_bug_fix_units_without_require
     assert 'Final acceptance defects: homepage logo is still text-only' in prompt
 
 
+def test_requirements_and_unit_plan_prompts_include_acceptance_obligation_ledger(tmp_path: Path) -> None:
+    requirements_path = tmp_path / 'requirements.md'
+    requirements_path.write_text('# Requirements\n\n- AC-1 covers AO-001.\n', encoding='utf-8')
+    state = {
+        'requestedOutcome': 'V0.3.1',
+        'feasibleOutcome': 'V0.3.1',
+        'currentUnitId': 'unit-ao-ledger',
+        'acceptanceObligations': [
+            {
+                'id': 'AO-001',
+                'title': '六步 UX 不清楚',
+                'description': '用户不知道当前在哪一步。',
+                'source': 'human_feedback',
+                'sourceRef': 'final-acceptance:rejection-1',
+                'priority': 'must',
+                'status': 'open',
+                'ownerStage': 'requirements',
+                'mappedAcceptanceCriteria': [],
+                'mappedUnits': [],
+                'mappedTestCases': [],
+                'evidence': [],
+            }
+        ],
+        'objectiveCoverage': [
+            {'objective': 'AO coverage', 'units': ['unit-ao-ledger'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-ao-ledger', 'name': 'AO Ledger', 'passes': False},
+        ],
+    }
+
+    requirements_prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+    unit_plan_prompt = _render_unit_plan_draft_prompt(state, requirements_path, tmp_path / 'unit-plan-body.md')
+
+    assert '# Acceptance Obligation Ledger' in requirements_prompt
+    assert 'AO-001: 六步 UX 不清楚' in requirements_prompt
+    assert 'Every must AO must be covered by at least one Acceptance Criterion' in requirements_prompt
+    assert '# Acceptance Obligation Ledger' in unit_plan_prompt
+    assert 'Every must AO must appear in the Unit Plan coverage matrix' in unit_plan_prompt
+    assert 'Do not collapse multiple AO items into one vague closure' in unit_plan_prompt
+
+
+
 def test_unit_plan_prompt_requires_test_strategy_skill_and_test_case_matrix(tmp_path: Path) -> None:
     requirements_path = tmp_path / 'requirements.md'
     requirements_path.write_text(
@@ -156,6 +200,77 @@ def test_unit_plan_prompt_requires_test_strategy_skill_and_test_case_matrix(tmp_
     assert '## 测试用例矩阵（Test Case Matrix）' in prompt
     assert 'Acceptance Criterion -> Test Case -> Layer -> Command/Evidence -> Expected Result' in prompt
     assert '"test_cases"' in prompt
+
+
+def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: Path) -> None:
+    requirements_path = tmp_path / 'requirements.md'
+    requirements_path.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-01：用户导入课程包后，课程列表显示 3 门课程并按更新时间倒序排列。\n',
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'course-import',
+        'requestedOutcome': 'V2.8',
+        'feasibleOutcome': 'V2.8',
+        'currentUnitId': 'u-e2e-import',
+        'workspacePath': str(tmp_path),
+        'objectiveCoverage': [
+            {'objective': 'AC-01 import course list', 'units': ['u-e2e-import'], 'status': 'partial'},
+        ],
+        'units': [
+            {
+                'id': 'u-e2e-import',
+                'name': 'course import e2e',
+                'passes': False,
+                'workflow_validation_level': 'closure',
+                'test_cases': [
+                    {
+                        'id': 'TC-AC-01-e2e',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'e2e',
+                        'fixture': 'tests/fixtures/course-import-ac-01.json',
+                        'command': 'npx playwright test tests/e2e/ac-01.spec.ts',
+                        'expected': '课程列表显示 3 门课程并按更新时间倒序排列',
+                    },
+                ],
+                'verification_commands': ['npx playwright test tests/e2e/ac-01.spec.ts'],
+            },
+        ],
+    }
+
+    requirements_prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+    unit_plan_prompt = _render_unit_plan_draft_prompt(state, requirements_path, tmp_path / 'unit-plan-body.md')
+    builder_prompt = _render_builder_execution_prompt(
+        state=state,
+        requirements_path=requirements_path,
+        requirements_content=requirements_path.read_text(encoding='utf-8'),
+        unit_plan_path=tmp_path / 'unit-plan.md',
+        unit_plan_content='## 测试用例矩阵（Test Case Matrix）\n| AC-01 | TC-AC-01-e2e | e2e | npx playwright test tests/e2e/ac-01.spec.ts | 课程列表显示 3 门课程并按更新时间倒序排列 |\n',
+        original_prompt_path=tmp_path / 'prompt.md',
+        original_prompt='实现课程导入验收。',
+        previous_failure_feedback='',
+    )
+
+    assert '每条验收标准必须有稳定 ID' in requirements_prompt
+    assert '固定测试数据或 fixture' in requirements_prompt
+    assert '可断言的期望值' in requirements_prompt
+    assert '不能用截图或人工观察替代断言' in requirements_prompt
+    assert '`acceptance_criterion`' in unit_plan_prompt
+    assert '`fixture`' in unit_plan_prompt
+    assert '测试命令退出码为 0 且断言覆盖 AC' in unit_plan_prompt
+    assert '对不适合 E2E 的 AC' in unit_plan_prompt
+    requirements_body = render_requirements_gate_body(state)
+    unit_plan_body = render_unit_plan_gate_body(state)
+
+    assert 'command 指向的测试文件' in builder_prompt
+    assert '覆盖了哪些 AC' in builder_prompt
+    assert '不要伪造通过证据' in builder_prompt
+    assert '稳定 AC ID' in requirements_body
+    assert '截图或人工观察不能替代断言' in requirements_body
+    assert '| 验收标准 | 测试用例 | 层级 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
+    assert 'E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言' in unit_plan_body
 
 
 def test_requirements_and_unit_plan_prompts_require_simplified_chinese(tmp_path: Path) -> None:
@@ -208,14 +323,43 @@ def test_controller_generated_gate_bodies_are_chinese_first(tmp_path: Path) -> N
                 'name': '2.5 验收',
                 'passes': True,
                 'done_when': ['验收证据完整'],
-                'verification_commands': ['pnpm exec tsc --noEmit'],
+                'test_cases': [
+                    {
+                        'id': 'TC-AC-01-golden-path',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'e2e',
+                        'golden_path': True,
+                        'fixture': 'tests/fixtures/ac-01.json',
+                        'command': 'pnpm exec playwright test tests/e2e/ac-01.spec.ts',
+                        'expected': '用户完成正常流程并看到结果 2.5',
+                    }
+                ],
+                'verification_commands': ['DATABASE_URL=postgres://test pnpm exec playwright test tests/e2e/ac-01.spec.ts'],
             },
         ],
     }
 
     requirements_body = render_requirements_gate_body(state)
     unit_plan_body = render_unit_plan_gate_body(state)
-    final_path = ensure_final_acceptance_gate(state, tmp_path / 'approvals', tmp_path / 'artifacts')
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'target-2-5'
+    unit_dir.mkdir(parents=True)
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'passed': True,
+                'results': [
+                    {
+                        'command': 'DATABASE_URL=postgres://test pnpm exec playwright test tests/e2e/ac-01.spec.ts',
+                        'ok': True,
+                        'returncode': 0,
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    final_path = ensure_final_acceptance_gate(state, tmp_path / 'approvals', artifacts_dir)
     final_body = final_path.read_text(encoding='utf-8')
 
     assert '# 需求与验收确认' in requirements_body
@@ -228,6 +372,9 @@ def test_controller_generated_gate_bodies_are_chinese_first(tmp_path: Path) -> N
     assert '## Controller State Patch' in unit_plan_body
     assert '# 最终验收确认' in final_body
     assert '## 证据摘要' in final_body
+    assert '## Golden Path 正常流程' in final_body
+    assert 'TC-AC-01-golden-path' in final_body
+    assert '`pnpm exec playwright test tests/e2e/ac-01.spec.ts` -> passed' in final_body
     assert '## 返工路由（Rejection Routing）' in final_body
     assert '需求变更:' in final_body
 
@@ -542,6 +689,105 @@ raise SystemExit(0)
     assert (plannotator_dir / 'requirements-last-review-used-1.json').exists()
 
 
+def test_revise_requirements_gate_creates_distinct_obligations_from_plannotator_annotations(tmp_path: Path) -> None:
+    workspace, _ = _make_ralph_workspace(tmp_path)
+    fake_tmux = tmp_path / 'tmux'
+    _write(
+        fake_tmux,
+        """#!/usr/bin/env python3
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+if sys.argv[1:2] == ["paste-buffer"]:
+    prompt = (Path(os.environ["RRC_RUN_DIR"]) / "prompt.md").read_text(encoding="utf-8")
+    match = re.search(r"Write the Markdown body to this exact file:\\n(.+)", prompt)
+    if match:
+        body_path = Path(match.group(1).strip())
+        body_path.parent.mkdir(parents=True, exist_ok=True)
+        body_path.write_text(
+            "# Requirements & Acceptance Confirmation\\n\\n"
+            "## 1. Requirements\\n- Revised from annotation feedback.\\n\\n"
+            "## 2. User Journeys\\n- User completes delivery acceptance.\\n\\n"
+            "## 3. Acceptance Criteria\\n- Delivery evidence is verified.\\n\\n"
+            "## 4. Test Strategy\\n- Run the declared verification command.\\n\\n"
+            "## 5. Out of Scope\\n- Future units.\\n\\n"
+            "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
+            "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
+            encoding="utf-8",
+        )
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({"status": "done", "summary": "requirements generated", "run_id": os.environ["RRC_RUN_ID"]}),
+            encoding="utf-8",
+        )
+        raise SystemExit(0)
+raise SystemExit(0)
+""",
+    )
+    fake_tmux.chmod(fake_tmux.stat().st_mode | stat.S_IXUSR)
+    state_dir = tmp_path / '.rrc-controller'
+    init_result = run_rrc(
+        'init',
+        '--state-dir',
+        str(state_dir),
+        '--workspace-dir',
+        str(workspace),
+        '--from-ralph',
+        '--target',
+        '1.1',
+        '--runner',
+        'tmux-claude',
+        '--tmux-target',
+        '1.2',
+        '--agent',
+        str(fake_tmux),
+        '--force',
+    )
+    assert init_result.returncode == 0, init_result.stderr
+    draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
+    assert draft_result.returncode == 0, draft_result.stderr
+
+    plannotator_dir = state_dir / 'plannotator'
+    plannotator_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = plannotator_dir / 'requirements-last-review.stdout.log'
+    stdout_path.write_text(
+        json.dumps(
+            {
+                'decision': 'annotated',
+                'annotations': [
+                    {'quote': 'Step 5', 'comment': '模型选择不清楚'},
+                    {'quote': 'Materials', 'comment': '15 个材料没有逐项证明'},
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    (plannotator_dir / 'requirements-last-review.json').write_text(
+        json.dumps(
+            {
+                'gate': 'requirements',
+                'gate_path': str(state_dir / 'approvals' / 'requirements-and-acceptance.md'),
+                'stdout_path': str(stdout_path),
+                'process_id': None,
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'requirements')
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    obligations = state['acceptanceObligations']
+    assert [item['id'] for item in obligations] == ['AO-001', 'AO-002']
+    assert [item['title'] for item in obligations] == ['模型选择不清楚', '15 个材料没有逐项证明']
+    ledger = state_dir / 'artifacts' / 'acceptance-obligations' / 'acceptance-obligations.md'
+    assert 'Quote: Step 5' in ledger.read_text(encoding='utf-8')
+
+
 def test_revise_requirements_gate_can_rewind_from_unit_plan_approval(tmp_path: Path) -> None:
     workspace, _ = _make_ralph_workspace(tmp_path)
     state_dir = tmp_path / '.rrc-controller'
@@ -798,6 +1044,17 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
       "name": "E2E closure",
       "passes": false,
       "workflow_validation_level": "closure",
+      "test_cases": [
+        {
+          "id": "TC-delivery-golden-path",
+          "acceptance_criterion": "Delivery objective",
+          "layer": "e2e",
+          "golden_path": true,
+          "fixture": "tests/fixtures/delivery.json",
+          "command": "pytest tests/e2e/test_delivery.py -q",
+          "expected": "Delivery normal flow completes with confirmation"
+        }
+      ],
       "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
     }
   ]
@@ -1433,6 +1690,177 @@ def test_unit_plan_approval_rejects_playwright_command_without_database_env(tmp_
     assert state['unitPlanAccepted'] is False
     assert 'verification_env' in state['blockedReason']
     assert 'DATABASE_URL' in state['blockedReason']
+
+
+def test_unit_plan_approval_rejects_closure_unit_without_golden_path(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-e2e',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-e2e'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-e2e', 'name': 'E2E delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# Requirements & Acceptance Confirmation
+
+## 3. Acceptance Criteria
+- AC-01: User can complete the normal delivery flow.
+
+## 4. Test Strategy
+- Playwright E2E tests cover AC-01.
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        unit_plan_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-e2e",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-e2e"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-e2e",
+      "name": "E2E delivery",
+      "passes": false,
+      "workflow_validation_level": "closure",
+      "test_cases": [
+        {
+          "id": "TC-AC-01-e2e",
+          "acceptance_criterion": "AC-01",
+          "layer": "e2e",
+          "fixture": "tests/fixtures/delivery.json",
+          "command": "DATABASE_URL=file:test.db pnpm exec playwright test tests/e2e/delivery.spec.ts",
+          "expected": "User completes normal delivery flow and sees confirmation #D-100"
+        }
+      ],
+      "verification_commands": ["DATABASE_URL=file:test.db pnpm exec playwright test tests/e2e/delivery.spec.ts"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'golden_path' in state['blockedReason']
+    assert 'unit-e2e' in state['blockedReason']
+
+
+
+def test_unit_plan_approval_accepts_closure_unit_with_golden_path(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-e2e',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-e2e'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-e2e', 'name': 'E2E delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# Requirements & Acceptance Confirmation
+
+## 3. Acceptance Criteria
+- AC-01: User can complete the normal delivery flow.
+
+## 4. Test Strategy
+- Playwright E2E tests cover AC-01.
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    command = 'DATABASE_URL=file:test.db pnpm exec playwright test tests/e2e/delivery.spec.ts'
+    unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        unit_plan_path,
+        '# Unit Plan Confirmation\n\n'
+        '## Controller State Patch\n\n'
+        '```json\n'
+        + json.dumps(
+            {
+                'currentUnitId': 'unit-e2e',
+                'objectiveCoverage': [
+                    {'objective': 'Delivery objective', 'units': ['unit-e2e'], 'status': 'partial'}
+                ],
+                'units': [
+                    {
+                        'id': 'unit-e2e',
+                        'name': 'E2E delivery',
+                        'passes': False,
+                        'workflow_validation_level': 'closure',
+                        'test_cases': [
+                            {
+                                'id': 'TC-AC-01-golden-path',
+                                'acceptance_criterion': 'AC-01',
+                                'layer': 'e2e',
+                                'golden_path': True,
+                                'fixture': 'tests/fixtures/delivery.json',
+                                'command': command,
+                                'expected': 'User completes normal delivery flow and sees confirmation #D-100',
+                            }
+                        ],
+                        'verification_commands': [command],
+                    }
+                ],
+            }
+        )
+        + '\n```\n',
+    )
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is True
+    assert state['currentStep'] == 'PLAN_CREATED'
+
 
 
 def test_unit_plan_approval_rejects_static_only_verification_without_test_cases(tmp_path: Path) -> None:
