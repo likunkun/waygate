@@ -307,6 +307,14 @@ def test_unit_plan_drafter_persists_test_strategist_artifacts(tmp_path: Path, mo
             assert 'AC-1: Import retry state is visible' in prompt
             assert 'Expose retry state in import UI' in prompt
             assert 'verification requirements' in prompt
+            assert 'fake runner' in prompt
+            assert 'mock-only flow' in prompt
+            assert 'stubbed API-only flow' in prompt
+            assert 'controller workflow orchestration tests may use fake runners' in prompt
+            assert 'target project feature acceptance' in prompt
+            assert 'Critical' in prompt and 'fake/mock/stubbed/page-load/screenshot evidence' in prompt
+            assert 'Major' in prompt and 'fixture, real entrypoint, or expected assertion' in prompt
+            assert 'suggested_fix' in prompt and 'Playwright or pytest command' in prompt
             (request.artifact_dir / 'test-strategy.json').write_text(
                 json.dumps(
                     {

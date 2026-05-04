@@ -272,11 +272,19 @@ Constraints:
 - Prefer user-visible or behavior-visible verification when the requirement has observable runtime behavior.
 - For E2E or closure coverage, derive test cases directly from AC IDs and include executable commands plus concrete assertions over real fixture data.
 - Do not use screenshots, page-load checks, or manual observation as the only E2E evidence.
+- E2E or closure tests cannot rely only on a fake runner, mock-only flow, or stubbed API-only flow.
+- If a proposed E2E or closure test does not use a real application entrypoint, real fixture or setup data, and concrete expected assertions, report a gap.
+- controller workflow orchestration tests may use fake runners to validate this controller, but target project feature acceptance cannot treat fake runner output as E2E evidence.
+- Use mocks or stubs only for external dependencies the target project cannot control; core user journeys, state changes, data reads and writes, and permission flows must be asserted through real runtime paths.
 
 verification requirements:
 - Include test case id, acceptance criterion, layer, fixture or setup data, command or evidence, and expected result.
 - Include gap severity as Critical, Major, or Minor.
+- Severity guidance: Critical when an AC is marked e2e or closure but has only fake/mock/stubbed/page-load/screenshot evidence.
+- Severity guidance: Major when an E2E command exists but fixture, real entrypoint, or expected assertion is unclear.
+- Severity guidance: Minor when the command is executable but artifact or evidence references are unclear.
 - For every gap, include a "suggested_fix" field with a concrete, actionable instruction for the Planner: specify which AC needs what kind of test, what layer (unit/integration/e2e/manual), and an example command or evidence format.
+- In "suggested_fix", name the real test that should replace fake/mock-only evidence, such as a Playwright or pytest command, the fixture data/setup it should create, and the specific expected assertion it must check.
 - Summarize review readiness in unit-plan-review-package.json.
 """
 
