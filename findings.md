@@ -138,6 +138,11 @@
 - compact 自动打回和阻塞信息应保留短原因，但有色模式下突出 AO/AC/Test Case/Journey/unit 等定位符，降低在长 validation reason 里找关键点的成本。
 - `--color auto` 默认保持不变；在真实 tmux TTY 内会启用颜色，在捕获输出或脚本里默认保持纯文本，仍可用 `--color always` / `--color never` 显式控制。
 
+## 2026-05-06 Unit Plan 自动打回次数决策
+
+- 现场 V1.3 在两次自动打回后仍缺 Journey 映射而阻塞，说明 2 次默认预算对连续修复 AO、设计/架构 traceability、Journey 映射这类多层 gate 缺口偏紧。
+- Unit Plan 自动打回默认预算提高到 5 次；仍保留 `unitPlanAutoRevisionMax` state 字段作为显式覆盖，避免未来需要针对单个 session 收紧或放宽时改代码。
+
 ## 2026-05-04 V0.4+ 路线图整合发现
 
 - `AGENTS.md` / `CLAUDE.md` 应作为项目初始化规约进入 V0.4.0，但它们只定义 agent 如何工作、去哪读事实源，不能替代 requirements、acceptance、state 或 evidence。

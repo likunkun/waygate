@@ -45,6 +45,10 @@ def run_rrc_with_pythonpath(*args: str, cwd: Path) -> subprocess.CompletedProces
     )
 
 
+def test_default_unit_plan_auto_revision_budget_is_five() -> None:
+    assert rrc_controller_module.DEFAULT_MAX_UNIT_PLAN_AUTO_REVISIONS == 5
+
+
 def _make_fake_tmux(
     tmp_path: Path,
     *,

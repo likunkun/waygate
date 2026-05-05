@@ -54,7 +54,7 @@ Final Acceptance rejected as defect_fix
 | 短命令启动 | `go V1.0` 自动推断 state-dir/workspace，并在 tmux 内自动创建 Claude pane；指定 `--tmux-target` 时自动识别 Codex/Claude。 |
 | 可恢复状态机 | 所有进度写在 `session.json` 和 `events.jsonl`，中断后继续跑。 |
 | 低噪声进度输出 | 默认 compact 模式只打印关键状态、短原因和人工 gate；`--color always` 会突出自动打回、阻塞和 AO/AC/Test Case/Journey/unit 定位符。 |
-| 人工 Gate | Requirements、Unit Plan、Final Acceptance、Bug Fix 都生成 Markdown 审核文件；Requirements 和 Unit Plan 顶部先展示审批摘要，完整矩阵留在同一文件附录区。 |
+| 人工 Gate | Requirements、Unit Plan、Final Acceptance、Bug Fix 都生成 Markdown 审核文件；Requirements 和 Unit Plan 顶部先展示审批摘要，完整矩阵留在同一文件附录区。Unit Plan 预检失败默认最多自动打回 5 次。 |
 | Plannotator 审阅 | 人工 gate 可用浏览器批注、批准或拒绝；默认打开 approval Markdown 本身，先看到顶部摘要。 |
 | 单元化执行 | 每次只推进一个 unit，避免 AI 一口气改完整个世界。 |
 | CodeSimplifier | Builder 后默认进入代码精修审查，不合格会打回 Builder。 |

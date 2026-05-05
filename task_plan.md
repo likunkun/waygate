@@ -351,6 +351,13 @@
 - [x] 全量 `workflow_controller/tests` 通过：`334 passed in 38.87s`。
 - **状态：** complete
 
+### 阶段 39：Unit Plan 自动打回默认次数调整
+- [x] Unit Plan controller 预检失败后的默认自动打回预算从 2 次提高到 5 次。
+- [x] 保留 `unitPlanAutoRevisionMax` 显式覆盖机制，已有 state 可继续按字段覆盖。
+- [x] README 补充默认最多自动打回 5 次说明。
+- [x] 全量 `workflow_controller/tests` 通过：`335 passed in 40.40s`。
+- **状态：** complete
+
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。
 2. 是否需要为新工作区补充独立的打包配置、入口脚本或 CI，后续按开发需要决定。

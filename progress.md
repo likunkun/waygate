@@ -1,5 +1,20 @@
 # 进度日志
 
+## 会话：2026-05-06
+
+### Unit Plan 自动打回默认次数调整
+- **状态：** complete
+- Unit Plan controller 预检失败后的默认自动打回预算从 2 次提高到 5 次。
+- `unitPlanAutoRevisionMax` 显式覆盖机制不变；已有 state 设置该字段时仍优先生效。
+- README 已补充 Unit Plan 预检失败默认最多自动打回 5 次说明。
+- 已验证 RED：`python -m pytest workflow_controller/tests/test_rrc_controller.py::test_default_unit_plan_auto_revision_budget_is_five -q` 先失败于 `2 == 5`。
+- 已验证 GREEN：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_default_unit_plan_auto_revision_budget_is_five -q` -> `1 passed in 0.10s`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `138 passed in 9.78s`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `40 passed in 14.47s`
+  - `python -m pytest workflow_controller/tests/gates/test_gates_structure.py -q` -> `18 passed in 0.06s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `335 passed in 40.40s`
+
 ## 会话：2026-05-05
 
 ### V0.5.2 现场 tmux-codex 派发竞态与关键信息着色修复
