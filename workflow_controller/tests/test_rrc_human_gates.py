@@ -187,7 +187,8 @@ def test_unit_plan_prompt_requires_test_strategy_skill_and_test_case_matrix(tmp_
 
     assert '使用 `test-strategy` skill' in prompt
     assert '## 测试用例矩阵（Test Case Matrix）' in prompt
-    assert 'Acceptance Criterion -> Test Case -> Layer -> Command/Evidence -> Expected Result' in prompt
+    assert 'Acceptance Criterion -> Test Case -> Journey -> Layer -> Command/Evidence -> Expected Result' in prompt
+    assert 'JSON `test_cases[]` 中显式写 Journey 映射字段' in prompt
     assert '"test_cases"' in prompt
 
 

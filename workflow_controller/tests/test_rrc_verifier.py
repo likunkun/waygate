@@ -161,6 +161,67 @@ def test_run_verifier_derives_passed_journey_evidence_from_command_result(tmp_pa
     assert aggregate['journey_evidence_rows'] == verification['journey_evidence_rows']
 
 
+def test_run_verifier_derives_journey_evidence_from_journey_refs(tmp_path: Path, monkeypatch) -> None:
+    unit_dir = tmp_path / 'artifacts' / 'unit-01'
+    journey_path = tmp_path / 'artifacts' / 'journeys' / 'journeys.json'
+    _write(
+        journey_path,
+        json.dumps(
+            {
+                'version': 1,
+                'journeys': [
+                    {
+                        'journey_id': 'J-001',
+                        'title': 'Delivery happy path',
+                        'status': 'active',
+                        'linked_acceptance_criteria': ['AC-1'],
+                    }
+                ],
+            }
+        ),
+    )
+    command = 'pytest tests/e2e/test_delivery.py -q'
+    state = {
+        'currentUnitId': 'unit-01',
+        'workspacePath': str(tmp_path),
+        'journeyContractPath': str(journey_path),
+        'units': [
+            {
+                'id': 'unit-01',
+                'verification_commands': [command],
+                'test_cases': [
+                    {
+                        'id': 'TC-AC1-E2E',
+                        'journey_refs': ['J-001'],
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'delivery confirmation is visible',
+                    }
+                ],
+            }
+        ],
+    }
+
+    monkeypatch.setattr(
+        builder_module,
+        'run_verification_commands',
+        lambda state, workspace, progress_callback=None: [
+            {'command': command, 'ok': True, 'returncode': 0, 'stdout': 'passed', 'stderr': ''}
+        ],
+    )
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['journey_evidence_rows'][0]['journey_id'] == 'J-001'
+    assert verification['journey_evidence_rows'][0]['test_case_id'] == 'TC-AC1-E2E'
+    assert verification['journey_evidence_rows'][0]['status'] == 'passed'
+    aggregate = json.loads((tmp_path / 'artifacts' / 'journeys' / 'journey-evidence.json').read_text(encoding='utf-8'))
+    assert aggregate['journey_evidence_rows'] == verification['journey_evidence_rows']
+
+
 def test_run_verifier_marks_journey_evidence_missing_when_command_result_is_absent(tmp_path: Path, monkeypatch) -> None:
     unit_dir = tmp_path / 'artifacts' / 'unit-01'
     journey_path = tmp_path / 'artifacts' / 'journeys' / 'journeys.json'

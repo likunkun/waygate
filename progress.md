@@ -2,6 +2,24 @@
 
 ## 会话：2026-05-06
 
+### Unit Plan Journey 映射字段兼容修复
+- **状态：** complete
+- Unit Plan Journey gate validator 现在识别 `journey_refs` 和 `journeyRefs`，同时保留 `journey_id`、`journey_ids`、`covers_journeys` 等既有字段。
+- Verifier Journey evidence 生成路径同步识别 `journey_refs` 和 `journeyRefs`，避免 gate 通过后 `journey-evidence.json` 漏写对应 row。
+- Unit Plan prompt 已明确推荐 `covers_journeys` / `journey_ids`，并说明 `journey_refs` / `journeyRefs` 只是兼容别名；closure/E2E test case 必须在 `test_cases[]` JSON 中显式写 Journey 映射。
+- README 已补充 Unit Plan Gate 的 Test Case Matrix / Controller State Patch 示例和 Journey 映射字段说明。
+- 已验证 RED：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_unit_plan_approval_accepts_journey_refs_mapping -q` 先失败于 `unitPlanAccepted is False`。
+  - `python -m pytest workflow_controller/tests/test_rrc_verifier.py::test_run_verifier_derives_journey_evidence_from_journey_refs -q` 先失败于缺少 `journey_evidence_rows`。
+- 已验证 GREEN：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_unit_plan_approval_accepts_journey_refs_mapping -q` -> `1 passed in 0.07s`
+  - `python -m pytest workflow_controller/tests/test_rrc_verifier.py::test_run_verifier_derives_journey_evidence_from_journey_refs -q` -> `1 passed in 0.03s`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `139 passed in 10.26s`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `40 passed in 14.33s`
+  - `python -m pytest workflow_controller/tests/test_rrc_verifier.py -q` -> `6 passed in 0.05s`
+  - `python -m pytest workflow_controller/tests/gates/test_gates_structure.py -q` -> `18 passed in 0.07s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `337 passed in 41.24s`
+
 ### Unit Plan 自动打回默认次数调整
 - **状态：** complete
 - Unit Plan controller 预检失败后的默认自动打回预算从 2 次提高到 5 次。

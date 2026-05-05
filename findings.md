@@ -143,6 +143,13 @@
 - 现场 V1.3 在两次自动打回后仍缺 Journey 映射而阻塞，说明 2 次默认预算对连续修复 AO、设计/架构 traceability、Journey 映射这类多层 gate 缺口偏紧。
 - Unit Plan 自动打回默认预算提高到 5 次；仍保留 `unitPlanAutoRevisionMax` state 字段作为显式覆盖，避免未来需要针对单个 session 收紧或放宽时改代码。
 
+## 2026-05-06 Unit Plan Journey 映射字段兼容
+
+- 根因：Journey gate validator 和 Verifier Journey evidence 各自维护 `_journey_ids_from_case()`，都只识别 `journey_id` / `journey_ids` / `covers_journeys` 等字段，不识别 agent 生成的 `journey_refs`。
+- 影响：Unit Plan 语义上已经把 E2E test case 映射到 active Journey，但 controller 仍判定 `journey mapping is incomplete`；即使 gate 放行，Verifier evidence 也会因同一字段不识别而漏写 `journey-evidence.json`。
+- 决策：`covers_journeys` 和 `journey_ids` 仍是推荐字段；`journey_refs` / `journeyRefs` 作为历史兼容别名进入 gate validator 和 verifier evidence 识别路径。
+- Prompt 和 README 必须明确：Journey 映射要写进 Controller State Patch 的 `test_cases[]` 结构化字段，不能只写在 Markdown prose、Journey Acceptance Matrix、产品设计引用或技术架构引用里。
+
 ## 2026-05-04 V0.4+ 路线图整合发现
 
 - `AGENTS.md` / `CLAUDE.md` 应作为项目初始化规约进入 V0.4.0，但它们只定义 agent 如何工作、去哪读事实源，不能替代 requirements、acceptance、state 或 evidence。

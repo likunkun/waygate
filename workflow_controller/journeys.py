@@ -509,6 +509,8 @@ def _journey_ids_from_case(case: dict[str, Any]) -> list[str]:
         or case.get('journeyIds')
         or case.get('covers_journeys')
         or case.get('coversJourneys')
+        or case.get('journey_refs')
+        or case.get('journeyRefs')
     )
     if isinstance(raw, list):
         return [str(item).strip() for item in raw if str(item).strip()]

@@ -403,7 +403,7 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
 ### 需要人确认的点
 - 每个目标是否映射到一个或多个可执行 unit。
 - 每条非 manual AC 是否有 Test Case、fixture/setup、命令或人工证据、具体 expected assertion。
-- Journey 是否映射到 closure 或 E2E 测试用例。
+- Journey 是否映射到 closure 或 E2E 测试用例，并在 `test_cases[]` JSON 中写入 `covers_journeys` 或 `journey_ids`。
 - Controller State Patch 是否只改变当前计划允许的 state 字段。
 
 ### 验收命令
@@ -419,10 +419,12 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
 
 ## 附录 B：测试用例矩阵（Test Case Matrix）
 
-| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |
-|---|---|---|---|---|---|---|---|
-| AC-001 | TC-001 | functional | docs/product/controller-startup.md | docs/architecture/state-dir.md | tmp target project | `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` | state-dir 位于目标项目下 |
-| AC-002 | TC-002 | e2e | docs/product/human-gates.md | docs/architecture/state-machine.md | fake tmux runner | `python -m pytest workflow_controller/tests/test_rrc_e2e.py -q` | workflow 到达 Final Acceptance |
+| 验收标准 | 测试用例 | Journey | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |
+|---|---|---|---|---|---|---|---|---|
+| AC-001 | TC-001 | - | functional | docs/product/controller-startup.md | docs/architecture/state-dir.md | tmp target project | `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` | state-dir 位于目标项目下 |
+| AC-002 | TC-002 | JOURNEY-001 | e2e | docs/product/human-gates.md | docs/architecture/state-machine.md | fake tmux runner | `python -m pytest workflow_controller/tests/test_rrc_e2e.py -q` | workflow 到达 Final Acceptance |
+
+Journey 映射必须进入 Controller State Patch 的 `test_cases[]` 结构化字段。推荐字段是 `covers_journeys: ["J-..."]` 或 `journey_ids: ["J-..."]`；controller 也兼容历史别名 `journey_refs` / `journeyRefs`，但新输出不应优先使用这些别名。只在 Markdown 说明、Journey Acceptance Matrix、产品设计引用或技术架构引用里写 Journey id，不能算作 Unit Plan gate 的 Journey 映射。
 
 ## Journey Acceptance Matrix
 
@@ -467,6 +469,16 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
       "name": "Controller 启动与 state-dir 推断",
       "passes": false,
       "workflow_validation_level": "fragment",
+      "test_cases": [
+        {
+          "id": "TC-001",
+          "acceptance_criterion": "AC-001",
+          "layer": "functional",
+          "fixture": "tmp target project",
+          "command": "python -m pytest workflow_controller/tests/test_rrc_controller.py -q",
+          "expected": "state-dir 位于目标项目下"
+        }
+      ],
       "verification_commands": ["python -m pytest workflow_controller/tests/test_rrc_controller.py -q"]
     },
     {
@@ -474,6 +486,18 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
       "name": "端到端交付闭环",
       "passes": false,
       "workflow_validation_level": "closure",
+      "test_cases": [
+        {
+          "id": "TC-002",
+          "acceptance_criterion": "AC-002",
+          "covers_journeys": ["JOURNEY-001"],
+          "layer": "e2e",
+          "golden_path": true,
+          "fixture": "fake tmux runner",
+          "command": "python -m pytest workflow_controller/tests/test_rrc_e2e.py -q",
+          "expected": "workflow 到达 Final Acceptance"
+        }
+      ],
       "verification_commands": ["python -m pytest workflow_controller/tests/test_rrc_e2e.py -q"]
     }
   ]

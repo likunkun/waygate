@@ -5293,6 +5293,112 @@ def test_unit_plan_approval_accepts_covers_journeys_mapping(tmp_path: Path) -> N
     assert journey['test_cases'] == ['TC-AC1-E2E']
 
 
+def test_unit_plan_approval_accepts_journey_refs_mapping(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'journeyContractPath': str(state_dir / 'artifacts' / 'journeys' / 'journeys.json'),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    journey_path = state_dir / 'artifacts' / 'journeys' / 'journeys.json'
+    journey_path.parent.mkdir(parents=True, exist_ok=True)
+    journey_path.write_text(
+        json.dumps(
+            {
+                'version': 1,
+                'journeys': [
+                    {
+                        'journey_id': 'J-001',
+                        'title': 'Delivery happy path',
+                        'status': 'active',
+                        'steps': ['Start request', 'complete delivery'],
+                        'linked_acceptance_criteria': ['AC-1'],
+                        'linked_units': [],
+                        'verification_layer': 'e2e',
+                        'verification_command': None,
+                        'test_cases': [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    gate_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery unit",
+      "passes": false,
+      "workflow_validation_level": "closure",
+      "test_cases": [
+        {
+          "id": "TC-AC1-E2E",
+          "journey_refs": ["J-001"],
+          "acceptance_criterion": "AC-1",
+          "layer": "e2e",
+          "fixture": "tests/fixtures/delivery.json",
+          "command": "pytest tests/e2e/test_delivery.py -q",
+          "expected": "delivery confirmation is visible",
+          "golden_path": true
+        }
+      ],
+      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is True
+    contract = json.loads(journey_path.read_text(encoding='utf-8'))
+    journey = contract['journeys'][0]
+    assert journey['linked_units'] == ['unit-01']
+    assert journey['test_cases'] == ['TC-AC1-E2E']
+    assert journey['verification_command'] == 'pytest tests/e2e/test_delivery.py -q'
+
+
 def test_run_rejects_preapproved_unit_plan_missing_acceptance_obligation(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)

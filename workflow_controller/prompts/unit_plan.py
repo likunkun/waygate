@@ -73,6 +73,8 @@ Write the Unit Plan Markdown body to this exact file:
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
 - 如果已批准 requirements 包含 `Design/Architecture Traceability Matrix`，每个 test case 还必须保留对应 AC 的 `product_design_refs` 和 `technical_architecture_refs`，并与 requirements 中的 Product Design Ref / Technical Architecture Ref 一致。
+- 如果已批准 requirements 包含 active Journey，closure/E2E test case 必须在 JSON `test_cases[]` 中显式写 Journey 映射字段。推荐使用 `covers_journeys: ["J-001"]` 或 `journey_ids: ["J-001"]`；`journey_refs` / `journeyRefs` 只是历史兼容别名，不作为推荐输出字段。
+- Journey 映射不能只放在 Markdown prose、Journey Acceptance Matrix、设计引用或架构引用中；controller 只从 `test_cases[]` 的结构化字段生成 Journey 合约和证据。
 - Verifier 会从 test cases 生成 `verification.json` 的 `evidence_rows`；因此每个 test case 的 AC、AO、layer、command/evidence、expected 和 `golden_path` 必须可直接审计。
 - 至少一个 E2E test case 必须标记 `golden_path: true`，表示人工最终验收前必须先跑通的核心正常流程。
 - `verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`），并包含实际执行这些 E2E 测试和 golden path 的命令；不接受"截图留证"或人工步骤作为完成条件。
@@ -124,10 +126,11 @@ controller state 中的已知单元：
 
 创建一张表，表达以下精确映射：
 
-Acceptance Criterion -> Test Case -> Layer -> Command/Evidence -> Expected Result
+Acceptance Criterion -> Test Case -> Journey -> Layer -> Command/Evidence -> Expected Result
 
 缺陷修复模式下，每条验收标准和每个最终验收缺陷都必须至少有一个具体测试用例或明确人工证据。typecheck/lint/tsc 等静态检查可以出现，但不能单独算作行为覆盖。
 E2E 层的测试用例必须有可执行 `command`（Playwright/pytest 命令），并声明 `fixture` 或测试数据准备方式；`evidence` 字段留空；`expected` 必须描述具体可断言的值，不接受"页面渲染成功"、"无报错"或"截图留存"。
+如果测试用例覆盖 Journey，在表格中写出 Journey id，并在 Controller State Patch 的对应 `test_cases[]` JSON 对象中写 `covers_journeys` 或 `journey_ids`。
 
 ## 执行单元
 
@@ -168,6 +171,7 @@ E2E 层的测试用例必须有可执行 `command`（Playwright/pytest 命令）
         {{
           "id": "<stable test case id>",
           "acceptance_criterion": "<criterion or defect covered>",
+          "covers_journeys": ["<J-... for closure/e2e journey coverage>"],
           "product_design_refs": ["<Product Design Ref from requirements>"],
           "technical_architecture_refs": ["<Technical Architecture Ref from requirements>"],
           "layer": "unit|functional|integration|e2e|manual",
