@@ -113,6 +113,32 @@
 - 没有 `evidence_rows` 的历史 `verification.json` 不能让 final acceptance gate 崩掉，应显示 missing schema row 指向 `verification.json`。
 - V0.3.6 只增强 gate 渲染和反馈上下文，不新增最终验收路由；更复杂的 defect-fix gate 属于 V0.4。
 
+## 2026-05-05 V0.4 控制平面收敛发现
+
+- 当前未提交改动已经跨越 V0.4.1–V0.4.5a 多个子版本，并且在 `rrc_controller.py`、gate generator/validator 和 human gate tests 中相互交织；强行按子版本拆 patch 会增加误拆风险。
+- 本轮收敛按 V0.4 控制平面整体提交更稳妥：规划文档标明每个 V0.4.x 子版本状态，commit 作为 V0.4.1–V0.4.5a 的整合交付。
+- `.rrc-controller-V0.2*` 和 `.rrc-controller-v0.1` 是本地运行 state-dir，应继续保持未跟踪；它们不是版本规划或产品能力交付物。
+- V0.4.6 的主线仍未完成：Requirements-stage Test Strategist 和 strict non-manual AC test presence gate 仍是下一步；本轮只把 Unit Plan Test Strategist 的 fake/mock E2E 风险识别作为前置强化纳入基线。
+
+## 2026-05-04 V0.4+ 路线图整合发现
+
+- `AGENTS.md` / `CLAUDE.md` 应作为项目初始化规约进入 V0.4.0，但它们只定义 agent 如何工作、去哪读事实源，不能替代 requirements、acceptance、state 或 evidence。
+- `CLAUDE.md` 应尽量薄，只引用 canonical `AGENTS.md`，避免多个 agent 入口文件规则漂移。
+- 项目文档目录和事实源表应在初始化时生成，降低 agent 读错版本、把 progress 当需求、绕过 controller state 的概率。
+- 当前 V0.3.x 已有 `golden_path` 和 closure/E2E test case，但还没有一等 Journey 模型；需要 V0.4.4 引入 Journey Acceptance Layer，解决“unit 都过但整体流程不通”的任务粒度问题。
+- Journey Acceptance 应与现有 AO/AC/Test Case/Evidence 链路并行：Journey -> Requirement/AC -> Unit -> E2E command -> Journey evidence -> Final Acceptance Journey Matrix。
+- Final Scope Audit 应放在 Journey Acceptance 之后，因为 scope audit 需要同时核对 AO、AC、Test Case、Journey 和 diff。
+- V0.5 应聚焦执行隔离和权限，而不是继续扩展 gate 文档；否则流程约束仍停留在 prompt 层。
+- V0.7 再把 `requirements.json`、`acceptance.json`、`tasks.json`、`journeys.json` 变成一等事实源，避免过早重构打断 V0.4/V0.5 的控制能力补齐。
+
+## 2026-05-04 V0.4.0 Project Agent Operating Guide 发现
+
+- agent guide 的工作区选择需要优先使用显式 `--workspace-dir`，其次使用 state 的 `workspacePath` / `executionWorkspacePath`，最后才退回 `state_dir.parent`；这样 `--state-dir /tmp/x/.plan-ralph` 会在 `/tmp/x` 生成 guide，而不会污染当前 repo。
+- `AGENTS.md` 是 canonical 文件；`CLAUDE.md` 只作为可选 shim，避免规则双写漂移。
+- 已存在 guide 文件时不能覆盖用户规则；写 `.generated` 草稿比直接合并更安全。
+- `start` 也需要接入同样的 guide 配置，因为它可能在 state 不存在或 `--force` 时隐式调用 `init_state()`。
+- `agentGuideArtifacts` 写入 state 可以让后续 status/debug 知道 guide 是 created、drafted、unchanged 还是 skipped。
+
 ## 2026-05-01 版本规划发现
 
 - **V0.2 真实范围是全面架构重构**，不是 idle 行为修复（idle 修复是已完成的增量改动，属于 V0.1 后的 hotfix）。

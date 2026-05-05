@@ -221,6 +221,38 @@ def test_unit_plan_approval_passes_when_all_must_obligations_are_covered(tmp_pat
     validate_unit_plan_acceptance_obligation_coverage(gate, state)
 
 
+def test_unit_plan_test_case_matrix_with_design_columns_requires_real_test_evidence(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Product Design Ref | Technical Architecture Ref | Fixture | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        '| AC-1 covers AO-001 | TC-1 | integration | PD-1 | TA-1 | fixture.json |  |  |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+        ],
+        'units': [{'id': 'unit-01', 'passes': False, 'verification_commands': []}],
+    }
+
+    with pytest.raises(ValueError, match='AO-001'):
+        validate_unit_plan_acceptance_obligation_coverage(gate, state)
+
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Product Design Ref | Technical Architecture Ref | Fixture | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        '| AC-1 covers AO-001 | TC-1 | integration | PD-1 | TA-1 | fixture.json | pytest tests/test_a.py -q | AO-001 works |\n',
+        encoding='utf-8',
+    )
+
+    validate_unit_plan_acceptance_obligation_coverage(gate, state)
+
+
 def test_requirements_approval_blocks_unmapped_must_obligation(tmp_path: Path) -> None:
     gate = tmp_path / 'requirements-and-acceptance.md'
     gate.write_text(

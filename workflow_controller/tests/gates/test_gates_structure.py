@@ -118,6 +118,7 @@ class TestGeneratorsLayer:
         assert 'It is done' in body
         assert '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）' in body
         assert '| AO | AC | Status | Verification Layer | Evidence/Reason |' in body
+        assert 'unit / functional / integration / e2e / manual' in body
         assert 'covered/deferred/rejected/out_of_scope' in body
         assert '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）' in body
         assert '| AC | Product Design Ref | Technical Architecture Ref | Notes |' in body

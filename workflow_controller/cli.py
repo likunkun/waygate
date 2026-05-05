@@ -9,6 +9,8 @@ from workflow_controller.rrc_controller import (
     COLOR_MODES,
     DEFAULT_MAX_AUTOMATIC_STEPS,
     RalphRefinerController,
+    add_go_parser,
+    normalize_go_args,
 )
 from workflow_controller.state_machine.actions import compute_next_allowed_action
 
@@ -78,7 +80,7 @@ def render_status_line(state: dict[str, Any]) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Ralph Refiner Controller', allow_abbrev=False)
+    parser = argparse.ArgumentParser(description='Workflow Controller', allow_abbrev=False)
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     init_parser = subparsers.add_parser(
@@ -89,13 +91,14 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
     init_parser.add_argument('--force', action='store_true', help='Overwrite an existing session.json')
     init_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate approval artifacts during init and runtime')
-    init_parser.add_argument('--workspace-dir', default=None, help='Workspace containing .plan-ralph/session.json')
-    init_parser.add_argument('--from-ralph', action='store_true', help='Initialize controller state from an existing Ralph session')
+    init_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     init_parser.add_argument('--agent', default='claude', help='Agent command used by the real builder runtime')
     init_parser.add_argument('--runner', default='subprocess', help='Agent runner backend: subprocess or tmux-claude')
     init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
-    init_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
+    init_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     init_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
+    init_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout during init')
+    init_parser.add_argument('--claude-md', action='store_true', default=False, help='Also generate a CLAUDE.md shim that points to AGENTS.md')
     init_parser.add_argument('--test-strategist', action='store_true', default=False, help='Enable Test Strategist for Unit Plan draft')
     init_parser.add_argument('--test-strategist-command', default=None, help='Override Test Strategist runner command')
     init_parser.add_argument('--test-strategist-env', action='append', metavar='KEY=VALUE', dest='test_strategist_env', help='Inject env var into Test Strategist subprocess only (repeatable)')
@@ -121,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     approve_parser.add_argument(
         '--gate',
         required=True,
-        choices=['requirements', 'unit-plan', 'final-acceptance'],
+        choices=['requirements', 'unit-plan', 'final-acceptance', 'bug-fix'],
         help='Markdown human gate to approve',
     )
     approve_parser.add_argument('--actor', default='human', help='Name recorded in the Human Confirmation block')
@@ -163,14 +166,15 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--dry-run', action='store_true', help='Simulate step execution by writing mock artifacts')
     start_parser.add_argument('--max-steps', type=int, default=DEFAULT_MAX_AUTOMATIC_STEPS, help='Maximum automatic steps to run before stopping')
     start_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate low-risk approval artifacts during runtime')
-    start_parser.add_argument('--workspace-dir', default=None, help='Workspace containing .plan-ralph/session.json')
-    start_parser.add_argument('--from-ralph', action='store_true', help='Initialize controller state from an existing Ralph session')
+    start_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     start_parser.add_argument('--agent', default=None, help='Agent command used by the real builder runtime')
     start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess or tmux-claude')
     start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
-    start_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
+    start_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     start_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     start_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
+    start_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout when start initializes state')
+    start_parser.add_argument('--claude-md', action='store_true', default=False, help='Also generate a CLAUDE.md shim that points to AGENTS.md when start initializes state')
     start_parser.add_argument('--plannotator-command', default='plannotator', help='Command used for Plannotator-assisted human gate review')
     start_parser.add_argument('--plannotator-port', type=int, default=20000, help='Port exported to Plannotator as PLANNOTATOR_PORT')
     start_parser.add_argument('--verbose', action='store_true', help='Show raw per-step progress and execution lines')
@@ -182,6 +186,8 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
     start_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
     start_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
+
+    add_go_parser(subparsers)
 
     drive_parser = subparsers.add_parser(
         'drive',
@@ -196,7 +202,7 @@ def parse_args() -> argparse.Namespace:
     drive_parser.add_argument('--agent', default=None, help='Override agent command used by the builder runtime')
     drive_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess or tmux-claude')
     drive_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for --runner tmux-claude')
-    drive_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
+    drive_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     drive_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     drive_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     drive_parser.add_argument('--plannotator-command', default='plannotator', help='Command used for Plannotator-assisted human gate review')
@@ -218,10 +224,10 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument('--agent', default=None, help='Override agent command used by the builder runtime')
     run_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess or tmux-claude')
     run_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for --runner tmux-claude')
-    run_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
+    run_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     run_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
 
-    return parser.parse_args()
+    return normalize_go_args(parser.parse_args(), parser)
 
 
 def main() -> None:
@@ -236,13 +242,15 @@ def main() -> None:
         tmux_target=getattr(args, 'tmux_target', None),
         target=getattr(args, 'target', None),
         unsafe_skip_human_gates=getattr(args, 'unsafe_skip_human_gates', False),
+        agent_guides_enabled=getattr(args, 'agent_guides', True),
+        claude_md_enabled=getattr(args, 'claude_md', False),
         plannotator_command=getattr(args, 'plannotator_command', 'plannotator'),
         plannotator_port=getattr(args, 'plannotator_port', 20000),
     )
 
     if args.command == 'init':
         strategist_overrides = _build_role_overrides(args)
-        state = controller.init_state(force=args.force, from_ralph=args.from_ralph, strategist_overrides=strategist_overrides)
+        state = controller.init_state(force=args.force, strategist_overrides=strategist_overrides)
         print(render_status_line(state))
         return
 
@@ -288,11 +296,10 @@ def main() -> None:
         print(f'status=migrated paths={paths}')
         return
 
-    if args.command == 'start':
+    if args.command in {'start', 'go'}:
         try:
             controller.start(
                 force=args.force,
-                from_ralph=args.from_ralph,
                 max_steps=args.max_steps,
                 verbose=args.verbose,
                 color_mode=args.color,

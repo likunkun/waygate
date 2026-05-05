@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import shlex
@@ -31,85 +30,6 @@ class AgentRunResult:
 
 class VerificationEnvironmentError(RuntimeError):
     pass
-
-
-def build_state_from_ralph(
-    workspace_dir: Path,
-    agent_command: str = 'claude',
-    agent_runner: str = 'subprocess',
-    tmux_target: str | None = None,
-    target: str | None = None,
-) -> dict[str, Any]:
-    ralph_dir = workspace_dir / '.plan-ralph'
-    session_path = ralph_dir / 'session.json'
-    if not session_path.exists():
-        raise FileNotFoundError(f'Ralph session not found: {session_path}')
-
-    ralph_session = json.loads(session_path.read_text(encoding='utf-8'))
-    plan_path = Path(ralph_session['planPath'])
-    prompt_path = Path(ralph_session.get('promptPath') or ralph_dir / 'current-prompt.md')
-    units = parse_ralph_plan(plan_path)
-    completed = set(ralph_session.get('completedStepIds') or [])
-    target_matched = target_matches_unit(units, target)
-
-    if target and not target_matched:
-        target_unit = build_target_acceptance_unit(target, workspace_dir)
-        units.append(target_unit)
-        selected_unit_id = target_unit['id']
-        execution_workspace = infer_execution_workspace(workspace_dir)
-    else:
-        selected_unit_id = select_ralph_unit(
-            units,
-            completed_step_ids=completed,
-            active_step_id=ralph_session.get('activeStepId'),
-            target=target,
-        )
-        execution_workspace = workspace_dir
-
-    target_context_files = find_target_context_files(workspace_dir, target=target)
-
-    objective_coverage = []
-    for unit in units:
-        status = 'covered' if unit['id'] in completed else 'partial'
-        objective_coverage.append({
-            'objective': unit.get('goal') or unit['id'],
-            'units': [unit['id']],
-            'status': status,
-        })
-
-    for unit in units:
-        unit['passes'] = unit['id'] in completed
-
-    return {
-        'task_id': plan_path.stem,
-        'currentUnitId': selected_unit_id,
-        'currentStep': 'PLAN_CREATED',
-        'lastVerifiedStep': 'PLAN_CREATED',
-        'status': 'active',
-        'requestedOutcome': target or 'complete current Ralph step',
-        'feasibleOutcome': target or 'complete current Ralph step',
-        'scopeApproved': False,
-        'autoApprove': False,
-        'testStrategistEnabled': False,
-        'currentUnitNeedsUiDesign': False,
-        'workspacePath': str(workspace_dir),
-        'executionWorkspacePath': str(execution_workspace),
-        'baselineChangedFiles': collect_git_changed_files(execution_workspace),
-        'ralphSessionPath': str(session_path),
-        'planPath': str(plan_path),
-        'planHash': ralph_session.get('planHash'),
-        'promptPath': str(prompt_path),
-        'agentCommand': agent_command,
-        'agentRunner': agent_runner,
-        'tmuxTarget': tmux_target,
-        'targetMatchedPlanStep': bool(target_matched) if target else None,
-        'targetContextFiles': [str(path) for path in target_context_files],
-        'objectiveCoverage': objective_coverage,
-        'units': units,
-        'nextAllowedActions': ['require_scope_approval'],
-        'blockedReason': None,
-        'updatedAt': _now_iso(),
-    }
 
 
 def build_state_from_target_acceptance(
@@ -218,12 +138,6 @@ def extract_relevant_context(content: str, markers: list[str], context_lines: in
     return excerpt[:max_chars]
 
 
-def target_matches_unit(units: list[dict[str, Any]], target: str | None) -> bool:
-    if not target:
-        return False
-    return any(unit['id'] == target or unit['id'].startswith(target) or target in unit['name'] for unit in units)
-
-
 def build_target_acceptance_unit(target: str, workspace_dir: Path) -> dict[str, Any]:
     return {
         'id': f'target-{_slug(target)}',
@@ -280,53 +194,6 @@ def infer_workspace_verification_commands(workspace_dir: Path) -> list[str]:
 
 def infer_execution_workspace(workspace_dir: Path) -> Path:
     return workspace_dir
-
-
-def parse_ralph_plan(plan_path: Path) -> list[dict[str, Any]]:
-    content = plan_path.read_text(encoding='utf-8')
-    step_matches = list(re.finditer(r'^## Step\s+(.+?)\s*$', content, flags=re.MULTILINE))
-    units: list[dict[str, Any]] = []
-
-    for index, match in enumerate(step_matches):
-        raw_id = match.group(1).strip()
-        start = match.end()
-        end = step_matches[index + 1].start() if index + 1 < len(step_matches) else len(content)
-        block = content[start:end]
-        unit_id = raw_id.split()[0].strip()
-        units.append({
-            'id': unit_id,
-            'name': raw_id,
-            'goal': _extract_bullet_value(block, 'Goal'),
-            'status_label': _extract_bullet_value(block, 'Status'),
-            'scope': _extract_section_bullets(block, 'Scope'),
-            'non_goals': _extract_section_bullets(block, 'Non-goals'),
-            'done_when': _extract_section_bullets(block, 'Done when'),
-            'verification_commands': _extract_section_bullets(block, 'Verification'),
-        })
-
-    if not units:
-        raise ValueError(f'No Ralph plan steps found in {plan_path}')
-    return units
-
-
-def select_ralph_unit(
-    units: list[dict[str, Any]],
-    completed_step_ids: set[str],
-    active_step_id: str | None = None,
-    target: str | None = None,
-) -> str:
-    if target:
-        for unit in units:
-            if unit['id'] == target or unit['id'].startswith(target) or target in unit['name']:
-                return unit['id']
-
-    if active_step_id:
-        return active_step_id
-
-    for unit in units:
-        if unit['id'] not in completed_step_ids:
-            return unit['id']
-    return units[-1]['id']
 
 
 def run_agent_for_current_step(

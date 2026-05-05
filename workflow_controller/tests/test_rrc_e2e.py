@@ -28,40 +28,12 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding='utf-8')
 
 
-def test_e2e_controller_runs_ralph_target_through_tmux_runner_and_verifier(tmp_path: Path) -> None:
+def test_e2e_controller_runs_target_through_tmux_runner_and_verifier(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     subprocess.run(['git', 'init'], cwd=workspace, check=True, capture_output=True, text=True)
 
-    plan_path = workspace / 'approved-plan.md'
-    _write(
-        plan_path,
-        """# Approved Plan
-
-## Step 1.1-delivery
-- Goal: Complete V1.0 tmux runner delivery acceptance
-- Status: pending
-
-### Scope
-- Produce a delivery artifact through the tmux runner
-
-### Verification
-- python -c "from pathlib import Path; assert Path('delivery.txt').read_text(encoding='utf-8') == 'ready\\n'; print('delivery verified')"
-""",
-    )
-    ralph_dir = workspace / '.plan-ralph'
-    prompt_path = ralph_dir / 'current-prompt.md'
-    _write(prompt_path, 'Create delivery.txt with ready status.')
-    _write(
-        ralph_dir / 'session.json',
-        json.dumps(
-            {
-                'planPath': str(plan_path),
-                'completedStepIds': [],
-                'promptPath': str(prompt_path),
-            }
-        ),
-    )
+    _write(workspace / 'task_plan.md', '# Target Plan\n\nV1.1 delivery acceptance.\n')
 
     fake_tmux = tmp_path / 'tmux'
     _write(
@@ -182,7 +154,6 @@ if sys.argv[1:2] == ["paste-buffer"]:
         str(state_dir),
         '--workspace-dir',
         str(workspace),
-        '--from-ralph',
         '--target',
         '1.1',
         '--runner',

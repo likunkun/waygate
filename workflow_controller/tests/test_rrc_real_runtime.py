@@ -36,143 +36,10 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding='utf-8')
 
 
-def test_init_from_ralph_plan_creates_state_for_next_uncompleted_step(tmp_path: Path) -> None:
+def test_init_with_target_creates_target_acceptance_unit_and_prompt(tmp_path: Path) -> None:
     workspace = tmp_path / 'courses'
-    ralph_dir = workspace / '.plan-ralph'
-    plan_path = tmp_path / 'course-plan.md'
-    _write(
-        plan_path,
-        """# Approved Plan
-
-## Step 1-foundation
-- Goal: Build the foundation
-- Status: pending
-
-### Scope
-- Add database model
-
-### Non-goals
-- No UI
-
-### Verification
-- python -c "print('foundation ok')"
-
-## Step 2-runtime
-- Goal: Build the runtime
-- Status: pending
-
-### Scope
-- Add runtime API
-
-### Non-goals
-- No admin page
-
-### Verification
-- python -c "print('runtime ok')"
-""",
-    )
-    _write(
-        ralph_dir / 'session.json',
-        json.dumps(
-            {
-                'planPath': str(plan_path),
-                'planHash': 'abc123',
-                'completedStepIds': ['1-foundation'],
-                'stepStatus': 'verified',
-                'promptPath': str(ralph_dir / 'current-prompt.md'),
-            }
-        ),
-    )
-
-    state_dir = tmp_path / 'controller-state'
-    result = run_rrc(
-        'init',
-        '--state-dir',
-        str(state_dir),
-        '--workspace-dir',
-        str(workspace),
-        '--from-ralph',
-        '--agent',
-        'claude',
-    )
-
-    assert result.returncode == 0, result.stderr
-    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
-    assert state['workspacePath'] == str(workspace)
-    assert state['promptPath'] == str(ralph_dir / 'current-prompt.md')
-    assert state['agentCommand'] == 'claude'
-    assert state['currentUnitId'] == '2-runtime'
-    assert state['units'][0]['id'] == '1-foundation'
-    assert state['units'][0]['passes'] is True
-    assert state['units'][1]['id'] == '2-runtime'
-    assert state['units'][1]['verification_commands'] == ['python -c "print(\'runtime ok\')"']
-
-
-def test_init_from_ralph_plan_records_runner_backend_and_tmux_target(tmp_path: Path) -> None:
-    workspace = tmp_path / 'courses'
-    ralph_dir = workspace / '.plan-ralph'
-    plan_path = tmp_path / 'course-plan.md'
-    _write(
-        plan_path,
-        """# Approved Plan
-
-## Step 1-runtime
-- Goal: Build runtime
-""",
-    )
-    _write(
-        ralph_dir / 'session.json',
-        json.dumps({'planPath': str(plan_path), 'promptPath': str(ralph_dir / 'current-prompt.md')}),
-    )
-
-    state_dir = tmp_path / 'controller-state'
-    result = run_rrc(
-        'init',
-        '--state-dir',
-        str(state_dir),
-        '--workspace-dir',
-        str(workspace),
-        '--from-ralph',
-        '--runner',
-        'tmux-claude',
-        '--tmux-target',
-        '1.2',
-    )
-
-    assert result.returncode == 0, result.stderr
-    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
-    assert state['agentRunner'] == 'tmux-claude'
-    assert state['tmuxTarget'] == '1.2'
-
-
-def test_init_with_unmatched_target_creates_target_acceptance_unit_and_prompt(tmp_path: Path) -> None:
-    workspace = tmp_path / 'courses'
-    ralph_dir = workspace / '.plan-ralph'
-    plan_path = tmp_path / 'course-plan.md'
-    _write(
-        plan_path,
-        """# Approved Plan
-
-## Step 1-foundation
-- Goal: Build the foundation
-- Status: pending
-
-### Verification
-- python -c "print('foundation ok')"
-""",
-    )
     _write(workspace / 'task_plan.md', '# Target Plan\n\nV1.1 customer delivery/import acceptance.\n')
     _write(workspace / 'progress.md', '# Progress\n\nV1.0.5 accepted; V1.1 is next.\n')
-    _write(
-        ralph_dir / 'session.json',
-        json.dumps(
-            {
-                'planPath': str(plan_path),
-                'completedStepIds': ['1-foundation'],
-                'promptPath': str(ralph_dir / 'current-prompt.md'),
-            }
-        ),
-    )
 
     state_dir = tmp_path / 'controller-state'
     result = run_rrc(
@@ -181,7 +48,6 @@ def test_init_with_unmatched_target_creates_target_acceptance_unit_and_prompt(tm
         str(state_dir),
         '--workspace-dir',
         str(workspace),
-        '--from-ralph',
         '--agent',
         'claude',
         '--target',
@@ -201,19 +67,6 @@ def test_init_with_unmatched_target_creates_target_acceptance_unit_and_prompt(tm
 
 def test_target_acceptance_prompt_keeps_relevant_context_compact(tmp_path: Path) -> None:
     workspace = tmp_path / 'courses'
-    ralph_dir = workspace / '.plan-ralph'
-    plan_path = tmp_path / 'course-plan.md'
-    _write(
-        plan_path,
-        """# Approved Plan
-
-## Step 1-foundation
-- Goal: Build the foundation
-
-### Verification
-- python -c "print('foundation ok')"
-""",
-    )
     irrelevant_lines = '\n'.join(f'IRRELEVANT-{index}' for index in range(300))
     _write(
         workspace / 'progress.md',
@@ -226,11 +79,6 @@ def test_target_acceptance_prompt_keeps_relevant_context_compact(tmp_path: Path)
 - Phase 7 批量 AI 课程包工厂 must produce customer delivery packages.
 """,
     )
-    _write(
-        ralph_dir / 'session.json',
-        json.dumps({'planPath': str(plan_path), 'completedStepIds': ['1-foundation']}),
-    )
-
     state_dir = tmp_path / 'controller-state'
     result = run_rrc(
         'init',
@@ -238,7 +86,6 @@ def test_target_acceptance_prompt_keeps_relevant_context_compact(tmp_path: Path)
         str(state_dir),
         '--workspace-dir',
         str(workspace),
-        '--from-ralph',
         '--agent',
         'codex',
         '--target',
@@ -515,7 +362,7 @@ def test_controller_builder_prompt_includes_approved_requirements_and_unit_plan(
     workspace.mkdir()
     subprocess.run(['git', 'init'], cwd=workspace, check=True, capture_output=True, text=True)
     prompt_path = workspace / '.plan-ralph' / 'current-prompt.md'
-    _write(prompt_path, 'Original Ralph prompt only.')
+    _write(prompt_path, 'Original target prompt only.')
 
     fake_tmux = tmp_path / 'tmux'
     _write(
@@ -628,22 +475,6 @@ def test_builder_failure_mentions_tmux_target_without_traceback(tmp_path: Path) 
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     subprocess.run(['git', 'init'], cwd=workspace, check=True, capture_output=True, text=True)
-    plan_path = workspace / 'plan.md'
-    _write(
-        plan_path,
-        """# Approved Plan
-
-## Step 1.1-delivery
-- Goal: Delivery
-""",
-    )
-    prompt_path = workspace / '.plan-ralph' / 'current-prompt.md'
-    _write(prompt_path, 'Create delivery.')
-    _write(
-        workspace / '.plan-ralph' / 'session.json',
-        json.dumps({'planPath': str(plan_path), 'promptPath': str(prompt_path)}),
-    )
-
     fake_tmux = tmp_path / 'tmux'
     _write(
         fake_tmux,
@@ -741,7 +572,8 @@ raise SystemExit(0)
         str(state_dir),
         '--workspace-dir',
         str(workspace),
-        '--from-ralph',
+        '--target',
+        '1.1',
         '--runner',
         'tmux-claude',
         '--tmux-target',

@@ -126,24 +126,81 @@ def _covered_obligation_ids_from_test_case_matrix(text: str) -> set[str]:
     if not section:
         return set()
     covered: set[str] = set()
+    header_indices: dict[str, int] | None = None
     for line in section.splitlines():
         stripped = line.strip()
         if not stripped.startswith('|') or re.fullmatch(r'\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?', stripped):
             continue
         columns = [column.strip() for column in stripped.strip('|').split('|')]
+        if _looks_like_test_case_matrix_header(columns):
+            header_indices = _test_case_matrix_column_indices(columns)
+            continue
         if len(columns) < 5:
             continue
-        criterion, test_case, layer, command_or_evidence, expected = columns[:5]
+        column_indices = header_indices or _legacy_test_case_matrix_column_indices()
+        criterion = _matrix_cell_at(columns, column_indices.get('criterion'))
+        test_case = _matrix_cell_at(columns, column_indices.get('test_case'))
+        layer = _matrix_cell_at(columns, column_indices.get('layer'))
+        command_or_evidence = _matrix_cell_at(columns, column_indices.get('command_or_evidence'))
+        expected = _matrix_cell_at(columns, column_indices.get('expected'))
         if not _matrix_row_has_verifiable_evidence(test_case, layer, command_or_evidence, expected):
             continue
         covered.update(_obligation_ids_in_text(criterion))
         covered.update(_obligation_ids_in_text(test_case))
+        covered.update(_obligation_ids_in_text(_matrix_cell_at(columns, column_indices.get('ao'))))
     return covered
+
+
+def _looks_like_test_case_matrix_header(columns: list[str]) -> bool:
+    normalized = [_normalize_header_cell(column) for column in columns]
+    return (
+        any(cell in {'acceptancecriterion', '验收标准', 'acid'} for cell in normalized)
+        and any(cell in {'testcase', '测试用例', 'testcaseid'} for cell in normalized)
+    )
+
+
+def _test_case_matrix_column_indices(columns: list[str]) -> dict[str, int]:
+    indices: dict[str, int] = {}
+    for index, column in enumerate(columns):
+        normalized = _normalize_header_cell(column)
+        if normalized in {'acceptancecriterion', '验收标准', 'acid'}:
+            indices.setdefault('criterion', index)
+        elif normalized in {'testcase', '测试用例', 'testcaseid'}:
+            indices.setdefault('test_case', index)
+        elif normalized in {'ao', 'aoid'}:
+            indices.setdefault('ao', index)
+        elif normalized in {'layer', '层级'}:
+            indices.setdefault('layer', index)
+        elif normalized in {'commandevidence', 'commandmanualevidence', '命令证据', '命令或人工证据'}:
+            indices.setdefault('command_or_evidence', index)
+        elif normalized in {'expectedresult', 'expected', '预期结果'}:
+            indices.setdefault('expected', index)
+    return {**_legacy_test_case_matrix_column_indices(), **indices}
+
+
+def _legacy_test_case_matrix_column_indices() -> dict[str, int]:
+    return {
+        'criterion': 0,
+        'test_case': 1,
+        'layer': 2,
+        'command_or_evidence': 3,
+        'expected': 4,
+    }
+
+
+def _matrix_cell_at(columns: list[str], index: int | None) -> str:
+    if index is None or index < 0 or index >= len(columns):
+        return ''
+    return columns[index]
+
+
+def _normalize_header_cell(value: str) -> str:
+    return re.sub(r'[\s`*_/\-|（）()]+', '', value.strip().lower())
 
 
 def _markdown_section(text: str, heading_pattern: str) -> str:
     match = re.search(
-        rf'(?ims)^##+\s+.*{heading_pattern}.*$([\s\S]*?)(?=^##+\s+|\Z)',
+        rf'(?im)^##+\s+[^\n]*{heading_pattern}[^\n]*\n([\s\S]*?)(?=^##+\s+|\Z)',
         text,
     )
     return match.group(1) if match else ''

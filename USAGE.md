@@ -26,7 +26,24 @@ source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 
 ## 快速开始
 
-### 新目标（不依赖 Ralph session）
+### 目标项目初始化
+
+推荐短命令：
+
+```bash
+python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+```
+
+这会自动推断：
+
+| 项 | 推断值 |
+|----|--------|
+| target | `V1.0` |
+| workspace-dir | 当前目录 `.`，即目标项目根目录 |
+| state-dir | `<workspace-dir>/.rrc-controller-v1.0`；未显式传 `--workspace-dir` 时表现为 `.rrc-controller-v1.0` |
+| runner | 传入 `--tmux-target` 时自动使用 `tmux-claude` |
+
+完全展开的 `start` 写法仍然兼容：
 
 ```bash
 python -m workflow_controller.cli start \
@@ -38,6 +55,14 @@ python -m workflow_controller.cli start \
 ```
 
 `start` 在 state-dir 不存在时自动初始化，无需单独执行 `init`。
+
+跨目录启动时应显式传目标项目目录；`go` 会把默认 state-dir 放到该目录下：
+
+```bash
+python -m workflow_controller.cli go V1.0 \
+  --workspace-dir ~/works/target-project \
+  --tmux-target 1.2
+```
 
 ### 两步法（先 init 再 drive）
 
@@ -55,20 +80,24 @@ python -m workflow_controller.cli drive \
   --state-dir .rrc-controller-v1.0
 ```
 
-### 从 Ralph session 初始化
+## 子命令速查
+
+### `go` — 推荐短入口
+
+按目标推断常用参数，等价于 `start` 的便捷层：state-dir 不存在时初始化，存在时按现有 `start` 兼容性校验继续。
 
 ```bash
-python -m workflow_controller.cli start \
-  --state-dir .rrc-controller-v2.2 \
-  --workspace-dir ~/works/2026Q2/courses \
-  --from-ralph \
-  --runner tmux-claude \
-  --tmux-target 2.1
+# 新目标：推断目标项目内的 .rrc-controller-v1.0、workspace-dir .，并因 tmux target 自动选择 tmux-claude
+python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+
+# 显式使用 subprocess runner
+python -m workflow_controller.cli go V1.0 --runner subprocess
+
+# 缺少 TARGET 且未显式传 --state-dir 时会报错，避免串错目标项目
+python -m workflow_controller.cli go --tmux-target 1.2
 ```
 
----
-
-## 子命令速查
+`TARGET` 也可用 `--target TARGET` 传入；若位置参数和 `--target` 同时传入且不一致，CLI 会直接报错。没有 TARGET 时必须显式传 `--state-dir`，否则 `go` 会拒绝启动。
 
 ### `init` — 初始化会话目录
 
@@ -198,13 +227,22 @@ start / drive
 | `--runner` | `subprocess` 或 `tmux-claude` | `tmux-claude` |
 | `--tmux-target` | tmux pane 地址，如 `1.2` | tmux 模式必填 |
 | `--agent` | 覆盖 agent 命令字符串 | 可选 |
-| `--from-ralph` | 从已有 Ralph session 初始化 | 关闭 |
 | `--force` | 强制重新初始化，覆盖已有 `session.json` | 关闭 |
 | `--auto-approve` | 自动批准低风险 gate（测试/干跑用） | 关闭 |
 | `--unsafe-skip-human-gates` | 绕过所有人工 gate（仅用于自动化测试） | 关闭 |
 | `--test-strategist` | 启用 Test Strategist 独立挑战测试策略 | 关闭 |
 | `--test-strategist-command` | Test Strategist 子进程命令（默认沿用全局 runner） | 可选 |
 | `--test-strategist-env KEY=VALUE` | 注入 Test Strategist 专属环境变量（可重复） | 可选 |
+
+### `go` 推断规则
+
+| 参数/输入 | 未显式传入时的行为 |
+|-----------|--------------------|
+| `TARGET` / `--target` | 用作目标标签；两者同时传入且不一致时报错 |
+| `--state-dir` | 有 target 时推断为 `<workspace-dir>/.rrc-controller-<target-slug>`；未显式传 `--workspace-dir` 时表现为当前目录下的 `.rrc-controller-<target-slug>` |
+| target slug | 小写；保留字母、数字、点、下划线、连字符；其他字符替换为 `-`；去掉首尾 `-` |
+| `--workspace-dir` | 当前目录 `.`，即目标项目根目录 |
+| `--runner` | 传了 `--tmux-target` 时为 `tmux-claude`，否则为 `subprocess` |
 
 ### `start` / `drive` 运行时参数
 

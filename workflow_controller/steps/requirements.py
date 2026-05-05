@@ -6,6 +6,7 @@ from typing import Any
 from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
 from workflow_controller.gates import render_requirements_gate_body, write_gate_file
 from workflow_controller.prompts.requirements import _render_requirements_draft_prompt
+from workflow_controller.requirements_dialogue_brief import write_requirements_dialogue_brief
 from workflow_controller.steps._common import StepResult, _write_json, _now_iso
 
 
@@ -20,6 +21,9 @@ def run_requirements_drafter(
     gate_path = approvals_dir / 'requirements-and-acceptance.md'
     body_path = draft_dir / 'requirements-body.md'
     summary_path = draft_dir / 'requirements-draft-summary.json'
+    dialogue_brief = write_requirements_dialogue_brief(state, artifacts_dir)
+    state['requirementsDialogueBriefPath'] = dialogue_brief['artifact_paths']['markdown']
+    state['requirementsDialogueBriefHash'] = dialogue_brief['brief_hash']
 
     if dry_run or state.get('agentRunner') != 'tmux-claude':
         body = render_requirements_gate_body(state)
@@ -30,9 +34,14 @@ def run_requirements_drafter(
             'mode': 'local-template',
             'gate_path': str(gate_path),
             'body_path': str(body_path),
+            'requirements_dialogue_brief_path': dialogue_brief['artifact_paths']['markdown'],
+            'requirements_dialogue_brief_hash': dialogue_brief['brief_hash'],
             'generated_at': _now_iso(),
         })
-        return StepResult(summary='requirements draft generated', outputs=[str(gate_path), str(summary_path)])
+        return StepResult(
+            summary='requirements draft generated',
+            outputs=[str(gate_path), str(summary_path), dialogue_brief['artifact_paths']['markdown']],
+        )
 
     prompt_path = draft_dir / 'requirements-draft-prompt.md'
     if body_path.exists():
@@ -70,6 +79,8 @@ def run_requirements_drafter(
         'stderr': result.stderr,
         'gate_path': str(gate_path),
         'body_path': str(body_path),
+        'requirements_dialogue_brief_path': dialogue_brief['artifact_paths']['markdown'],
+        'requirements_dialogue_brief_hash': dialogue_brief['brief_hash'],
         'generated_at': _now_iso(),
     })
     if result.returncode != 0:
@@ -82,4 +93,7 @@ def run_requirements_drafter(
         )
 
     write_gate_file(gate_path, body_path.read_text(encoding='utf-8'))
-    return StepResult(summary='requirements draft generated', outputs=[str(gate_path), str(summary_path)])
+    return StepResult(
+        summary='requirements draft generated',
+        outputs=[str(gate_path), str(summary_path), dialogue_brief['artifact_paths']['markdown']],
+    )

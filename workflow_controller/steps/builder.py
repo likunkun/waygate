@@ -668,21 +668,29 @@ def run_verifier(
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> StepResult:
     if dry_run:
+        verification_payload = {
+            'unit_id': state.get('currentUnitId'),
+            'passed': True,
+            'commands': ['pytest tests/test_example.py -q'],
+            'evidence_files': ['green-test.txt'],
+            'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
+            'evidence_rows': _verification_evidence_rows(
+                state=state,
+                results=[],
+                evidence_files=['green-test.txt'],
+            ),
+            'verified_at': _now_iso(),
+        }
+        _add_journey_evidence(
+            state=state,
+            unit_dir=unit_dir,
+            verification_payload=verification_payload,
+            results=[],
+            evidence_files=['green-test.txt'],
+        )
         return _write_json_result(
             unit_dir / 'verification.json',
-            {
-                'unit_id': state.get('currentUnitId'),
-                'passed': True,
-                'commands': ['pytest tests/test_example.py -q'],
-                'evidence_files': ['green-test.txt'],
-                'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
-                'evidence_rows': _verification_evidence_rows(
-                    state=state,
-                    results=[],
-                    evidence_files=['green-test.txt'],
-                ),
-                'verified_at': _now_iso(),
-            },
+            verification_payload,
             summary='dry-run verification passed',
         )
 
@@ -722,6 +730,13 @@ def run_verifier(
             ),
             'verified_at': _now_iso(),
         }
+        _add_journey_evidence(
+            state=state,
+            unit_dir=unit_dir,
+            verification_payload=verification_payload,
+            results=results,
+            evidence_files=['green-test.txt', 'verification.json'],
+        )
         _write_json(unit_dir / 'verification.json', verification_payload)
         return StepResult(
             summary='verification passed' if not issues else 'verification failed',
@@ -755,6 +770,13 @@ def run_verifier(
         ),
         'verified_at': _now_iso(),
     }
+    _add_journey_evidence(
+        state=state,
+        unit_dir=unit_dir,
+        verification_payload=verification_payload,
+        results=[],
+        evidence_files=evidence_files,
+    )
     _write_json(unit_dir / 'verification.json', verification_payload)
     return StepResult(summary='verification passed' if not issues else 'verification failed', outputs=['verification.json'])
 
@@ -870,6 +892,159 @@ def _artifact_refs_for_evidence_row(
     if command and result is not None:
         return _dedupe_strings([*evidence_files, 'verification.json'])
     return _dedupe_strings(evidence_files)
+
+
+def _add_journey_evidence(
+    *,
+    state: dict[str, Any],
+    unit_dir: Path,
+    verification_payload: dict[str, Any],
+    results: list[dict[str, Any]],
+    evidence_files: list[str],
+) -> None:
+    rows = _journey_evidence_rows(
+        state=state,
+        results=results,
+        evidence_files=evidence_files,
+    )
+    if not rows:
+        return
+    verification_payload['journey_evidence_rows'] = rows
+    _write_journey_evidence_artifact(state, unit_dir, rows)
+
+
+def _journey_evidence_rows(
+    *,
+    state: dict[str, Any],
+    results: list[dict[str, Any]],
+    evidence_files: list[str],
+) -> list[dict[str, Any]]:
+    journeys = _journeys_by_id(state)
+    if not journeys:
+        return []
+
+    unit_id = str(state.get('currentUnitId') or 'unknown-unit')
+    unit = _find_unit(state, unit_id)
+    rows: list[dict[str, Any]] = []
+    for case in [case for case in _unit_test_cases(unit) if isinstance(case, dict)]:
+        for journey_id in _journey_ids_from_case(case):
+            journey = journeys.get(journey_id)
+            if not journey:
+                continue
+            command = _optional_str(case.get('command'))
+            _, result = _matching_verification_result(command, results)
+            rows.append({
+                'journey_id': journey_id,
+                'title': _optional_str(journey.get('title')) or journey_id,
+                'acceptance_criteria': _string_list(
+                    journey.get('linked_acceptance_criteria')
+                    or case.get('acceptance_criterion')
+                    or case.get('acceptanceCriterion')
+                ),
+                'unit_id': unit_id,
+                'test_case_id': _optional_str(case.get('id') or case.get('name')),
+                'layer': _optional_str(case.get('layer')),
+                'command': command,
+                'status': _journey_evidence_status(command, result),
+                'returncode': result.get('returncode') if isinstance(result, dict) else None,
+                'expected': _optional_str(case.get('expected') or case.get('expected_result') or case.get('expectedResult')),
+                'artifact_refs': _artifact_refs_for_evidence_row(command, result, evidence_files),
+            })
+    return rows
+
+
+def _journeys_by_id(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    path = _journey_contract_path(state)
+    if path is None or not path.exists():
+        return {}
+    try:
+        contract = json.loads(path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return {}
+    journeys = contract.get('journeys')
+    if not isinstance(journeys, list):
+        return {}
+    return {
+        str(journey.get('journey_id')): journey
+        for journey in journeys
+        if isinstance(journey, dict) and str(journey.get('journey_id') or '').strip()
+    }
+
+
+def _journey_contract_path(state: dict[str, Any]) -> Path | None:
+    raw_path = str(state.get('journeyContractPath') or '').strip()
+    return Path(raw_path) if raw_path else None
+
+
+def _journey_ids_from_case(case: dict[str, Any]) -> list[str]:
+    raw = (
+        case.get('journey_id')
+        or case.get('journeyId')
+        or case.get('journey')
+        or case.get('journeys')
+        or case.get('journey_ids')
+        or case.get('journeyIds')
+    )
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    if raw is None:
+        return []
+    return [str(raw).strip()] if str(raw).strip() else []
+
+
+def _journey_evidence_status(command: str | None, result: dict[str, Any] | None) -> str:
+    if not command or result is None:
+        return 'missing'
+    return 'passed' if result.get('ok') else 'failed'
+
+
+def _write_journey_evidence_artifact(
+    state: dict[str, Any],
+    unit_dir: Path,
+    rows: list[dict[str, Any]],
+) -> None:
+    contract_path = _journey_contract_path(state)
+    journey_dir = contract_path.parent if contract_path else unit_dir.parent / 'journeys'
+    journey_dir.mkdir(parents=True, exist_ok=True)
+    path = journey_dir / 'journey-evidence.json'
+    existing_rows: list[dict[str, Any]] = []
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError:
+            payload = {}
+        existing = payload.get('journey_evidence_rows') if isinstance(payload, dict) else []
+        if isinstance(existing, list):
+            existing_rows = [row for row in existing if isinstance(row, dict)]
+    _write_json(path, {
+        'unit_id': state.get('currentUnitId'),
+        'generated_at': _now_iso(),
+        'journey_evidence_rows': _merge_journey_evidence_rows(existing_rows, rows),
+    })
+
+
+def _merge_journey_evidence_rows(
+    existing_rows: list[dict[str, Any]],
+    new_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    keys = {
+        (
+            row.get('journey_id'),
+            row.get('unit_id'),
+            row.get('test_case_id'),
+            row.get('command'),
+        )
+        for row in new_rows
+    }
+    return [
+        row for row in existing_rows
+        if (
+            row.get('journey_id'),
+            row.get('unit_id'),
+            row.get('test_case_id'),
+            row.get('command'),
+        ) not in keys
+    ] + new_rows
 
 
 def _optional_str(value: Any) -> str | None:

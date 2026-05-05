@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import workflow_controller.rrc_controller as rrc_controller_module
+import workflow_controller.cli as cli_module
 from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
 from workflow_controller.steps._common import TestStrategistBlocked as StrategistBlocked
 from workflow_controller.state_machine.transitions import reconcile_state, validate_objective_coverage
@@ -30,6 +32,19 @@ def run_rrc(*args: str, cwd: Path | None = None, input_text: str | None = None) 
     )
 
 
+def run_rrc_with_pythonpath(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env['PYTHONPATH'] = f"{ROOT}{os.pathsep}{env['PYTHONPATH']}" if env.get('PYTHONPATH') else str(ROOT)
+    return subprocess.run(
+        [sys.executable, '-m', 'workflow_controller.rrc_controller', *args],
+        cwd=str(cwd),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def test_init_creates_session_and_events_files(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
 
@@ -44,6 +59,83 @@ def test_init_creates_session_and_events_files(tmp_path: Path) -> None:
     assert state['status'] == 'active'
     assert state['testStrategistEnabled'] is False
     assert state['codeSimplifierEnabled'] is True
+
+
+def test_init_creates_agent_operating_guide_and_docs_layout(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.plan-ralph'
+
+    result = run_rrc('init', '--state-dir', str(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    agents_path = tmp_path / 'AGENTS.md'
+    assert agents_path.exists()
+    agents = agents_path.read_text(encoding='utf-8')
+    assert 'Agent 操作规范' in agents
+    assert 'ROADMAP.md' in agents
+    assert '<state-dir>/session.json' in agents
+    assert '一次只处理一个 unit' in agents
+    assert '不要把自然语言总结当作完成依据' in agents
+    assert '工程行为准则' in agents
+    assert '每一处改动都应能追溯到当前 unit' in agents
+    assert (tmp_path / 'docs' / 'product').is_dir()
+    assert (tmp_path / 'docs' / 'architecture').is_dir()
+    assert (tmp_path / 'docs' / 'workflow').is_dir()
+    assert (tmp_path / 'docs' / 'operations').is_dir()
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentGuideArtifacts']['agents']['status'] == 'created'
+    assert state['agentGuideArtifacts']['claude']['status'] == 'skipped'
+
+
+def test_init_can_generate_claude_md_and_does_not_overwrite_existing_guides(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.plan-ralph'
+    (tmp_path / 'AGENTS.md').write_text('# Existing agent rules\n', encoding='utf-8')
+    (tmp_path / 'CLAUDE.md').write_text('# Existing Claude rules\n', encoding='utf-8')
+
+    result = run_rrc('init', '--state-dir', str(state_dir), '--claude-md')
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'AGENTS.md').read_text(encoding='utf-8') == '# Existing agent rules\n'
+    assert (tmp_path / 'CLAUDE.md').read_text(encoding='utf-8') == '# Existing Claude rules\n'
+    assert (tmp_path / 'AGENTS.md.generated').exists()
+    assert (tmp_path / 'CLAUDE.md.generated').exists()
+    assert 'Agent 操作规范' in (tmp_path / 'AGENTS.md.generated').read_text(encoding='utf-8')
+    assert '唯一权威 Agent 操作规范' in (tmp_path / 'CLAUDE.md.generated').read_text(encoding='utf-8')
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentGuideArtifacts']['agents']['status'] == 'drafted'
+    assert state['agentGuideArtifacts']['claude']['status'] == 'drafted'
+
+
+def test_init_can_skip_agent_operating_guides(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.plan-ralph'
+
+    result = run_rrc('init', '--state-dir', str(state_dir), '--no-agent-guides')
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / 'AGENTS.md').exists()
+    assert not (tmp_path / 'docs').exists()
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentGuideArtifacts']['enabled'] is False
+    assert state['agentGuideArtifacts']['agents']['status'] == 'skipped'
+
+
+def test_start_initializes_agent_operating_guide_when_creating_state(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.plan-ralph'
+
+    result = run_rrc(
+        'start',
+        '--state-dir',
+        str(state_dir),
+        '--max-steps',
+        '0',
+        '--color',
+        'never',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'AGENTS.md').exists()
+    assert (tmp_path / 'docs' / 'workflow').is_dir()
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentGuideArtifacts']['agents']['status'] == 'created'
 
 
 def test_init_with_target_and_workspace_without_ralph_creates_target_acceptance_state(tmp_path: Path) -> None:
@@ -1575,10 +1667,161 @@ def test_drive_and_start_default_to_2000_max_steps(monkeypatch) -> None:
 
     monkeypatch.setattr(sys, 'argv', ['rrc_controller.py', 'run', '--until-done'])
     run_args = parse_args()
+    monkeypatch.setattr(sys, 'argv', ['rrc_controller.py', 'approve', '--gate', 'bug-fix'])
+    approve_args = parse_args()
 
     assert drive_args.max_steps == 2000
     assert start_args.max_steps == 2000
     assert run_args.max_steps == 2000
+    assert approve_args.gate == 'bug-fix'
+
+
+def test_go_infers_target_state_dir_workspace_and_tmux_runner(monkeypatch) -> None:
+    for module, script_name in (
+        (rrc_controller_module, 'rrc_controller.py'),
+        (cli_module, 'cli.py'),
+    ):
+        monkeypatch.setattr(sys, 'argv', [script_name, 'go', 'V1.0', '--tmux-target', '1.2'])
+
+        args = module.parse_args()
+
+        assert args.command == 'go'
+        assert args.target == 'V1.0'
+        assert args.state_dir == '.rrc-controller-v1.0'
+        assert args.workspace_dir == '.'
+        assert args.runner == 'tmux-claude'
+        assert args.tmux_target == '1.2'
+
+
+def test_go_allows_explicit_subprocess_runner_without_tmux_target(monkeypatch) -> None:
+    monkeypatch.setattr(sys, 'argv', ['rrc_controller.py', 'go', 'V1.0', '--runner', 'subprocess'])
+
+    args = parse_args()
+
+    assert args.target == 'V1.0'
+    assert args.runner == 'subprocess'
+    assert args.tmux_target is None
+
+
+def test_go_infers_state_dir_inside_explicit_workspace(monkeypatch, tmp_path: Path) -> None:
+    workspace = tmp_path / 'target-project'
+    for module, script_name in (
+        (rrc_controller_module, 'rrc_controller.py'),
+        (cli_module, 'cli.py'),
+    ):
+        monkeypatch.setattr(
+            sys,
+            'argv',
+            [
+                script_name,
+                'go',
+                'V1.0',
+                '--workspace-dir',
+                str(workspace),
+                '--tmux-target',
+                '1.2',
+            ],
+        )
+
+        args = module.parse_args()
+
+        assert args.workspace_dir == str(workspace)
+        assert args.state_dir == str(workspace / '.rrc-controller-v1.0')
+        assert args.runner == 'tmux-claude'
+
+
+def test_go_state_dir_slug_replaces_unsupported_target_characters(monkeypatch) -> None:
+    monkeypatch.setattr(sys, 'argv', ['rrc_controller.py', 'go', 'Release Candidate/2!', '--runner', 'subprocess'])
+
+    args = parse_args()
+
+    assert args.state_dir == '.rrc-controller-release-candidate-2'
+
+
+def test_go_rejects_conflicting_positional_and_flag_targets(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, 'argv', ['rrc_controller.py', 'go', 'V1.0', '--target', 'V2.0'])
+
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args()
+
+    assert exc_info.value.code == 2
+    assert 'TARGET conflicts with --target' in capsys.readouterr().err
+
+
+def test_go_without_target_or_state_dir_errors(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, 'argv', ['rrc_controller.py', 'go', '--tmux-target', '1.2'])
+
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args()
+
+    assert exc_info.value.code == 2
+    assert 'go requires TARGET or --target when --state-dir is omitted' in capsys.readouterr().err
+
+
+def test_rrc_go_dry_run_creates_and_resumes_inferred_state_dir(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+
+    result = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+
+    assert result.returncode == 0, result.stderr
+    state_dir = workspace / '.rrc-controller-v1.0'
+    assert (state_dir / 'session.json').exists()
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requestedOutcome'] == 'V1.0'
+    assert state['workspacePath'] == '.'
+
+    resume = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+
+    assert resume.returncode == 0, resume.stderr
+    assert '[继续] 使用已有状态' in resume.stdout
+
+
+def test_rrc_go_with_explicit_workspace_creates_state_dir_in_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / 'target-project'
+    workspace.mkdir()
+    cwd = tmp_path / 'controller-cwd'
+    cwd.mkdir()
+
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--workspace-dir',
+        str(workspace),
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=cwd,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state_dir = workspace / '.rrc-controller-v1.0'
+    assert (state_dir / 'session.json').exists()
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['workspacePath'] == str(workspace)
+
+
+def test_rrc_go_uses_start_target_conflict_for_existing_state_dir(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = workspace / '.rrc-controller-v1.0'
+    init_result = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+    assert init_result.returncode == 0, init_result.stderr
+
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V2.0',
+        '--state-dir',
+        str(state_dir),
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+    )
+
+    assert result.returncode != 0
+    assert 'Existing session does not match start arguments' in result.stderr
+    assert '--target=V2.0 but session requestedOutcome=V1.0' in result.stderr
 
 
 def test_drive_stops_when_same_action_repeats_without_progress(tmp_path: Path, monkeypatch) -> None:
@@ -3374,6 +3617,146 @@ def test_requirements_approval_blocks_unmapped_acceptance_obligation(tmp_path: P
     assert state['blockedReason'].startswith('requirements gate invalid:')
 
 
+def test_requirements_journey_contract_requirement_ignores_template_guidance() -> None:
+    from workflow_controller.journeys import requirements_requires_journey_contract
+
+    template_guidance = """# 需求与验收确认
+
+## 3. 验收标准
+- 每条 AC 必须声明 verification layer，推荐格式：`AC-ID [verification: e2e]`。
+- 当前上下文中的目标验收标准均已满足。
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | 待补 AC ID | pending | 待补 | 待补证据或原因 |
+"""
+
+    assert requirements_requires_journey_contract(template_guidance) is False
+    assert requirements_requires_journey_contract('- AC-1 [verification: e2e]: user completes delivery.') is True
+
+
+def test_requirements_approval_blocks_e2e_ac_without_journey_contract(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: e2e]: User completes the delivery journey.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+""",
+    )
+
+    with pytest.raises(ValueError, match='requirements gate invalid:.*journey'):
+        controller.approve_human_gate('requirements', actor='tester')
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requirementsAccepted'] is False
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert 'journey' in state['blockedReason'].lower()
+
+
+def test_requirements_approval_writes_journey_contract_artifact(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: e2e]: User completes the delivery journey.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+
+## Journey Acceptance Matrix
+| Journey | Title | Status | Steps | AC | Verification Layer |
+| --- | --- | --- | --- | --- | --- |
+| J-001 | Delivery happy path | active | Start request -> complete delivery -> see confirmation | AC-1 | e2e |
+""",
+    )
+
+    controller.approve_human_gate('requirements', actor='tester')
+
+    artifact_path = state_dir / 'artifacts' / 'journeys' / 'journeys.json'
+    assert artifact_path.exists()
+    contract = json.loads(artifact_path.read_text(encoding='utf-8'))
+    assert contract['version'] == 1
+    assert contract['source_gate'] == 'requirements'
+    assert contract['requirements_gate_path'] == str(gate_path)
+    assert len(contract['requirements_gate_hash']) == 64
+    assert contract['unit_plan_gate_hash'] is None
+    assert len(contract['journeys']) == 1
+    journey = contract['journeys'][0]
+    assert journey['journey_id'] == 'J-001'
+    assert journey['title'] == 'Delivery happy path'
+    assert journey['status'] == 'active'
+    assert journey['steps'] == ['Start request', 'complete delivery', 'see confirmation']
+    assert journey['linked_acceptance_criteria'] == ['AC-1']
+    assert journey['linked_units'] == []
+    assert journey['verification_layer'] == 'e2e'
+    assert journey['verification_command'] is None
+    assert journey['test_cases'] == []
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['journeyContractPath'] == str(artifact_path)
+
+
 def test_run_rejects_preapproved_requirements_missing_ac_verification_layer(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -3465,6 +3848,301 @@ def test_requirements_revision_feedback_includes_controller_validation_error(tmp
 
     assert '## Controller Validation Error' in feedback
     assert 'requirements gate invalid: AC-1 missing verification layer' in feedback
+
+    revised_path = controller.revise_human_gate('requirements')
+
+    assert revised_path == gate_path
+    revision_path = state_dir / 'artifacts' / 'requirements-revisions' / 'revision-1.json'
+    revision = json.loads(revision_path.read_text(encoding='utf-8'))
+    assert revision['controller_validation_error'] == 'requirements gate invalid: AC-1 missing verification layer'
+    assert '## Controller Validation Error' in revision['feedback']
+    assert 'requirements gate invalid: AC-1 missing verification layer' in revision['feedback']
+
+
+def test_approve_requirements_gate_records_change_request_approver(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'pendingRequirementChangeRequestIds': ['CR-0001'],
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    change_requests_path = state_dir / 'change_requests.jsonl'
+    change_requests_path.write_text(
+        json.dumps(
+            {
+                'id': 'CR-0001',
+                'record_type': 'change_request',
+                'status': 'pending_requirements_approval',
+                'approver': None,
+            },
+            ensure_ascii=False,
+        ) + '\n',
+        encoding='utf-8',
+    )
+    from workflow_controller.gates.parsers import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: unit]: Delivery works.
+
+## 4. 需求可追溯矩阵（Requirements Traceability Matrix）
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | unit | pytest tests/test_delivery.py -q |
+
+## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）
+| AC | Product Design Ref | Technical Architecture Ref | Notes |
+| --- | --- | --- | --- |
+| AC-1 | ## 7. 产品设计概要 | ## 8. 架构概要 | traced |
+""",
+    )
+
+    controller.approve_human_gate('requirements', actor='alice')
+
+    records = [
+        json.loads(line)
+        for line in change_requests_path.read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert records[-1]['id'] == 'CR-0001'
+    assert records[-1]['record_type'] == 'change_request_status'
+    assert records[-1]['status'] == 'approved'
+    assert records[-1]['approver'] == 'alice'
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['pendingRequirementChangeRequestIds'] == []
+
+
+def test_unit_plan_approval_rejects_active_journey_without_mapped_test_case(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'journeyContractPath': str(state_dir / 'artifacts' / 'journeys' / 'journeys.json'),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    journey_path = state_dir / 'artifacts' / 'journeys' / 'journeys.json'
+    journey_path.parent.mkdir(parents=True, exist_ok=True)
+    journey_path.write_text(
+        json.dumps(
+            {
+                'version': 1,
+                'journeys': [
+                    {
+                        'journey_id': 'J-001',
+                        'title': 'Delivery happy path',
+                        'status': 'active',
+                        'steps': ['Start request', 'complete delivery'],
+                        'linked_acceptance_criteria': ['AC-1'],
+                        'linked_units': [],
+                        'verification_layer': 'e2e',
+                        'verification_command': None,
+                        'test_cases': [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    gate_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery unit",
+      "passes": false,
+      "workflow_validation_level": "closure",
+      "test_cases": [
+        {
+          "id": "TC-AC1-E2E",
+          "acceptance_criterion": "AC-1",
+          "layer": "e2e",
+          "fixture": "tests/fixtures/delivery.json",
+          "command": "pytest tests/e2e/test_delivery.py -q",
+          "expected": "delivery confirmation is visible",
+          "golden_path": true
+        }
+      ],
+      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is False
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert 'journey mapping is incomplete' in state['blockedReason']
+    assert 'J-001' in state['blockedReason']
+
+
+def test_unit_plan_approval_enriches_journey_contract_from_mapped_test_case(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'journeyContractPath': str(state_dir / 'artifacts' / 'journeys' / 'journeys.json'),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    journey_path = state_dir / 'artifacts' / 'journeys' / 'journeys.json'
+    journey_path.parent.mkdir(parents=True, exist_ok=True)
+    journey_path.write_text(
+        json.dumps(
+            {
+                'version': 1,
+                'journeys': [
+                    {
+                        'journey_id': 'J-001',
+                        'title': 'Delivery happy path',
+                        'status': 'active',
+                        'steps': ['Start request', 'complete delivery'],
+                        'linked_acceptance_criteria': ['AC-1'],
+                        'linked_units': [],
+                        'verification_layer': 'e2e',
+                        'verification_command': None,
+                        'test_cases': [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    gate_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery unit",
+      "passes": false,
+      "workflow_validation_level": "closure",
+      "test_cases": [
+        {
+          "id": "TC-AC1-E2E",
+          "journey_id": "J-001",
+          "acceptance_criterion": "AC-1",
+          "layer": "e2e",
+          "fixture": "tests/fixtures/delivery.json",
+          "command": "pytest tests/e2e/test_delivery.py -q",
+          "expected": "delivery confirmation is visible",
+          "golden_path": true
+        }
+      ],
+      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is True
+    assert state['currentStep'] == 'PLAN_CREATED'
+    contract = json.loads(journey_path.read_text(encoding='utf-8'))
+    assert len(contract['unit_plan_gate_hash']) == 64
+    journey = contract['journeys'][0]
+    assert journey['linked_units'] == ['unit-01']
+    assert journey['test_cases'] == ['TC-AC1-E2E']
+    assert journey['verification_command'] == 'pytest tests/e2e/test_delivery.py -q'
 
 
 
@@ -3937,7 +4615,8 @@ def test_reject_final_acceptance_routes_to_requirements_when_selected_with_other
         '- [ ] Unit plan revision: unit scope or verification commands are wrong.\n'
         '- [x] Implementation rework: approved requirements are correct; implementation needs changes.\n'
         '- [ ] Blocked: cannot judge due to environment, data, access, or missing evidence.\n\n'
-        'Reviewer note: add missing acceptance around offline import recovery.\n',
+        'Reviewer note: add missing acceptance around offline import recovery. '
+        'Impacts AO-123, AC-07, TC-AC-07, Journey: offline import recovery.\n',
         encoding='utf-8',
     )
 
@@ -3953,6 +4632,37 @@ def test_reject_final_acceptance_routes_to_requirements_when_selected_with_other
     assert not (approvals_dir / 'unit-plan.md').exists()
     assert state['units'][0]['passes'] is False
     assert state['objectiveCoverage'][0]['status'] == 'partial'
+
+    change_requests = [
+        json.loads(line)
+        for line in (state_dir / 'change_requests.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert len(change_requests) == 1
+    change_request = change_requests[0]
+    assert change_request['id'] == 'CR-0001'
+    assert change_request['source'] == 'final_acceptance_rejection'
+    assert change_request['source_gate'] == 'final-acceptance'
+    assert change_request['source_ref'] == 'final-acceptance:rejection-1'
+    assert change_request['route'] == 'requirements'
+    assert 'offline import recovery' in change_request['reason']
+    assert change_request['status'] == 'pending_requirements_approval'
+    assert change_request['approver'] is None
+    assert change_request['impacted']['acceptance_obligations'] == ['AO-123']
+    assert change_request['impacted']['acceptance_criteria'] == ['AC-07']
+    assert change_request['impacted']['test_cases'] == ['TC-AC-07']
+    assert change_request['impacted']['journeys'] == ['offline import recovery']
+    assert len(change_request['before_hash']) == 64
+    assert len(change_request['after_hash']) == 64
+    assert change_request['changed'] is True
+
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    rejected_event = [event for event in events if event['type'] == 'final_acceptance_rejected'][-1]
+    assert rejected_event['payload']['change_request_id'] == 'CR-0001'
 
 
 def test_reject_final_acceptance_requires_human_routing_checkbox(tmp_path: Path) -> None:
@@ -4152,16 +4862,17 @@ def test_drive_defect_fix_route_migrates_old_final_acceptance_gate_and_keeps_pla
     assert '[验收路由] 已选择：Defect fix' in result.stdout
     assert '[返工] 最终验收未通过，已进入验收缺陷修复流程。' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
-    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['currentStep'] == 'WAITING_BUG_FIX_GATE'
     assert state['finalAcceptanceRejectionRoute'] == 'defect_fix'
     assert 'playback logo needs dark-mode asset' in state['finalAcceptanceDefectFeedback']
     assert 'playback logo needs dark-mode asset' in state['finalAcceptanceRejectionFeedback']
+    assert (state_dir / 'approvals' / 'bug-fix.md').exists()
     content = gate_path.read_text(encoding='utf-8')
     assert '- [x] 验收缺陷修复:' in content
     assert '- [ ] 需求变更:' in content
 
 
-def test_reject_final_acceptance_routes_to_defect_fix_unit_plan_revision(tmp_path: Path) -> None:
+def test_reject_final_acceptance_routes_to_independent_bug_fix_gate(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
     controller.init_state(
@@ -4211,22 +4922,183 @@ def test_reject_final_acceptance_routes_to_defect_fix_unit_plan_revision(tmp_pat
     controller.reject_final_acceptance_gate()
 
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
-    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['currentStep'] == 'WAITING_BUG_FIX_GATE'
     assert state['finalAcceptanceRejectionRoute'] == 'defect_fix'
     assert state['requirementsAccepted'] is True
-    assert state['unitPlanAccepted'] is False
+    assert state['unitPlanAccepted'] is True
     assert state['unitPlanDraftGenerated'] is True
     assert state['finalAcceptanceAccepted'] is False
     assert state['finalAcceptanceDefectFeedback'].startswith('# Final Acceptance Confirmation')
     assert 'homepage logo is still text-only' in state['finalAcceptanceDefectFeedback']
-    assert state['unitPlanRevisionMode'] == 'defect_fix'
+    assert state['bugFixGateGenerated'] is True
+    assert state['bugFixAttemptCount'] == 1
+    assert 'unitPlanRevisionMode' not in state
     assert all(unit['passes'] is True for unit in state['units'])
+    bug_gate = approvals_dir / 'bug-fix.md'
+    assert bug_gate.exists()
+    bug_gate_content = bug_gate.read_text(encoding='utf-8')
+    assert '# Bug Fix Gate' in bug_gate_content
+    assert '## Expected Behavior' in bug_gate_content
+    assert '## Actual Behavior' in bug_gate_content
+    assert '## Root Cause' in bug_gate_content
+    assert 'homepage logo is still text-only' in bug_gate_content
     obligations = state['acceptanceObligations']
     assert [item['id'] for item in obligations] == ['AO-001']
     assert obligations[0]['source'] == 'final_acceptance_rejection'
     assert 'homepage logo is still text-only' in obligations[0]['description']
     assert (state_dir / 'artifacts' / 'acceptance-obligations' / 'acceptance-obligations.json').exists()
     assert 'AO-001' in (state_dir / 'artifacts' / 'acceptance-obligations' / 'acceptance-obligations.md').read_text(encoding='utf-8')
+
+
+def test_approved_bug_fix_gate_runs_bug_fix_and_regression_verification(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True, dry_run=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_BUG_FIX_GATE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'unitPlanDraftGenerated': True,
+            'finalAcceptanceAccepted': False,
+            'finalAcceptanceRejectionRoute': 'defect_fix',
+            'finalAcceptanceDefectFeedback': 'Actual: retry button is missing. Expected: user can retry import.',
+            'bugFixAttemptCount': 1,
+            'activeBugFixId': 'bug-fix-1',
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'Delivery',
+                    'passes': True,
+                    'verification_commands': ['python -c "print(\'PASS regression\')"'],
+                    'test_cases': [
+                        {
+                            'id': 'TC-AC-01-regression',
+                            'acceptance_criterion': 'AC-01',
+                            'layer': 'unit',
+                            'command': 'python -c "print(\'PASS regression\')"',
+                            'expected': 'retry button is available',
+                            'golden_path': True,
+                        }
+                    ],
+                },
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    approvals_dir = state_dir / 'approvals'
+    bug_gate = approvals_dir / 'bug-fix.md'
+    write_gate_file(
+        bug_gate,
+        '# Bug Fix Gate\n\n'
+        '## Expected Behavior\n- user can retry import.\n\n'
+        '## Actual Behavior\n- retry button is missing.\n\n'
+        '## Root Cause\n- implementation omitted retry control.\n\n'
+        '## Regression Verification\n- python -c "print(\'PASS regression\')"\n',
+    )
+    approve_gate_file(bug_gate, actor='tester')
+
+    state = controller.run_once()
+    assert state['currentStep'] == 'BUG_FIX'
+    assert state['bugFixGateAccepted'] is True
+
+    state = controller.run_once()
+    assert state['currentStep'] == 'BUG_FIX_VERIFY'
+    bug_fix_dir = state_dir / 'artifacts' / 'bug-fixes' / 'bug-fix-1'
+    assert (bug_fix_dir / 'root-cause.json').exists()
+    assert (bug_fix_dir / 'bug-fix-summary.json').exists()
+    root_cause = json.loads((bug_fix_dir / 'root-cause.json').read_text(encoding='utf-8'))
+    assert root_cause['route'] == 'bug_fix'
+
+    state = controller.run_once()
+    assert state['currentStep'] == 'WAITING_FINAL_ACCEPTANCE'
+    assert state['bugFixVerified'] is True
+    final_gate = approvals_dir / 'final-acceptance.md'
+    content = final_gate.read_text(encoding='utf-8')
+    assert '## Bug Fix Evidence' in content
+    assert 'bug-fix-summary.json' in content
+    assert 'root-cause.json' in content
+
+
+def test_bug_fix_root_cause_can_escalate_to_unit_plan_revision(tmp_path: Path, monkeypatch) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True, dry_run=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'BUG_FIX',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'unitPlanDraftGenerated': True,
+            'finalAcceptanceAccepted': False,
+            'finalAcceptanceRejectionRoute': 'defect_fix',
+            'finalAcceptanceDefectFeedback': 'Actual: the workflow needs a missing architectural boundary.',
+            'bugFixAttemptCount': 1,
+            'activeBugFixId': 'bug-fix-1',
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+
+    def fake_run_bug_fix(state: dict[str, Any], bug_fix_dir: Path, dry_run: bool = False):
+        bug_fix_dir.mkdir(parents=True, exist_ok=True)
+        root_cause = {
+            'classification': 'architecture_issue',
+            'route': 'unit_plan',
+            'summary': 'The defect requires a new architecture boundary before implementation.',
+        }
+        (bug_fix_dir / 'root-cause.json').write_text(json.dumps(root_cause), encoding='utf-8')
+        (bug_fix_dir / 'bug-fix-summary.json').write_text(
+            json.dumps(
+                {
+                    'status': 'escalate_unit_plan',
+                    'root_cause': root_cause,
+                    'changed_files': [],
+                    'regression': {'commands': [], 'evidence': []},
+                }
+            ),
+            encoding='utf-8',
+        )
+        return SimpleNamespace(summary='escalated', outputs=['root-cause.json', 'bug-fix-summary.json'])
+
+    monkeypatch.setattr(rrc_controller_module, 'run_bug_fix', fake_run_bug_fix)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['finalAcceptanceRejectionRoute'] == 'unit_plan'
+    assert state['bugFixEscalatedToUnitPlan'] is True
+    assert state['unitPlanAccepted'] is False
+    assert state['unitPlanDraftGenerated'] is True
+    unit_plan_gate = approvals_dir / 'unit-plan.md'
+    assert unit_plan_gate.exists()
 
 
 def test_reject_final_acceptance_routes_to_unit_plan_revision(tmp_path: Path) -> None:
@@ -4712,6 +5584,158 @@ def test_empty_patch_list_falls_back_to_full_gate_for_builder(tmp_path: Path) ->
     feedback = saved['finalAcceptanceRejectionFeedback']
     assert '# 最终验收确认' in feedback, 'Full gate should be used when patch list is empty'
     assert '留空则 Agent 收到完整验收文档作为参考' not in feedback
+
+
+def test_final_acceptance_approval_blocks_missing_journey_evidence(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    journey_path = state_dir / 'artifacts' / 'journeys' / 'journeys.json'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'journeyContractPath': str(journey_path),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    journey_path.parent.mkdir(parents=True, exist_ok=True)
+    journey_path.write_text(
+        json.dumps(
+            {
+                'version': 1,
+                'journeys': [
+                    {
+                        'journey_id': 'J-001',
+                        'title': 'Delivery happy path',
+                        'status': 'active',
+                        'linked_acceptance_criteria': ['AC-1'],
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    from workflow_controller.gates.generators import ensure_final_acceptance_gate
+    from workflow_controller.gates.parsers import approve_gate_file
+
+    gate_path = ensure_final_acceptance_gate(
+        controller.store.load_state(),
+        approvals_dir,
+        state_dir / 'artifacts',
+        force=True,
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['finalAcceptanceAccepted'] is False
+    assert state['currentStep'] == 'WAITING_FINAL_ACCEPTANCE'
+    assert state['blockedReason'].startswith('final acceptance gate invalid:')
+    assert 'J-001' in state['blockedReason']
+
+
+def test_final_acceptance_approval_accepts_passed_journey_evidence(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    journey_path = state_dir / 'artifacts' / 'journeys' / 'journeys.json'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'journeyContractPath': str(journey_path),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    journey_path.parent.mkdir(parents=True, exist_ok=True)
+    journey_path.write_text(
+        json.dumps(
+            {
+                'version': 1,
+                'journeys': [
+                    {
+                        'journey_id': 'J-001',
+                        'title': 'Delivery happy path',
+                        'status': 'active',
+                        'linked_acceptance_criteria': ['AC-1'],
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    (journey_path.parent / 'journey-evidence.json').write_text(
+        json.dumps(
+            {
+                'journey_evidence_rows': [
+                    {
+                        'journey_id': 'J-001',
+                        'title': 'Delivery happy path',
+                        'acceptance_criteria': ['AC-1'],
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-AC1-E2E',
+                        'layer': 'e2e',
+                        'command': 'pytest tests/e2e/test_delivery.py -q',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'expected': 'delivery confirmation is visible',
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    from workflow_controller.gates.generators import ensure_final_acceptance_gate
+    from workflow_controller.gates.parsers import approve_gate_file
+
+    gate_path = ensure_final_acceptance_gate(
+        controller.store.load_state(),
+        approvals_dir,
+        state_dir / 'artifacts',
+        force=True,
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['finalAcceptanceAccepted'] is True
+    assert state['currentStep'] == 'RELEASE_GATE'
 
 
 def test_plannotator_final_acceptance_feedback_is_not_replaced_by_template_patch_comment(tmp_path: Path) -> None:

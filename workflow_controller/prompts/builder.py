@@ -94,7 +94,7 @@ Approved unit plan gate: {unit_plan_path}
 {unit_plan_content}
 ```
 
-Original Ralph prompt/context: {original_prompt_path}
+Original target prompt/context: {original_prompt_path}
 
 ```md
 {original_prompt}

@@ -23,6 +23,12 @@ def compute_next_allowed_action(state: dict[str, Any]) -> str | None:
         return 'check_unit_plan_approval'
     if step == 'WAITING_FINAL_ACCEPTANCE':
         return 'check_final_acceptance'
+    if step == 'WAITING_BUG_FIX_GATE':
+        return 'check_bug_fix_gate'
+    if step == 'BUG_FIX':
+        return 'run_bug_fix'
+    if step == 'BUG_FIX_VERIFY':
+        return 'run_bug_fix_verifier'
 
     if human_gates_required and not state.get('requirementsAccepted', False):
         return 'check_requirements_acceptance'

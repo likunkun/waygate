@@ -278,7 +278,7 @@ def validate_requirements_acceptance_quality(
     if missing_layers:
         issues.append(
             ', '.join(f'{ac_id} missing verification layer' for ac_id in missing_layers)
-            + '; add one of unit, integration, e2e, or manual in the AC line '
+            + '; add one of unit, functional, integration, e2e, or manual in the AC line '
             + 'or Requirements Traceability Matrix'
         )
 

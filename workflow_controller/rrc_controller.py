@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from workflow_controller.agent_guides import ensure_agent_operating_guides
 from workflow_controller.gates.generators import (
+    ensure_bug_fix_gate,
     ensure_final_acceptance_gate,
     ensure_requirements_gate,
     ensure_unit_plan_gate,
@@ -23,6 +26,7 @@ from workflow_controller.gates.parsers import (
     check_gate_file,
     extract_patch_list,
     gate_body,
+    hash_gate_body,
     write_gate_file,
 )
 from workflow_controller.acceptance_obligations import (
@@ -46,10 +50,18 @@ from workflow_controller.gates.validators import (
     validate_verification_evidence_schema,
     validate_verification_verdict,
 )
+from workflow_controller.journeys import (
+    validate_final_journey_acceptance,
+    validate_and_enrich_journey_unit_plan,
+    validate_and_write_journey_contract,
+)
+from workflow_controller.scope_audit import (
+    validate_final_scope_audit,
+    write_final_scope_audit,
+)
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import (
     VerificationEnvironmentError,
-    build_state_from_ralph,
     build_state_from_target_acceptance,
     render_target_acceptance_prompt,
 )
@@ -77,6 +89,7 @@ from workflow_controller.steps.builder import (
     select_next_unit,
     target_acceptance_covered,
 )
+from workflow_controller.steps.bug_fix import run_bug_fix
 from workflow_controller.steps.requirements import run_requirements_drafter
 from workflow_controller.steps.unit_plan import run_unit_plan_drafter
 
@@ -116,6 +129,7 @@ WAITING_HUMAN_GATE_STEPS = {
     'WAITING_REQUIREMENTS_ACCEPTANCE',
     'WAITING_UNIT_PLAN_APPROVAL',
     'WAITING_FINAL_ACCEPTANCE',
+    'WAITING_BUG_FIX_GATE',
 }
 
 DEFAULT_MAX_AUTOMATIC_STEPS = 2000
@@ -139,6 +153,9 @@ ACTION_LABELS = {
     'check_requirements_acceptance': '检查需求与验收确认',
     'check_unit_plan_approval': '检查 Unit Plan 确认',
     'check_final_acceptance': '检查最终验收确认',
+    'check_bug_fix_gate': '检查 Bug Fix Gate',
+    'run_bug_fix': '运行 Bug Fix Agent',
+    'run_bug_fix_verifier': '运行 Bug Fix 回归验证',
     'require_scope_approval': '范围确认',
     'run_ui_design': '生成 UI 设计简报',
     'run_builder': '运行构建器',
@@ -187,6 +204,7 @@ HUMAN_GATE_LABELS = {
     'requirements': '需求与验收',
     'unit-plan': 'Unit Plan',
     'final-acceptance': '最终验收',
+    'bug-fix': 'Bug Fix',
 }
 
 FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS = {
@@ -230,6 +248,8 @@ class RalphRefinerController:
         tmux_target: str | None = None,
         target: str | None = None,
         unsafe_skip_human_gates: bool = False,
+        agent_guides_enabled: bool = True,
+        claude_md_enabled: bool = False,
         plannotator_command: str = 'plannotator',
         plannotator_port: int | None = 20000,
     ) -> None:
@@ -242,12 +262,15 @@ class RalphRefinerController:
         self.tmux_target = tmux_target
         self.target = target
         self.unsafe_skip_human_gates = unsafe_skip_human_gates
+        self.agent_guides_enabled = agent_guides_enabled
+        self.claude_md_enabled = claude_md_enabled
         self.plannotator_command = plannotator_command
         self.plannotator_port = plannotator_port
         self.store = StateStore(
             session_path=self.state_dir / 'session.json',
             events_path=self.state_dir / 'events.jsonl',
         )
+        self.change_requests_path = self.state_dir / 'change_requests.jsonl'
         self.approvals_dir = self.state_dir / 'approvals'
         self.artifacts_dir = self.state_dir / 'artifacts'
 
@@ -255,7 +278,6 @@ class RalphRefinerController:
         self,
         initial_state: dict[str, Any] | None = None,
         force: bool = False,
-        from_ralph: bool = False,
         strategist_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.store.ensure_layout()
@@ -263,30 +285,7 @@ class RalphRefinerController:
             raise FileExistsError(
                 f'Session already exists: {self.store.session_path}. Use --force to overwrite.'
             )
-        if from_ralph:
-            workspace_dir = self.workspace_dir or Path.cwd()
-            state = build_state_from_ralph(
-                workspace_dir=workspace_dir,
-                agent_command=self.agent_command or 'claude',
-                agent_runner=self.agent_runner or 'subprocess',
-                tmux_target=self.tmux_target,
-                target=self.target,
-            )
-            if self.target and state.get('targetMatchedPlanStep') is False:
-                prompt_path = self.state_dir / 'target-acceptance-prompt.md'
-                prompt_path.parent.mkdir(parents=True, exist_ok=True)
-                state['promptPath'] = str(prompt_path)
-                prompt_path.write_text(render_target_acceptance_prompt(state), encoding='utf-8')
-            state.update({
-                'humanGatesRequired': True,
-                'requirementsAccepted': False,
-                'unitPlanAccepted': False,
-                'finalAcceptanceAccepted': False,
-                'requirementsDraftGenerated': False,
-                'currentStep': 'REQUIREMENTS_DRAFT',
-                'nextAllowedActions': ['run_requirements_drafter'],
-            })
-        elif self.target:
+        if self.target:
             workspace_dir = self.workspace_dir or Path.cwd()
             state = build_state_from_target_acceptance(
                 workspace_dir=workspace_dir,
@@ -315,6 +314,15 @@ class RalphRefinerController:
         state.setdefault('codeSimplifierEnabled', True)
         if strategist_overrides:
             state.update(strategist_overrides)
+        state['agentGuideArtifacts'] = ensure_agent_operating_guides(
+            _agent_guide_workspace_dir(
+                explicit_workspace=self.workspace_dir,
+                state_dir=self.state_dir,
+                state=state,
+            ),
+            enabled=self.agent_guides_enabled,
+            include_claude=self.claude_md_enabled,
+        )
         self._save_state(state)
         return state
 
@@ -349,17 +357,25 @@ class RalphRefinerController:
         elif gate == 'final-acceptance':
             if current_step != 'WAITING_FINAL_ACCEPTANCE':
                 raise ValueError('Final acceptance can only be approved at WAITING_FINAL_ACCEPTANCE')
+            self._write_final_scope_audit(state)
             gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
+        elif gate == 'bug-fix':
+            if current_step != 'WAITING_BUG_FIX_GATE':
+                raise ValueError('Bug fix gate can only be approved at WAITING_BUG_FIX_GATE')
+            gate_path = ensure_bug_fix_gate(state, self.approvals_dir)
         else:
             raise ValueError(f'Unknown human gate: {gate}')
         self._validate_human_gate_before_approval(gate, state, gate_path)
         approve_gate_file(gate_path, actor=actor)
+        if gate == 'requirements':
+            self._append_pending_requirements_change_request_approval(state, actor)
         self.store.append_event('human_gate_approved', {
             'task_id': state.get('task_id'),
             'gate': gate,
             'actor': actor,
             'path': str(gate_path),
         })
+        self._save_state(state)
         return gate_path
 
     def _validate_human_gate_before_approval(
@@ -372,16 +388,22 @@ class RalphRefinerController:
             reason = self._requirements_gate_invalid_reason(state, gate_path)
         elif gate == 'unit-plan':
             reason = self._unit_plan_gate_invalid_reason(state, gate_path)
+        elif gate == 'final-acceptance':
+            reason = self._final_acceptance_gate_invalid_reason(state)
         else:
             return
         if reason:
-            write_gate_file(gate_path, gate_body(gate_path.read_text(encoding='utf-8')))
             if gate == 'requirements':
+                write_gate_file(gate_path, gate_body(gate_path.read_text(encoding='utf-8')))
                 state['requirementsAccepted'] = False
                 state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
-            else:
+            elif gate == 'unit-plan':
+                write_gate_file(gate_path, gate_body(gate_path.read_text(encoding='utf-8')))
                 state['unitPlanAccepted'] = False
                 state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+            else:
+                state['finalAcceptanceAccepted'] = False
+                state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
             state['blockedReason'] = reason
             self._save_state(state)
             raise ValueError(reason)
@@ -419,6 +441,11 @@ class RalphRefinerController:
             )
             validate_unit_plan_verification_environment(candidate_state)
             validate_unit_plan_golden_path(candidate_state)
+            validate_and_enrich_journey_unit_plan(
+                unit_plan_path=gate_path,
+                artifacts_dir=self.artifacts_dir,
+                state=candidate_state,
+            )
         except ValueError as exc:
             return f'unit plan gate invalid: {exc}'
         return None
@@ -426,8 +453,31 @@ class RalphRefinerController:
     def _requirements_gate_invalid_reason(self, state: dict[str, Any], gate_path: Path) -> str | None:
         try:
             validate_requirements_acceptance_quality(gate_path, state)
+            validate_and_write_journey_contract(
+                requirements_path=gate_path,
+                artifacts_dir=self.artifacts_dir,
+                state=state,
+                unit_plan_path=self.approvals_dir / 'unit-plan.md',
+            )
         except ValueError as exc:
             return f'requirements gate invalid: {exc}'
+        return None
+
+    def _write_final_scope_audit(self, state: dict[str, Any]) -> dict[str, Any]:
+        return write_final_scope_audit(
+            state,
+            self.artifacts_dir,
+            requirements_path=self.approvals_dir / 'requirements-and-acceptance.md',
+            workspace_dir=self.workspace_dir,
+        )
+
+    def _final_acceptance_gate_invalid_reason(self, state: dict[str, Any]) -> str | None:
+        try:
+            audit = self._write_final_scope_audit(state)
+            validate_final_scope_audit(audit)
+            validate_final_journey_acceptance(state, self.artifacts_dir)
+        except ValueError as exc:
+            return f'final acceptance gate invalid: {exc}'
         return None
 
     def revise_human_gate(self, gate: str) -> Path:
@@ -506,6 +556,127 @@ class RalphRefinerController:
             archive_path.unlink()
         summary_path.rename(archive_path)
 
+    def _write_requirements_revision_artifact(
+        self,
+        *,
+        revision_count: int,
+        previous_gate_path: Path,
+        updated_gate_path: Path,
+        feedback: str,
+        annotations: list[Any] | None,
+        controller_validation_error: str | None,
+        before_body: str,
+        after_body: str,
+    ) -> Path:
+        revisions_dir = self.artifacts_dir / 'requirements-revisions'
+        revisions_dir.mkdir(parents=True, exist_ok=True)
+        before_hash = hash_gate_body(before_body)
+        after_hash = hash_gate_body(after_body)
+        generated_at = datetime.now(timezone.utc).isoformat()
+        artifact_path = revisions_dir / f'revision-{revision_count}.json'
+        payload = {
+            'revision_count': revision_count,
+            'source_gate': 'requirements',
+            'previous_gate_path': str(previous_gate_path),
+            'updated_gate_path': str(updated_gate_path),
+            'feedback': feedback,
+            'annotations': annotations,
+            'controller_validation_error': controller_validation_error,
+            'before_hash': before_hash,
+            'after_hash': after_hash,
+            'changed': before_hash != after_hash,
+            'diff_summary': _requirements_revision_diff_summary(before_body, after_body),
+            'generated_at': generated_at,
+        }
+        artifact_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
+        _append_requirements_revision_index(
+            revisions_dir / 'requirements-revisions.md',
+            artifact_path=artifact_path,
+            payload=payload,
+        )
+        return artifact_path
+
+    def _append_requirements_change_request(
+        self,
+        state: dict[str, Any],
+        *,
+        source: str,
+        source_gate: str,
+        source_ref: str,
+        reason: str,
+        before_body: str,
+        after_body: str,
+        previous_gate_path: Path,
+        updated_gate_path: Path,
+        route: str | None = None,
+        revision_count: int | None = None,
+        revision_artifact: Path | None = None,
+        annotations: list[Any] | None = None,
+        controller_validation_error: str | None = None,
+    ) -> dict[str, Any]:
+        change_request_id = _next_change_request_id(self.change_requests_path)
+        before_hash = hash_gate_body(before_body)
+        after_hash = hash_gate_body(after_body)
+        record = {
+            'id': change_request_id,
+            'record_type': 'change_request',
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'task_id': state.get('task_id'),
+            'source': source,
+            'source_gate': source_gate,
+            'source_ref': source_ref,
+            'route': route,
+            'reason': reason,
+            'impacted': _change_request_impacts(reason, annotations),
+            'status': 'pending_requirements_approval',
+            'approver': None,
+            'approved_at': None,
+            'revision_count': revision_count,
+            'revision_artifact': str(revision_artifact) if revision_artifact else None,
+            'controller_validation_error': controller_validation_error,
+            'previous_gate_path': str(previous_gate_path),
+            'updated_gate_path': str(updated_gate_path),
+            'before_hash': before_hash,
+            'after_hash': after_hash,
+            'changed': before_hash != after_hash,
+        }
+        _append_jsonl(self.change_requests_path, record)
+        pending_ids = state.setdefault('pendingRequirementChangeRequestIds', [])
+        if change_request_id not in pending_ids:
+            pending_ids.append(change_request_id)
+        return record
+
+    def _append_pending_requirements_change_request_approval(
+        self,
+        state: dict[str, Any],
+        actor: str,
+    ) -> None:
+        pending_ids = [
+            str(item)
+            for item in (state.get('pendingRequirementChangeRequestIds') or [])
+            if str(item).strip()
+        ]
+        if not pending_ids:
+            return
+        approved_at = datetime.now(timezone.utc).isoformat()
+        for change_request_id in pending_ids:
+            _append_jsonl(self.change_requests_path, {
+                'id': change_request_id,
+                'record_type': 'change_request_status',
+                'created_at': approved_at,
+                'task_id': state.get('task_id'),
+                'source': 'requirements_approval',
+                'source_gate': 'requirements',
+                'status': 'approved',
+                'approver': actor,
+                'approved_at': approved_at,
+            })
+        state['pendingRequirementChangeRequestIds'] = []
+        self._save_state(state)
+
     def reject_final_acceptance_gate(self) -> Path:
         state = self.store.load_state()
         if state.get('currentStep') != 'WAITING_FINAL_ACCEPTANCE':
@@ -534,16 +705,13 @@ class RalphRefinerController:
         state.pop('finalAcceptanceAcceptedBy', None)
         state['blockedReason'] = None
         state['status'] = 'active'
+        change_request: dict[str, Any] | None = None
         if route == 'requirements':
             self._mark_current_unit_incomplete(state)
-            self._route_final_acceptance_rejection_to_requirements(state, rejection_feedback)
+            change_request = self._route_final_acceptance_rejection_to_requirements(state, rejection_feedback)
         elif route == 'defect_fix':
             state['finalAcceptanceDefectFeedback'] = rejection_feedback
-            self._route_final_acceptance_rejection_to_unit_plan(
-                state,
-                rejection_feedback,
-                defect_fix=True,
-            )
+            self._route_final_acceptance_rejection_to_bug_fix(state, rejection_feedback)
         elif route == 'unit_plan':
             self._mark_current_unit_incomplete(state)
             self._route_final_acceptance_rejection_to_unit_plan(state, rejection_feedback)
@@ -559,6 +727,10 @@ class RalphRefinerController:
             'path': str(gate_path),
             'revision_count': state.get('finalAcceptanceRejectionCount'),
             'route': route,
+            **({
+                'change_request_id': change_request['id'],
+                'change_requests_path': str(self.change_requests_path),
+            } if change_request else {}),
         })
         self._consume_plannotator_feedback(
             'final-acceptance',
@@ -571,9 +743,16 @@ class RalphRefinerController:
         self,
         state: dict[str, Any],
         rejection_feedback: str,
-    ) -> None:
+    ) -> dict[str, Any]:
+        gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
+        before_body = (
+            gate_body(gate_path.read_text(encoding='utf-8'))
+            if gate_path.exists()
+            else ''
+        )
         state['requirementsRevisionFeedback'] = rejection_feedback
         state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
+        revision_count = int(state.get('requirementsRevisionCount') or 0)
         state['requirementsAccepted'] = False
         state['unitPlanAccepted'] = False
         state.pop('requirementsAcceptedHash', None)
@@ -590,10 +769,25 @@ class RalphRefinerController:
             ['requirements-draft-summary.json', 'requirements-body.md'],
         )
         validate_required_artifacts(self.approvals_dir, ['requirements-and-acceptance.md'])
+        after_body = gate_body(gate_path.read_text(encoding='utf-8'))
+        change_request = self._append_requirements_change_request(
+            state,
+            source='final_acceptance_rejection',
+            source_gate='final-acceptance',
+            source_ref=f"final-acceptance:rejection-{int(state.get('finalAcceptanceRejectionCount') or 0)}",
+            route='requirements',
+            reason=rejection_feedback,
+            before_body=before_body,
+            after_body=after_body,
+            previous_gate_path=gate_path,
+            updated_gate_path=gate_path,
+            revision_count=revision_count,
+        )
 
         state.pop('requirementsRevisionFeedback', None)
         state['requirementsDraftGenerated'] = True
         state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+        return change_request
 
     def _route_final_acceptance_rejection_to_unit_plan(
         self,
@@ -632,6 +826,24 @@ class RalphRefinerController:
         state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
         state = self._refresh_unit_plan_gate_validation(state)
 
+    def _route_final_acceptance_rejection_to_bug_fix(
+        self,
+        state: dict[str, Any],
+        rejection_feedback: str,
+    ) -> None:
+        state['bugFixAttemptCount'] = int(state.get('bugFixAttemptCount') or 0) + 1
+        state['activeBugFixId'] = f"bug-fix-{state['bugFixAttemptCount']}"
+        state['bugFixGateGenerated'] = True
+        state['bugFixGateAccepted'] = False
+        state['bugFixVerified'] = False
+        state['bugFixFeedback'] = rejection_feedback
+        state['finalAcceptanceAccepted'] = False
+        state.pop('finalAcceptanceAcceptedHash', None)
+        state.pop('finalAcceptanceAcceptedBy', None)
+        state.pop('unitPlanRevisionMode', None)
+        state['currentStep'] = 'WAITING_BUG_FIX_GATE'
+        ensure_bug_fix_gate(state, self.approvals_dir)
+
     def _mark_current_unit_incomplete(self, state: dict[str, Any]) -> None:
         current_unit_id = state.get('currentUnitId')
         if not current_unit_id:
@@ -656,13 +868,17 @@ class RalphRefinerController:
                 f'Requirements gate not found: {gate_path}. Run the requirements drafter first.'
             )
 
+        before_body = gate_body(gate_path.read_text(encoding='utf-8'))
+        controller_validation_error = self._validation_feedback_for_gate('requirements')
         state['requirementsRevisionFeedback'], requirements_annotations = self._revision_feedback_and_annotations_for_gate('requirements', gate_path)
         state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
+        revision_count = int(state.get('requirementsRevisionCount') or 0)
+        revision_feedback = state['requirementsRevisionFeedback']
         self._append_acceptance_obligations_from_feedback(
             state,
             source='requirements_feedback',
-            source_ref=f"requirements:revision-{state['requirementsRevisionCount']}",
-            feedback_text=state['requirementsRevisionFeedback'],
+            source_ref=f"requirements:revision-{revision_count}",
+            feedback_text=revision_feedback,
             annotations=requirements_annotations,
         )
         state['requirementsAccepted'] = False
@@ -680,18 +896,47 @@ class RalphRefinerController:
             ['requirements-draft-summary.json', 'requirements-body.md'],
         )
         validate_required_artifacts(self.approvals_dir, ['requirements-and-acceptance.md'])
+        after_body = gate_body(gate_path.read_text(encoding='utf-8'))
+        revision_artifact = self._write_requirements_revision_artifact(
+            revision_count=revision_count,
+            previous_gate_path=gate_path,
+            updated_gate_path=gate_path,
+            feedback=revision_feedback,
+            annotations=requirements_annotations,
+            controller_validation_error=controller_validation_error,
+            before_body=before_body,
+            after_body=after_body,
+        )
+        change_request = self._append_requirements_change_request(
+            state,
+            source='requirements_revision',
+            source_gate='requirements',
+            source_ref=f'requirements:revision-{revision_count}',
+            reason=revision_feedback,
+            before_body=before_body,
+            after_body=after_body,
+            previous_gate_path=gate_path,
+            updated_gate_path=gate_path,
+            revision_count=revision_count,
+            revision_artifact=revision_artifact,
+            annotations=requirements_annotations,
+            controller_validation_error=controller_validation_error,
+        )
 
         state.pop('requirementsRevisionFeedback', None)
         state['requirementsDraftGenerated'] = True
         state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
         self._consume_plannotator_feedback(
             'requirements',
-            int(state.get('requirementsRevisionCount') or 0),
+            revision_count,
         )
         self.store.append_event('requirements_draft_revised', {
             'task_id': state.get('task_id'),
             'path': str(gate_path),
-            'revision_count': state.get('requirementsRevisionCount'),
+            'revision_count': revision_count,
+            'revision_artifact': str(revision_artifact),
+            'change_request_id': change_request['id'],
+            'change_requests_path': str(self.change_requests_path),
         })
         self._save_state(state)
         return gate_path
@@ -769,7 +1014,6 @@ class RalphRefinerController:
     def start(
         self,
         force: bool = False,
-        from_ralph: bool = False,
         max_steps: int = DEFAULT_MAX_AUTOMATIC_STEPS,
         verbose: bool = False,
         color_mode: str = 'auto',
@@ -785,14 +1029,14 @@ class RalphRefinerController:
         if self.store.session_path.exists():
             if force:
                 output_func('[初始化] --force 已指定，重新创建 controller 状态')
-                self.init_state(force=True, from_ralph=from_ralph, strategist_overrides=strategist_overrides)
+                self.init_state(force=True, strategist_overrides=strategist_overrides)
             else:
                 existing_state = self.store.load_state()
                 self._validate_start_compatible(existing_state)
                 output_func(f'[继续] 使用已有状态：{self.store.session_path}')
         else:
             output_func('[初始化] 创建新的 controller 状态')
-            self.init_state(force=False, from_ralph=from_ralph, strategist_overrides=strategist_overrides)
+            self.init_state(force=False, strategist_overrides=strategist_overrides)
 
         return self.drive(
             max_steps=max_steps,
@@ -990,6 +1234,11 @@ class RalphRefinerController:
                     )
                     validate_unit_plan_verification_environment(state)
                     validate_unit_plan_golden_path(state)
+                    validate_and_enrich_journey_unit_plan(
+                        unit_plan_path=gate_path,
+                        artifacts_dir=self.artifacts_dir,
+                        state=state,
+                    )
                 except ValueError as exc:
                     state['unitPlanAccepted'] = False
                     state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
@@ -1013,6 +1262,7 @@ class RalphRefinerController:
             return state
 
         if action == 'check_final_acceptance':
+            self._write_final_scope_audit(state)
             gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
             if self._unsafe_skip_gate(state, 'final_acceptance', gate_path):
                 state['finalAcceptanceAccepted'] = True
@@ -1022,6 +1272,13 @@ class RalphRefinerController:
             gate = check_gate_file(gate_path)
             state['finalAcceptanceAccepted'] = gate.approved
             if gate.approved:
+                reason = self._final_acceptance_gate_invalid_reason(state)
+                if reason:
+                    state['finalAcceptanceAccepted'] = False
+                    state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
+                    state['blockedReason'] = reason
+                    self._save_state(state)
+                    return state
                 state['finalAcceptanceAcceptedHash'] = gate.content_hash
                 state['finalAcceptanceAcceptedBy'] = gate.confirmed_by
                 state.pop('finalAcceptanceRejectionFeedback', None)
@@ -1036,6 +1293,28 @@ class RalphRefinerController:
             else:
                 state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
                 state['blockedReason'] = f'final acceptance gate not approved: {gate.reason}'
+            self._save_state(state)
+            return state
+
+        if action == 'check_bug_fix_gate':
+            gate_path = ensure_bug_fix_gate(state, self.approvals_dir)
+            gate = check_gate_file(gate_path)
+            state['bugFixGateAccepted'] = gate.approved
+            if gate.approved:
+                state['bugFixGateAcceptedHash'] = gate.content_hash
+                state['bugFixGateAcceptedBy'] = gate.confirmed_by
+                state['bugFixGateFeedback'] = gate_body(gate_path.read_text(encoding='utf-8'))
+                state['blockedReason'] = None
+                state['currentStep'] = 'BUG_FIX'
+                self.store.append_event('bug_fix_gate_approved', {
+                    'task_id': state.get('task_id'),
+                    'path': str(gate_path),
+                    'content_hash': gate.content_hash,
+                    'confirmed_by': gate.confirmed_by,
+                    'bug_fix_id': state.get('activeBugFixId'),
+                })
+            else:
+                state['blockedReason'] = f'bug fix gate not approved: {gate.reason}'
             self._save_state(state)
             return state
 
@@ -1055,6 +1334,95 @@ class RalphRefinerController:
             run_ui_design_if_needed(state, unit_dir, dry_run=self.dry_run)
             validate_required_artifacts(unit_dir, ['ui-design-summary.json'])
             state['currentStep'] = 'UI_DESIGN_DONE'
+            self._save_state(state)
+            return state
+
+        if action == 'run_bug_fix':
+            bug_fix_dir = self._active_bug_fix_dir(state)
+            run_bug_fix(state, bug_fix_dir, dry_run=self.dry_run)
+            validate_required_artifacts(bug_fix_dir, ['bug-fix-summary.json', 'root-cause.json'])
+            bug_fix_summary = json.loads((bug_fix_dir / 'bug-fix-summary.json').read_text(encoding='utf-8'))
+            root_cause = json.loads((bug_fix_dir / 'root-cause.json').read_text(encoding='utf-8'))
+            state['activeBugFixArtifactDir'] = str(bug_fix_dir)
+            state['bugFixRootCause'] = root_cause
+            if _bug_fix_requires_unit_plan_escalation(bug_fix_summary, root_cause):
+                state['finalAcceptanceRejectionRoute'] = 'unit_plan'
+                state['bugFixEscalatedToUnitPlan'] = True
+                self._route_final_acceptance_rejection_to_unit_plan(
+                    state,
+                    _bug_fix_unit_plan_escalation_feedback(state, bug_fix_summary, root_cause),
+                )
+            elif str(bug_fix_summary.get('status') or '') == 'ok':
+                _clear_last_failure(state)
+                state['currentStep'] = 'BUG_FIX_VERIFY'
+            else:
+                _record_or_block_repeated_failure(
+                    state,
+                    stage='BUG_FIX',
+                    verdict=_bug_fix_failure_verdict(bug_fix_summary, root_cause),
+                    retry_step='BUG_FIX',
+                )
+            self.store.append_event('bug_fix_agent_completed', {
+                'task_id': state.get('task_id'),
+                'bug_fix_id': state.get('activeBugFixId'),
+                'artifact_dir': str(bug_fix_dir),
+                'status': bug_fix_summary.get('status'),
+                'root_cause_route': root_cause.get('route'),
+            })
+            self._save_state(state)
+            return state
+
+        if action == 'run_bug_fix_verifier':
+            bug_fix_dir = self._active_bug_fix_dir(state)
+            try:
+                run_verifier(
+                    state,
+                    bug_fix_dir,
+                    dry_run=self.dry_run,
+                    progress_callback=verification_progress_callback,
+                )
+            except VerificationEnvironmentError as exc:
+                state['status'] = 'blocked'
+                state['currentStep'] = 'BUG_FIX_VERIFY'
+                state['blockedReason'] = str(exc)
+                self.store.append_event('bug_fix_verification_environment_blocked', {
+                    'task_id': state.get('task_id'),
+                    'bug_fix_id': state.get('activeBugFixId'),
+                    'reason': str(exc),
+                })
+                self._save_state(state)
+                return state
+            verification = validate_verification_verdict(bug_fix_dir / 'verification.json')
+            try:
+                validate_verification_evidence_schema(bug_fix_dir / 'verification.json')
+            except ValueError as exc:
+                verification['passed'] = False
+                verification.setdefault('issues', []).append({
+                    'severity': 'high',
+                    'type': 'invalid_evidence_schema',
+                    'message': str(exc),
+                })
+            if verification['passed']:
+                _clear_last_failure(state)
+                state['bugFixVerified'] = True
+                state['finalAcceptanceAccepted'] = False
+                state.pop('finalAcceptanceAcceptedHash', None)
+                state.pop('finalAcceptanceAcceptedBy', None)
+                state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
+                self._write_final_scope_audit(state)
+                ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir, force=True)
+                self.store.append_event('bug_fix_regression_verified', {
+                    'task_id': state.get('task_id'),
+                    'bug_fix_id': state.get('activeBugFixId'),
+                    'artifact_dir': str(bug_fix_dir),
+                })
+            else:
+                _record_or_block_repeated_failure(
+                    state,
+                    stage='BUG_FIX_VERIFY',
+                    verdict=verification,
+                    retry_step='BUG_FIX',
+                )
             self._save_state(state)
             return state
 
@@ -1157,6 +1525,7 @@ class RalphRefinerController:
             if target_acceptance_covered(state) or validate_objective_coverage(state):
                 if state.get('humanGatesRequired') and not state.get('finalAcceptanceAccepted', False):
                     state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
+                    self._write_final_scope_audit(state)
                     ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir, force=True)
                 else:
                     state['currentStep'] = 'RELEASE_GATE'
@@ -1165,6 +1534,7 @@ class RalphRefinerController:
                 if next_unit == 'RELEASE_GATE':
                     if state.get('humanGatesRequired') and not state.get('finalAcceptanceAccepted', False):
                         state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
+                        self._write_final_scope_audit(state)
                         ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir, force=True)
                     else:
                         state['currentStep'] = 'RELEASE_GATE'
@@ -1193,6 +1563,13 @@ class RalphRefinerController:
         next_action = compute_next_allowed_action(state)
         state['nextAllowedActions'] = [next_action] if next_action else []
         self.store.save_state(state)
+
+    def _active_bug_fix_dir(self, state: dict[str, Any]) -> Path:
+        bug_fix_id = str(state.get('activeBugFixId') or '').strip()
+        if not bug_fix_id:
+            bug_fix_id = f"bug-fix-{int(state.get('bugFixAttemptCount') or 1)}"
+            state['activeBugFixId'] = bug_fix_id
+        return self.artifacts_dir / 'bug-fixes' / bug_fix_id
 
     def _unsafe_skip_gate(self, state: dict[str, Any], gate_name: str, gate_path: Path) -> bool:
         if not self.unsafe_skip_human_gates:
@@ -1349,9 +1726,14 @@ class RalphRefinerController:
             can_revise = True
         elif step == 'WAITING_FINAL_ACCEPTANCE':
             gate = 'final-acceptance'
+            self._write_final_scope_audit(state)
             path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
             can_revise = False
             can_rework = True
+        elif step == 'WAITING_BUG_FIX_GATE':
+            gate = 'bug-fix'
+            path = ensure_bug_fix_gate(state, self.approvals_dir)
+            can_revise = False
         else:
             return None
 
@@ -1612,6 +1994,168 @@ def _strip_html_comments(content: str) -> str:
     return re.sub(r'<!--.*?-->', '', content, flags=re.DOTALL)
 
 
+def _requirements_revision_diff_summary(before_body: str, after_body: str) -> dict[str, Any]:
+    before_lines = before_body.rstrip('\n').splitlines()
+    after_lines = after_body.rstrip('\n').splitlines()
+    unified = difflib.unified_diff(
+        before_lines,
+        after_lines,
+        fromfile='before',
+        tofile='after',
+        lineterm='',
+    )
+    added_lines: list[str] = []
+    removed_lines: list[str] = []
+    for line in unified:
+        if line.startswith('+++') or line.startswith('---') or line.startswith('@@'):
+            continue
+        if line.startswith('+'):
+            added_lines.append(line[1:])
+        elif line.startswith('-'):
+            removed_lines.append(line[1:])
+    return {
+        'added_lines': added_lines,
+        'removed_lines': removed_lines,
+        'changed_sections': _changed_markdown_sections(before_lines, after_lines),
+    }
+
+
+def _changed_markdown_sections(before_lines: list[str], after_lines: list[str]) -> list[str]:
+    sections: list[str] = []
+    matcher = difflib.SequenceMatcher(a=before_lines, b=after_lines, autojunk=False)
+    for tag, before_start, before_end, after_start, after_end in matcher.get_opcodes():
+        if tag == 'equal':
+            continue
+        if tag in {'replace', 'delete'}:
+            _append_unique(sections, _markdown_sections_for_range(before_lines, before_start, before_end))
+        if tag in {'replace', 'insert'}:
+            _append_unique(sections, _markdown_sections_for_range(after_lines, after_start, after_end))
+    return sections
+
+
+def _markdown_sections_for_range(lines: list[str], start: int, end: int) -> list[str]:
+    if not lines:
+        return ['(document)']
+    range_start = max(0, min(start, len(lines) - 1))
+    range_end = max(range_start + 1, min(end, len(lines)))
+    headings = [
+        line.strip()
+        for line in lines[range_start:range_end]
+        if re.match(r'^#{1,6}\s+\S', line.strip())
+    ]
+    if headings:
+        return headings
+    return [_markdown_section_for_index(lines, range_start)]
+
+
+def _markdown_section_for_index(lines: list[str], index: int) -> str:
+    if not lines:
+        return '(document)'
+    for line_index in range(max(0, min(index, len(lines) - 1)), -1, -1):
+        line = lines[line_index].strip()
+        if re.match(r'^#{1,6}\s+\S', line):
+            return line
+    return '(document)'
+
+
+def _append_unique(target: list[str], values: list[str]) -> None:
+    for value in values:
+        if value not in target:
+            target.append(value)
+
+
+def _append_requirements_revision_index(
+    index_path: Path,
+    *,
+    artifact_path: Path,
+    payload: dict[str, Any],
+) -> None:
+    if not index_path.exists():
+        index_path.write_text('# Requirements Revisions\n\n', encoding='utf-8')
+    changed = str(bool(payload.get('changed'))).lower()
+    controller_error = payload.get('controller_validation_error') or 'none'
+    entry = (
+        f"- revision {payload.get('revision_count')}: {artifact_path.name}\n"
+        f"  - changed: {changed}\n"
+        f"  - before: sha256:{payload.get('before_hash')}\n"
+        f"  - after: sha256:{payload.get('after_hash')}\n"
+        f"  - controller_validation_error: {controller_error}\n"
+        f"  - generated_at: {payload.get('generated_at')}\n"
+    )
+    with index_path.open('a', encoding='utf-8') as file:
+        file.write(entry)
+
+
+def _next_change_request_id(path: Path) -> str:
+    max_number = 0
+    if path.exists():
+        for record in _read_jsonl(path):
+            raw_id = str(record.get('id') or '')
+            match = re.fullmatch(r'CR-(\d+)', raw_id)
+            if match:
+                max_number = max(max_number, int(match.group(1)))
+    return f'CR-{max_number + 1:04d}'
+
+
+def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a', encoding='utf-8') as file:
+        file.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return records
+
+
+def _change_request_impacts(
+    reason: str,
+    annotations: list[Any] | None = None,
+) -> dict[str, list[str]]:
+    searchable = reason
+    if annotations:
+        searchable += '\n' + json.dumps(annotations, ensure_ascii=False)
+    return {
+        'acceptance_obligations': _unique_matches(r'(?<![A-Za-z0-9_-])AO-[A-Za-z0-9_-]+', searchable),
+        'acceptance_criteria': _unique_matches(r'(?<![A-Za-z0-9_-])AC-[A-Za-z0-9_-]+', searchable),
+        'test_cases': _unique_matches(r'(?<![A-Za-z0-9_-])TC-[A-Za-z0-9_-]+', searchable),
+        'journeys': _journey_references(searchable),
+    }
+
+
+def _unique_matches(pattern: str, text: str) -> list[str]:
+    values: list[str] = []
+    for match in re.finditer(pattern, text):
+        value = match.group(0).strip()
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _journey_references(text: str) -> list[str]:
+    journeys: list[str] = []
+    for pattern in (
+        r'(?im)\bJourney\s*[:：=-]\s*([^\n.;]+)',
+        r'(?m)用户旅程\s*[:：=-]\s*([^\n。；;]+)',
+    ):
+        for match in re.finditer(pattern, text):
+            value = match.group(1).strip(' `"\t')
+            if value and value not in journeys:
+                journeys.append(value)
+    return journeys
+
+
 
 def _defect_fix_unit_plan_revision_feedback(rejection_feedback: str) -> str:
     return (
@@ -1621,6 +2165,57 @@ def _defect_fix_unit_plan_revision_feedback(rejection_feedback: str) -> str:
         'covered objectives by adding those bug-fix unit ids with status partial in the Controller State Patch.\n\n'
         f'{rejection_feedback}'
     )
+
+
+def _bug_fix_requires_unit_plan_escalation(
+    bug_fix_summary: dict[str, Any],
+    root_cause: dict[str, Any],
+) -> bool:
+    status = str(bug_fix_summary.get('status') or '').strip()
+    route = str(root_cause.get('route') or bug_fix_summary.get('route') or '').strip()
+    classification = str(root_cause.get('classification') or '').strip()
+    return (
+        status == 'escalate_unit_plan'
+        or route == 'unit_plan'
+        or classification in {'unit_plan_gap', 'architecture_issue'}
+    )
+
+
+def _bug_fix_unit_plan_escalation_feedback(
+    state: dict[str, Any],
+    bug_fix_summary: dict[str, Any],
+    root_cause: dict[str, Any],
+) -> str:
+    return (
+        'Bug Fix root cause requires Unit Plan revision.\n\n'
+        f"Bug Fix ID: {state.get('activeBugFixId')}\n"
+        f"Classification: {root_cause.get('classification') or 'unknown'}\n"
+        f"Root cause: {root_cause.get('summary') or 'not provided'}\n\n"
+        'Original final acceptance defect feedback:\n\n'
+        f"{state.get('finalAcceptanceDefectFeedback') or state.get('finalAcceptanceRejectionFeedback') or ''}\n\n"
+        'Bug fix summary:\n\n'
+        f"{json.dumps(bug_fix_summary, ensure_ascii=False, indent=2)}"
+    )
+
+
+def _bug_fix_failure_verdict(
+    bug_fix_summary: dict[str, Any],
+    root_cause: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        'passed': False,
+        'issues': [
+            {
+                'severity': 'high',
+                'type': 'bug_fix_failed',
+                'message': str(
+                    bug_fix_summary.get('message')
+                    or root_cause.get('summary')
+                    or 'Bug Fix Agent did not complete successfully'
+                ),
+            }
+        ],
+    }
 
 
 def _ensure_final_acceptance_rejection_route_from_prompt(
@@ -2226,6 +2821,8 @@ def _approved_gate_invalid_reason(gate: str, state: dict[str, Any]) -> str | Non
     reason = str(state.get('blockedReason') or '')
     if gate == 'unit-plan' and reason.startswith('unit plan gate invalid:'):
         return reason
+    if gate == 'final-acceptance' and reason.startswith('final acceptance gate invalid:'):
+        return reason
     return None
 
 
@@ -2494,8 +3091,104 @@ def _process_is_alive(process_id: Any) -> bool:
     return True
 
 
+def _agent_guide_workspace_dir(
+    *,
+    explicit_workspace: Path | None,
+    state_dir: Path,
+    state: dict[str, Any],
+) -> Path:
+    if explicit_workspace is not None:
+        return explicit_workspace
+    workspace_path = state.get('executionWorkspacePath') or state.get('workspacePath')
+    if workspace_path:
+        return Path(str(workspace_path))
+    return state_dir.parent
+
+
+def _go_target_slug(target: str) -> str:
+    slug = ''.join(
+        char.lower() if char.isalnum() or char in '._-' else '-'
+        for char in target
+    ).strip('-')
+    return slug or 'target'
+
+
+def _go_state_dir_for_target(target: str) -> str:
+    return f'.rrc-controller-{_go_target_slug(target)}'
+
+
+def _go_state_dir_in_workspace(state_dir_name: str, workspace_dir: str | None, workspace_explicit: bool) -> str:
+    if workspace_explicit and workspace_dir:
+        return str(Path(workspace_dir) / state_dir_name)
+    return state_dir_name
+
+
+def add_go_parser(subparsers: Any) -> argparse.ArgumentParser:
+    go_parser = subparsers.add_parser(
+        'go',
+        help='Infer common defaults, initialize if needed, then continuously drive',
+        allow_abbrev=False,
+    )
+    go_parser.add_argument('target_arg', nargs='?', metavar='TARGET', help='Target label or acceptance version to run')
+    go_parser.add_argument('--state-dir', default=None, help='Directory containing session.json and artifacts/')
+    go_parser.add_argument('--force', action='store_true', help='Reinitialize an existing session before driving')
+    go_parser.add_argument('--dry-run', action='store_true', help='Simulate step execution by writing mock artifacts')
+    go_parser.add_argument('--max-steps', type=int, default=DEFAULT_MAX_AUTOMATIC_STEPS, help='Maximum automatic steps to run before stopping')
+    go_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate low-risk approval artifacts during runtime')
+    go_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
+    go_parser.add_argument('--agent', default=None, help='Agent command used by the real builder runtime')
+    go_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess or tmux-claude')
+    go_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
+    go_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
+    go_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
+    go_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
+    go_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout when start initializes state')
+    go_parser.add_argument('--claude-md', action='store_true', default=False, help='Also generate a CLAUDE.md shim that points to AGENTS.md when start initializes state')
+    go_parser.add_argument('--plannotator-command', default='plannotator', help='Command used for Plannotator-assisted human gate review')
+    go_parser.add_argument('--plannotator-port', type=int, default=20000, help='Port exported to Plannotator as PLANNOTATOR_PORT')
+    go_parser.add_argument('--verbose', action='store_true', help='Show raw per-step progress and execution lines')
+    go_parser.add_argument('--color', choices=COLOR_MODES, default='auto', help='Color compact output: auto, always, or never')
+    go_parser.add_argument('--test-strategist', action='store_true', default=False, help='Enable Test Strategist for Unit Plan draft')
+    go_parser.add_argument('--test-strategist-command', default=None, help='Override Test Strategist runner command')
+    go_parser.add_argument('--test-strategist-env', action='append', metavar='KEY=VALUE', dest='test_strategist_env', help='Inject env var into Test Strategist subprocess only (repeatable)')
+    go_parser.add_argument('--code-simplifier', action='store_true', default=None, help='Enable CodeSimplifier for the Refiner stage')
+    go_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
+    go_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
+    go_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
+    return go_parser
+
+
+def normalize_go_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> argparse.Namespace:
+    if getattr(args, 'command', None) != 'go':
+        return args
+
+    positional_target = getattr(args, 'target_arg', None)
+    flag_target = getattr(args, 'target', None)
+    if positional_target and flag_target and positional_target != flag_target:
+        parser.error('TARGET conflicts with --target')
+
+    target = flag_target or positional_target
+    args.target = target
+    workspace_arg = getattr(args, 'workspace_dir', None)
+    workspace_explicit = workspace_arg is not None
+    if getattr(args, 'workspace_dir', None) is None:
+        args.workspace_dir = '.'
+    if getattr(args, 'runner', None) is None:
+        args.runner = 'tmux-claude' if getattr(args, 'tmux_target', None) else 'subprocess'
+    if getattr(args, 'state_dir', None) is None:
+        if target:
+            args.state_dir = _go_state_dir_in_workspace(
+                _go_state_dir_for_target(target),
+                args.workspace_dir,
+                workspace_explicit,
+            )
+        else:
+            parser.error('go requires TARGET or --target when --state-dir is omitted')
+    return args
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Ralph Refiner Controller', allow_abbrev=False)
+    parser = argparse.ArgumentParser(description='Workflow Controller', allow_abbrev=False)
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     init_parser = subparsers.add_parser(
@@ -2506,13 +3199,14 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
     init_parser.add_argument('--force', action='store_true', help='Overwrite an existing session.json')
     init_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate approval artifacts during init and runtime')
-    init_parser.add_argument('--workspace-dir', default=None, help='Workspace containing .plan-ralph/session.json')
-    init_parser.add_argument('--from-ralph', action='store_true', help='Initialize controller state from an existing Ralph session')
+    init_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     init_parser.add_argument('--agent', default='claude', help='Agent command used by the real builder runtime')
     init_parser.add_argument('--runner', default='subprocess', help='Agent runner backend: subprocess or tmux-claude')
     init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
-    init_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
+    init_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     init_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
+    init_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout during init')
+    init_parser.add_argument('--claude-md', action='store_true', default=False, help='Also generate a CLAUDE.md shim that points to AGENTS.md')
     init_parser.add_argument('--test-strategist', action='store_true', default=False, help='Enable Test Strategist for Unit Plan draft')
     init_parser.add_argument('--test-strategist-command', default=None, help='Override Test Strategist runner command')
     init_parser.add_argument('--test-strategist-env', action='append', metavar='KEY=VALUE', dest='test_strategist_env', help='Inject env var into Test Strategist subprocess only (repeatable)')
@@ -2538,7 +3232,7 @@ def parse_args() -> argparse.Namespace:
     approve_parser.add_argument(
         '--gate',
         required=True,
-        choices=['requirements', 'unit-plan', 'final-acceptance'],
+        choices=['requirements', 'unit-plan', 'final-acceptance', 'bug-fix'],
         help='Markdown human gate to approve',
     )
     approve_parser.add_argument('--actor', default='human', help='Name recorded in the Human Confirmation block')
@@ -2573,14 +3267,15 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--dry-run', action='store_true', help='Simulate step execution by writing mock artifacts')
     start_parser.add_argument('--max-steps', type=int, default=DEFAULT_MAX_AUTOMATIC_STEPS, help='Maximum automatic steps to run before stopping')
     start_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate low-risk approval artifacts during runtime')
-    start_parser.add_argument('--workspace-dir', default=None, help='Workspace containing .plan-ralph/session.json')
-    start_parser.add_argument('--from-ralph', action='store_true', help='Initialize controller state from an existing Ralph session')
+    start_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     start_parser.add_argument('--agent', default=None, help='Agent command used by the real builder runtime')
     start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess or tmux-claude')
     start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
-    start_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
+    start_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     start_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     start_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
+    start_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout when start initializes state')
+    start_parser.add_argument('--claude-md', action='store_true', default=False, help='Also generate a CLAUDE.md shim that points to AGENTS.md when start initializes state')
     start_parser.add_argument('--plannotator-command', default='plannotator', help='Command used for Plannotator-assisted human gate review')
     start_parser.add_argument('--plannotator-port', type=int, default=20000, help='Port exported to Plannotator as PLANNOTATOR_PORT')
     start_parser.add_argument('--verbose', action='store_true', help='Show raw per-step progress and execution lines')
@@ -2592,6 +3287,8 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
     start_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
     start_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
+
+    add_go_parser(subparsers)
 
     drive_parser = subparsers.add_parser(
         'drive',
@@ -2606,7 +3303,7 @@ def parse_args() -> argparse.Namespace:
     drive_parser.add_argument('--agent', default=None, help='Override agent command used by the builder runtime')
     drive_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess or tmux-claude')
     drive_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for --runner tmux-claude')
-    drive_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
+    drive_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     drive_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     drive_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     drive_parser.add_argument('--plannotator-command', default='plannotator', help='Command used for Plannotator-assisted human gate review')
@@ -2628,10 +3325,10 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument('--agent', default=None, help='Override agent command used by the builder runtime')
     run_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess or tmux-claude')
     run_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for --runner tmux-claude')
-    run_parser.add_argument('--target', default=None, help='Target Ralph step id or acceptance label to run')
+    run_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     run_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
 
-    return parser.parse_args()
+    return normalize_go_args(parser.parse_args(), parser)
 
 
 def _build_strategist_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
@@ -2710,13 +3407,15 @@ def main() -> None:
         tmux_target=getattr(args, 'tmux_target', None),
         target=getattr(args, 'target', None),
         unsafe_skip_human_gates=getattr(args, 'unsafe_skip_human_gates', False),
+        agent_guides_enabled=getattr(args, 'agent_guides', True),
+        claude_md_enabled=getattr(args, 'claude_md', False),
         plannotator_command=getattr(args, 'plannotator_command', 'plannotator'),
         plannotator_port=getattr(args, 'plannotator_port', 20000),
     )
 
     if args.command == 'init':
         strategist_overrides = _build_role_overrides(args)
-        state = controller.init_state(force=args.force, from_ralph=args.from_ralph, strategist_overrides=strategist_overrides)
+        state = controller.init_state(force=args.force, strategist_overrides=strategist_overrides)
         print(render_status_line(state))
         return
 
@@ -2753,11 +3452,10 @@ def main() -> None:
         print(f'status=migrated paths={paths}')
         return
 
-    if args.command == 'start':
+    if args.command in {'start', 'go'}:
         try:
             controller.start(
                 force=args.force,
-                from_ralph=args.from_ralph,
                 max_steps=args.max_steps,
                 verbose=args.verbose,
                 color_mode=args.color,

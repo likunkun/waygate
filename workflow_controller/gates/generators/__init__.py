@@ -19,6 +19,8 @@ from workflow_controller.gates.parsers import (
     gate_body,
     write_gate_file,
 )
+from workflow_controller.journeys import final_journey_matrix_rows
+from workflow_controller.scope_audit import final_scope_audit_gate_lines
 
 
 def ensure_requirements_gate(state: dict[str, Any], approvals_dir: Path) -> Path:
@@ -37,6 +39,34 @@ def ensure_unit_plan_gate(state: dict[str, Any], approvals_dir: Path) -> Path:
     if not path.exists():
         write_gate_file(path, render_unit_plan_gate_body(state))
     return path
+
+
+def ensure_bug_fix_gate(state: dict[str, Any], approvals_dir: Path) -> Path:
+    path = approvals_dir / 'bug-fix.md'
+    if not path.exists():
+        write_gate_file(path, render_bug_fix_gate_body(state))
+    return path
+
+
+def render_bug_fix_gate_body(state: dict[str, Any]) -> str:
+    feedback = str(state.get('finalAcceptanceDefectFeedback') or state.get('finalAcceptanceRejectionFeedback') or '').strip()
+    bug_fix_id = state.get('activeBugFixId') or f"bug-fix-{int(state.get('bugFixAttemptCount') or 1)}"
+    return (
+        '# Bug Fix Gate\n\n'
+        f"- Bug Fix ID: `{bug_fix_id}`\n"
+        '- Scope: fix defects under already approved requirements only; do not add, remove, or weaken AC.\n\n'
+        '## Final Acceptance Defect Feedback\n\n'
+        f'{feedback or "- Fill in the observed final acceptance defect."}\n\n'
+        '## Expected Behavior\n\n'
+        '- Describe the approved behavior that should already work.\n\n'
+        '## Actual Behavior\n\n'
+        '- Describe the observed defect and reproduction path.\n\n'
+        '## Root Cause\n\n'
+        '- Bug Fix Agent must classify root cause as implementation_bug, test_gap, unit_plan_gap, or architecture_issue.\n'
+        '- If root cause is unit_plan_gap or architecture_issue, controller must escalate to Unit Plan revision.\n\n'
+        '## Regression Verification\n\n'
+        '- List existing test cases, regression commands, or manual evidence required before returning to Final Acceptance.\n'
+    )
 
 
 def render_unit_plan_gate_body(state: dict[str, Any]) -> str:
@@ -73,13 +103,13 @@ def _requirements_body(state: dict[str, Any]) -> str:
         f"- 当前单元：`{state.get('currentUnitId')}`",
         '',
         '## 2. 用户旅程',
-        '- 根据当前进度、发现记录和 Ralph 计划上下文整理。',
+        '- 根据当前进度、发现记录和目标上下文整理。',
         '- 确认前请人工补齐正常、异常、角色、权限、重试和数据持久化路径。',
         '',
         '## 3. 验收标准',
         '',
         '- 每条验收标准应使用稳定 AC ID，并写明固定测试数据或 fixture、操作路径、可断言的期望值。',
-        '- 每条 AC 必须声明 verification layer：unit / integration / e2e / manual，推荐格式：`AC-ID [verification: e2e]`。',
+        '- 每条 AC 必须声明 verification layer：unit / functional / integration / e2e / manual，推荐格式：`AC-ID [verification: e2e]`。',
         '- 用户可见闭环或数据流验收应能生成可执行 E2E 测试；截图或人工观察不能替代断言。',
     ]
     done_when = unit.get('done_when') or []
@@ -93,7 +123,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '',
         '- 每个 active must AO 必须映射到一个 AC，或显式标记为 `deferred` / `rejected` / `out_of_scope` 并写明原因。',
         '- Status 只能填写 covered/deferred/rejected/out_of_scope；covered 行必须填写 AC ID 和 Verification Layer。',
-        '- Verification Layer 只能填写 unit / integration / e2e / manual。',
+        '- Verification Layer 只能填写 unit / functional / integration / e2e / manual。',
         '',
         '| AO | AC | Status | Verification Layer | Evidence/Reason |',
         '| --- | --- | --- | --- | --- |',
@@ -302,6 +332,8 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
             suffix = f' (exit {returncode})' if returncode not in {None, 0} else ''
             lines.append(f'  - `{command}` -> {result_status}{suffix}')
     lines.extend(_final_acceptance_evidence_matrix_lines(verification))
+    lines.extend(final_scope_audit_gate_lines(artifacts_dir))
+    lines.extend(_journey_matrix_lines(state, artifacts_dir))
     lines.extend(_golden_path_result_lines(state, verification))
     lines.extend([
         '',
@@ -318,6 +350,7 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
         path = unit_dir / name
         if path.exists():
             lines.append(f'- `{path}`')
+    lines.extend(_bug_fix_evidence_lines(state, artifacts_dir))
     lines.extend([
         '',
         '## 人工审阅清单',
@@ -332,6 +365,39 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
         '     留空则 Agent 收到完整验收文档作为参考。-->',
     ])
     return _with_final_acceptance_rejection_routing('\n'.join(lines) + '\n')
+
+
+def _bug_fix_evidence_lines(state: dict[str, Any], artifacts_dir: Path) -> list[str]:
+    bug_fix_id = str(state.get('activeBugFixId') or '').strip()
+    if not bug_fix_id:
+        return []
+    bug_fix_dir = artifacts_dir / 'bug-fixes' / bug_fix_id
+    if not bug_fix_dir.exists():
+        return []
+    summary = _load_json_file(bug_fix_dir / 'bug-fix-summary.json')
+    root_cause = _load_json_file(bug_fix_dir / 'root-cause.json')
+    verification = _load_json_file(bug_fix_dir / 'verification.json')
+    lines = [
+        '',
+        '## Bug Fix Evidence',
+        f'- Bug Fix ID: `{bug_fix_id}`',
+        f"- Status: `{summary.get('status', 'unknown')}`",
+    ]
+    if root_cause:
+        lines.extend([
+            f"- Root cause classification: `{root_cause.get('classification', 'unknown')}`",
+            f"- Root cause route: `{root_cause.get('route', 'unknown')}`",
+            f"- Root cause summary: {root_cause.get('summary', 'not provided')}",
+        ])
+    if verification:
+        lines.append(f"- Regression verification: `{'passed' if verification.get('passed') else 'failed'}`")
+        for command in verification.get('commands') or []:
+            lines.append(f"  - `{command}`")
+    for name in ['bug-fix-summary.json', 'root-cause.json', 'verification.json', 'green-test.txt']:
+        path = bug_fix_dir / name
+        if path.exists():
+            lines.append(f'- `{path}`')
+    return lines
 
 
 def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> list[str]:
@@ -365,6 +431,40 @@ def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> lis
                 _markdown_cell(row.get('expected') or '未指定'),
                 _markdown_cell(_join_strings(row.get('artifact_refs')) or 'verification.json'),
                 'yes' if row.get('golden_path') is True else 'no',
+            ])
+            + ' |'
+        )
+    return lines
+
+
+def _journey_matrix_lines(state: dict[str, Any], artifacts_dir: Path) -> list[str]:
+    rows = final_journey_matrix_rows(state, artifacts_dir)
+    if not rows:
+        return []
+    lines = [
+        '',
+        '## Journey Matrix',
+        '',
+        '| Journey | AC | Unit | Test Case | Layer | Status | Command / Evidence | Expected | Artifacts |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ]
+    for row in rows:
+        command = str(row.get('command') or '').strip()
+        evidence = f'`{command}`' if command else '未指定'
+        lines.append(
+            '| '
+            + ' | '.join([
+                _markdown_cell(
+                    f"{row.get('journey_id') or '未指定'} {row.get('title') or ''}".strip()
+                ),
+                _markdown_cell(_join_strings(row.get('acceptance_criteria')) or '未指定'),
+                _markdown_cell(row.get('unit_id') or '未指定'),
+                _markdown_cell(row.get('test_case_id') or '未指定'),
+                _markdown_cell(row.get('layer') or '未指定'),
+                _markdown_cell(row.get('status') or 'missing'),
+                _markdown_cell(evidence),
+                _markdown_cell(row.get('expected') or '未指定'),
+                _markdown_cell(_join_strings(row.get('artifact_refs')) or 'artifacts/journeys/journey-evidence.json'),
             ])
             + ' |'
         )

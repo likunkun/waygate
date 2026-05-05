@@ -1,6 +1,57 @@
 # 进度日志
 
+## 会话：2026-05-05
+
+### V0.4.1–V0.4.5a 控制平面收敛
+- **状态：** complete
+- 已确认当前未提交实现覆盖 V0.4.1 Requirements Negotiation Loop、V0.4.2 Change Request Ledger、V0.4.3 Independent Bug Fix Gate、V0.4.4 Journey Acceptance Layer、V0.4.5 Final Scope Audit 和 V0.4.5a Requirements Dialogue Brief。
+- `ROADMAP.md` 已同步：V0.4.1–V0.4.5a 标记为已完成，V0.4.6 保持为下一步。
+- `task_plan.md` 已追加阶段 30–36，明确 V0.4.1–V0.4.5a 完成项和 V0.4.6 剩余项。
+- 已确认 `.rrc-controller-*` 是本地 controller state 产物，本轮不纳入提交。
+- 已验证全量测试：`python -m pytest workflow_controller/tests -q` -> `303 passed in 31.97s`
+
 ## 会话：2026-05-04
+
+### README 项目能力说明
+- **状态：** complete
+- 新增 `README.md`，以中文专业说明项目定位、当前能力、核心设计原则、工作流、CLI、artifact 结构、架构、runner 角色、验证方式、能力边界和安全审计规则。
+- README 已补充交互流程图、状态流转图，以及 Requirements Gate、Unit Plan Gate、Final Acceptance Gate 三类人工审核文档示例。
+- README 已补充每一步 Prompt 的 artifact、模板/生成逻辑、输入事实源、期望输出和人工审核归属。
+- README 已明确产品设计图和技术架构的主审核位置是 Requirements Gate；Unit Plan 继承设计/架构引用，Final Acceptance 通过 evidence matrix 反向审计覆盖。
+- README 已补充功能测试与 E2E 测试要求，明确 Requirements / Unit Plan / Builder / Verifier / Final Acceptance 各阶段如何要求测试，以及当前仍需补齐的 strict test presence 风险。
+- ROADMAP 已将 V0.4.6 更新为 `Strict Test Presence + Requirements Test Strategist`，目标是补齐“非 manual AC 没有可执行 test case 也可能通过”的风险。
+- 已修正 Test Case Matrix AO 覆盖解析：带产品设计/技术架构列的矩阵必须从真实 `Command/Evidence` 和 `Expected Result` 列读取测试证据，避免把设计引用误算成测试。
+- 已修正 `go` 默认路径推断：显式传 `--workspace-dir` 时，默认 `state-dir` 会落到目标项目目录下；README/USAGE 已同步说明。
+- README 已将三类人工审核文档从片段示例升级为完整结构展示，包含 `Human Confirmation`、`Content hash`、Requirements 全章节、Unit Plan state patch、Final Acceptance 返工路由。
+- README 明确区分已实现能力与 ROADMAP 规划能力，避免把 Journey Acceptance、workspace isolation、file/tool policy、clean verification、结构化契约文件误写成当前已完成。
+- 已验证全量测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `303 passed in 33.18s`
+
+### V0.4.0 Project Agent Operating Guide
+- **状态：** complete
+- `init` 现在默认在工作区生成中文 `AGENTS.md` 和标准 docs 目录：`docs/product`、`docs/architecture`、`docs/workflow`、`docs/operations`。
+- 新增 `--claude-md`，可生成只指向 canonical `AGENTS.md` 的中文 `CLAUDE.md` shim。
+- `AGENTS.md` 已加入中文工程行为准则：先澄清、简洁实现、精准修改、避免无关重构、以证据验证 bugfix。
+- 新增 `--no-agent-guides`，允许显式跳过 agent guide 和 docs layout 生成。
+- 已存在 `AGENTS.md` / `CLAUDE.md` 时不会覆盖原文件，会写入 `AGENTS.md.generated` / `CLAUDE.md.generated` 作为 merge 草稿。
+- 生成结果写入 `session.json` 的 `agentGuideArtifacts`，记录 workspace、文件状态和 docs 目录。
+- `start` 在创建新 state 或 `--force` 重建 state 时也复用同一配置。
+- 已按 TDD 验证 RED：新增测试先失败于缺少 `AGENTS.md` 与 `--claude-md` 参数。
+- 已补充边界回归：`--no-agent-guides` 跳过生成，`start` 创建新 state 时同样生成 guide。
+- 已验证定向测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py::test_init_creates_agent_operating_guide_and_docs_layout workflow_controller/tests/test_rrc_controller.py::test_init_can_generate_claude_md_and_does_not_overwrite_existing_guides -q` -> `2 passed in 0.19s`
+- 已验证 controller 回归：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `94 passed in 5.08s`
+- 已验证全量测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `272 passed in 30.72s`
+- code-simplifier refinement pass 完成：未发现需要额外行为保持清理的改动。
+
+### V0.4+ 版本路线图整合
+- **状态：** complete
+- 已将后续控制框架补齐项整合进 `ROADMAP.md`。
+- `ROADMAP.md` 已新增 `V0.4+ Priority Backlog` 表格，保留优先级、版本号、主题、要做什么和排序理由。
+- V0.4 现在包含：项目初始化规约、`AGENTS.md` / `CLAUDE.md`、文档目录事实源表、需求协商、`change_requests.jsonl`、独立 Bug Fix Gate、Journey Acceptance Layer、Final Scope Audit 和 Requirements-stage Test Strategist。
+- Journey Acceptance Layer 已调整为 V0.4.4，用于补齐当前只有 unit task acceptance / golden path、没有一等 Journey 验收模型的问题；Final Scope Audit 顺延为 V0.4.5，因为它需要审计 Journey 覆盖。
+- V0.5 现在聚焦 Execution Plane：per-role runner、opencode runner、task workspace/branch isolation、file/tool policy、clean verification。
+- V0.6 现在聚焦恢复与可观测性：checkpoint/time-travel、unified trace、evidence 类型扩展、failure taxonomy、automatic context repair。
+- V0.7 现在聚焦结构化契约和权威验收：`requirements.json`、`acceptance.json`、`tasks.json`、`journeys.json`、CI integration 和 lifecycle hooks。
+- 本节是路线图整合记录；V0.4.0 后续实现记录见本会话上方条目。
 
 ### V0.3.6 Final Acceptance Evidence Matrix
 - **状态：** complete
@@ -38,7 +89,7 @@
 - **状态：** complete
 - Requirements approval 现在会在写入 accepted 前执行质量预检。
 - 每个 active `must` AO 必须在 Requirements Traceability Matrix 或等价结构中映射到 AC，或显式标记为 `deferred` / `rejected` / `out_of_scope` 并写明原因。
-- 每条 AC 必须声明 verification layer；支持 `unit`、`integration`、`e2e`、`manual`，并兼容既有 `functional/API` 语义。
+- 每条 AC 必须声明 verification layer；支持 `unit`、`functional`、`integration`、`e2e`、`manual`，并兼容既有 `API` 语义。
 - `approve_human_gate('requirements')` 和已预批准 gate 的 `check_requirements_acceptance` 都会阻断无效 requirements，不会进入 Unit Plan。
 - requirements gate invalid 会写入 `blockedReason`，并在 requirements revision prompt 中追加 `Controller Validation Error`。
 - Requirements draft prompt 和本地 gate template 已新增 `## 4. 需求可追溯矩阵（Requirements Traceability Matrix）`。

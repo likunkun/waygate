@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）和 V0.3.6 Final Acceptance Evidence Matrix（阶段 27）。当前继续以 `ROADMAP.md` 为版本规划基线推进 workflow-controller。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）以及 V0.4.1–V0.4.5a 控制平面收敛。下一步按 `ROADMAP.md` 推进 V0.4.6 Strict Test Presence + Requirements-stage Test Strategist。
 
 ## 各阶段
 
@@ -250,6 +250,81 @@
 - [x] 全量 `workflow_controller/tests` 通过：`268 passed in 30.15s`。
 - [x] 确认未新增浏览器 UI 或页面。
 - **状态：** complete
+
+### 阶段 28：V0.4+ 版本路线图整合
+- [x] 将 `AGENTS.md` / `CLAUDE.md` 初始化规约纳入 V0.4.0。
+- [x] 将标准项目文档目录、事实源表和 agent 操作规则纳入 V0.4.0。
+- [x] 将详细 `V0.4+ Priority Backlog` 表格写入 `ROADMAP.md`，保留优先级、版本号、主题、任务说明和排序理由。
+- [x] 将 Requirements 协商循环、Change Request Ledger、独立 Bug Fix Gate、Journey Acceptance Layer、Final Scope Audit、Requirements-stage Test Strategist 纳入 V0.4.1–V0.4.6。
+- [x] 将 Journey Acceptance Layer 调整到 V0.4.4，明确 `journeys.json`、Journey Gate、Journey evidence 和 Final Acceptance Journey Matrix。
+- [x] 将 per-role runner、opencode runner、task workspace/branch isolation、file/tool policy 和 clean verification 纳入 V0.5。
+- [x] 将 checkpoint/time-travel、unified trace、evidence 类型扩展、failure taxonomy 和 automatic context repair 纳入 V0.6。
+- [x] 将结构化契约文件、CI 权威验收和 lifecycle hooks 纳入 V0.7。
+- **状态：** complete
+
+### 阶段 29：V0.4.0 Project Agent Operating Guide
+- [x] 完成 Unit 1：新增 agent guide 模板与初始化写入逻辑。
+- [x] `init` 默认在工作区生成中文 `AGENTS.md` 和标准 docs 目录。
+- [x] `--claude-md` 可生成中文 `CLAUDE.md` shim，指向 canonical `AGENTS.md`。
+- [x] `AGENTS.md` 加入中文工程行为准则：先澄清、简洁实现、精准修改、避免无关重构、以证据验证 bugfix。
+- [x] 已存在 `AGENTS.md` / `CLAUDE.md` 时不覆盖，改写 `.generated` 草稿。
+- [x] 新增 `--no-agent-guides` opt-out。
+- [x] `init` / `start` 初始化路径均接入 agent guide 配置。
+- [x] 生成结果写入 `agentGuideArtifacts`，便于 controller state 审计。
+- [x] 定向 RED：新增测试先失败于缺少 `AGENTS.md` 和 `--claude-md`。
+- [x] 边界回归覆盖：`--no-agent-guides` 跳过生成，`start` 初始化路径生成 guide。
+- [x] 定向 GREEN：新增测试通过；`test_rrc_controller.py` 全文件通过：`94 passed in 5.08s`。
+- [x] 全量 `workflow_controller/tests` 通过：`272 passed in 30.72s`。
+- **状态：** complete
+
+### 阶段 30：V0.4.1 Requirements Negotiation Loop
+- [x] Requirements gate 支持多轮批注、返工、确认。
+- [x] 每轮 requirements revision 写入 artifact，保留 diff summary、反馈来源和处理结果。
+- [x] Requirements revision prompt 携带 controller validation error、Plannotator annotations 和历史 revision feedback。
+- [x] 避免 implementation 阶段重新解释 requirements 范围。
+- **状态：** complete
+
+### 阶段 31：V0.4.2 Change Request Ledger
+- [x] 新增 `change_requests.jsonl`，记录需求变更来源、原因、影响 AO/AC/Test Case/Journey、状态和审批人。
+- [x] Requirements approval 会记录 pending/approved change request 审计信息。
+- [x] Final Acceptance requirements 路由会写入 change request，并保留 before/after hash。
+- [x] 实现阶段直接弱化或删除已批准 AC 的路径被要求回到 requirements/unit_plan gate。
+- **状态：** complete
+
+### 阶段 32：V0.4.3 Independent Bug Fix Gate
+- [x] `defect_fix` 路由进入独立 Bug Fix Gate，而不是直接退回 Unit Plan revision。
+- [x] Bug Fix Gate 记录 expected behavior、actual behavior、root cause 和 regression verification。
+- [x] Bug Fix Agent 输出 `root-cause.json` 和 `bug-fix-summary.json`，并把证据回写 Final Acceptance。
+- [x] 架构/计划类根因会升级回 Unit Plan 路由。
+- **状态：** complete
+
+### 阶段 33：V0.4.4 Journey Acceptance Layer
+- [x] 新增 Journey contract artifact：`artifacts/journeys/journeys.json`。
+- [x] Requirements gate 在 E2E/closure 验收时要求 Journey Acceptance Matrix。
+- [x] Unit Plan gate 要求 active Journey 映射到 closure/E2E test case。
+- [x] Verifier 根据真实命令结果生成 `journey-evidence.json`。
+- [x] Final Acceptance gate 展示 Journey Matrix，并阻断缺失或失败的 active Journey evidence。
+- **状态：** complete
+
+### 阶段 34：V0.4.5 Final Scope Audit
+- [x] Final Acceptance 前生成 `artifacts/final-scope-audit/scope-audit.json` 和 `.md`。
+- [x] Scope audit 汇总 AO/AC/Journey 覆盖、未覆盖项、声明变更文件和未解释 diff。
+- [x] Final Acceptance gate 渲染 scope audit 摘要。
+- [x] 存在 blocker 时阻断最终验收 approval。
+- **状态：** complete
+
+### 阶段 35：V0.4.5a Requirements Dialogue Brief
+- [x] Requirements Draft 前生成 `artifacts/requirements-dialogue-brief/requirements-dialogue-brief.json` 和 `.md`。
+- [x] brief 汇总原始用户目标、可行目标、当前 unit、target context、AO ledger 和 revision feedback。
+- [x] Requirements prompt 注入 brief path、hash 和 markdown 摘要，降低需求背景被 progress 误解释的风险。
+- **状态：** complete
+
+### 阶段 36：V0.4.6 Strict Test Presence + Requirements-stage Test Strategist
+- [x] Unit Plan Test Strategist prompt 已强化 fake/mock E2E 风险识别。
+- [ ] Requirements-stage Test Strategist 接入。
+- [ ] Requirements approval 前检查 AC 可验证性、测试层级合理性和 Journey/E2E coverage 需求。
+- [ ] Unit Plan approval 阶段强制每条非 manual AC 至少映射一个可执行 test case。
+- **状态：** pending
 
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。
