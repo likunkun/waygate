@@ -341,6 +341,16 @@
 - [x] 全量 `workflow_controller/tests` 通过：`332 passed in 43.67s`。
 - **状态：** complete
 
+### 阶段 38：V0.5.2 现场 tmux-codex 派发竞态与关键信息着色修复
+- [x] 现场定位 7 号窗口“回车发不出去”的直接原因：Codex 已写 `DONE_FILE`，但 pane 仍处于 `Working`，controller 过早派发下一轮 prompt，导致 prompt 进入 Codex 排队输入框。
+- [x] `tmux-codex` runner 在看到 `DONE_FILE status=done` 后等待 pane 离开 `Working` 状态，再向 controller 返回完成。
+- [x] runner event log 新增 `tmux_agent_busy_after_done` / `tmux_agent_idle_after_done`，便于后续诊断类似竞态。
+- [x] compact 输出在有色模式下突出自动打回、阻塞和 AO/AC/Test Case/Journey/unit 定位符；默认 `--color auto` 保持不变。
+- [x] README 补充 tmux-codex post-done 等待和 compact 关键信息着色说明。
+- [x] 定向测试覆盖 tmux-codex post-done 工作态等待、自动打回着色和默认 auto 颜色兼容。
+- [x] 全量 `workflow_controller/tests` 通过：`334 passed in 38.87s`。
+- **状态：** complete
+
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。
 2. 是否需要为新工作区补充独立的打包配置、入口脚本或 CI，后续按开发需要决定。

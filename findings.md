@@ -129,6 +129,15 @@
 - compact 输出不能只按 current unit 去重；同一 unit 内从 Unit Plan 生成、预检、自动打回到等待确认也需要重新打印状态卡。
 - 完整 validation error 可以进入 state 和 controller-validation artifact；终端 compact 输出只显示短原因，避免大量 AO/Journey 缺口刷屏。
 
+## 2026-05-05 tmux-codex DONE_FILE / Working 竞态发现
+
+- 7 号窗口现场不是 Ctrl 键卡住；底部同时出现 `Working` 和新的 `[Pasted Content ...]`，说明 Codex 仍在上一轮执行，新一轮 prompt 已被 controller 粘到排队输入框。
+- 直接根因是 controller 只以 `DONE_FILE` 为 tmux runner 完成信号；Codex 可能先写 `done.json`，随后继续执行若干文件恢复、校验或总结步骤。
+- 当 controller 在 Codex 仍 `Working` 时继续派发下一轮，Enter 不会表现为空闲输入框的“开始新回合”，而是进入 Codex 的队列/输入状态，看起来像“回车发不出去”或“像 Ctrl 被按住”。
+- 修复边界应在 runner 层：`tmux-codex` 看到 `DONE_FILE status=done` 后仍需确认 pane 已离开 `Working`；这比要求 agent “最后才写 done”更可靠。
+- compact 自动打回和阻塞信息应保留短原因，但有色模式下突出 AO/AC/Test Case/Journey/unit 等定位符，降低在长 validation reason 里找关键点的成本。
+- `--color auto` 默认保持不变；在真实 tmux TTY 内会启用颜色，在捕获输出或脚本里默认保持纯文本，仍可用 `--color always` / `--color never` 显式控制。
+
 ## 2026-05-04 V0.4+ 路线图整合发现
 
 - `AGENTS.md` / `CLAUDE.md` 应作为项目初始化规约进入 V0.4.0，但它们只定义 agent 如何工作、去哪读事实源，不能替代 requirements、acceptance、state 或 evidence。

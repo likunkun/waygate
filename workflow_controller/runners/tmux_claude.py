@@ -23,6 +23,7 @@ DEFAULT_TMUX_IDLE_MAX_NUDGES = 3
 DEFAULT_TMUX_CLAUDE_SUBMIT_KEY = 'C-m'
 DEFAULT_TMUX_CODEX_SUBMIT_KEY = 'Enter'
 DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS = 1.0
+DEFAULT_TMUX_POST_DONE_IDLE_POLL_SECONDS = 0.5
 
 
 class TmuxClaudeRunner(BaseRunner):
@@ -224,6 +225,29 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
                 )
             status = str(payload.get('status') or 'done')
             _append_event(events_path, {'event': 'done_signal_seen', 'status': status})
+            if backend == 'tmux-codex' and status == 'done':
+                idle_result = _wait_for_tmux_agent_idle_after_done(
+                    tmux_command=tmux_command,
+                    tmux_target=request.tmux_target,
+                    workspace_dir=request.workspace_dir,
+                    env=env,
+                    events_path=events_path,
+                    deadline=deadline,
+                )
+                if idle_result is not None:
+                    return RunnerResult(
+                        backend=backend,
+                        status=idle_result['status'],
+                        command=dispatch_commands[-1],
+                        returncode=idle_result['returncode'],
+                        stdout=''.join(stdout_parts),
+                        stderr=''.join(stderr_parts) + idle_result['stderr'],
+                        run_dir=run_dir,
+                        prompt_path=runner_prompt_path,
+                        done_path=done_path,
+                        done_payload=payload,
+                        runner_metadata=runner_metadata,
+                    )
             return RunnerResult(
                 backend=backend,
                 status=status,
@@ -396,6 +420,10 @@ def _tmux_codex_submit_retry_delay_seconds() -> float:
     return _env_float('RRC_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS', DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS)
 
 
+def _tmux_post_done_idle_poll_seconds() -> float:
+    return _env_float('RRC_TMUX_POST_DONE_IDLE_POLL_SECONDS', DEFAULT_TMUX_POST_DONE_IDLE_POLL_SECONDS)
+
+
 def _tmux_submit_key(backend: str) -> str:
     if backend == 'tmux-codex':
         return os.environ.get('RRC_TMUX_CODEX_SUBMIT_KEY', DEFAULT_TMUX_CODEX_SUBMIT_KEY).strip() or DEFAULT_TMUX_CODEX_SUBMIT_KEY
@@ -525,7 +553,7 @@ def _retry_codex_submit_if_prompt_still_pending(
 
 
 def _codex_submit_retry_reason(pane_tail: str, run_id: str) -> str | None:
-    if 'Working (' in pane_tail or '• Working' in pane_tail or '◦ Working' in pane_tail:
+    if _tmux_pane_looks_busy(pane_tail):
         return None
     if run_id in pane_tail and 'workflow-controller dispatch.' in pane_tail:
         return 'prompt_still_in_input'
@@ -534,6 +562,56 @@ def _codex_submit_retry_reason(pane_tail: str, run_id: str) -> str | None:
     if 'Pasted Content' in pane_tail:
         return 'pasted_content_still_in_input'
     return 'agent_not_working_after_submit'
+
+
+def _wait_for_tmux_agent_idle_after_done(
+    *,
+    tmux_command: list[str],
+    tmux_target: str,
+    workspace_dir: Path,
+    env: dict[str, str],
+    events_path: Path,
+    deadline: float,
+) -> dict[str, Any] | None:
+    saw_busy = False
+    poll_seconds = _tmux_post_done_idle_poll_seconds()
+    while time.monotonic() < deadline:
+        pane_tail = _capture_tmux_pane(
+            tmux_command=tmux_command,
+            tmux_target=tmux_target,
+            workspace_dir=workspace_dir,
+            env=env,
+        )
+        if not _tmux_pane_looks_busy(pane_tail):
+            if saw_busy:
+                _append_event(events_path, {'event': 'tmux_agent_idle_after_done'})
+            return None
+        saw_busy = True
+        _append_event(events_path, {
+            'event': 'tmux_agent_busy_after_done',
+            'pane_state': _tail_text(pane_tail, max_chars=500),
+        })
+        time.sleep(poll_seconds)
+    return {
+        'status': 'agent_busy_after_done',
+        'returncode': 124,
+        'stderr': (
+            'tmux-codex wrote DONE_FILE but the pane still shows a Working state. '
+            'The controller did not dispatch the next step to avoid queuing a prompt into a busy Codex session.'
+        ),
+    }
+
+
+def _tmux_pane_looks_busy(pane_tail: str) -> bool:
+    lines = [line.strip() for line in str(pane_tail or '').splitlines() if line.strip()]
+    last_busy = -1
+    last_done = -1
+    for index, line in enumerate(lines):
+        if re.search(r'(?:^|\s|[•◦])\s*Working\s*\(', line) or re.search(r'[•◦]\s*Working\b', line):
+            last_busy = index
+        if re.search(r'\bWorked for\b', line):
+            last_done = index
+    return last_busy > last_done
 
 
 def _tmux_timeout_message(*, backend: str, done_path: Path, run_id: str, pane_tail: str) -> str:

@@ -265,7 +265,7 @@ start / drive
 | `--max-steps` | 最大自动步数 | 2000 |
 | `--dry-run` | 模拟执行，写 mock artifacts，不调用真实 agent | 关闭 |
 | `--verbose` | 显示每步完整输出 | 关闭 |
-| `--color` | `auto` / `always` / `never` | `auto` |
+| `--color` | `auto` / `always` / `never`；有色模式突出自动打回/阻塞和 AO/AC/Test Case/Journey/unit 定位符 | `auto` |
 | `--actor` | 人工 gate 确认时记录的操作人名称 | `human` |
 | `--plannotator-port` | Plannotator 监听端口 | `20000` |
 | `--plannotator-command` | 覆盖 Plannotator 启动命令 | 可选 |

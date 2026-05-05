@@ -3983,6 +3983,22 @@ def test_gate_reason_label_compacts_large_acceptance_obligation_lists() -> None:
     assert len(label) < 180
 
 
+def test_colored_auto_revision_message_highlights_gate_and_ids() -> None:
+    message = rrc_controller_module._format_auto_revision_message(
+        gate_label='Unit Plan',
+        action_label='预检失败，已自动打回',
+        reason='missing Acceptance Obligation coverage: AO-001 and AC-1 via TC-V13-01',
+        color_enabled=True,
+    )
+
+    assert '\x1b[' in message
+    plain = re.sub(r'\x1b\[[0-9;]*m', '', message)
+    assert plain == '[修订] Unit Plan 预检失败，已自动打回：missing Acceptance Obligation coverage: AO-001 and AC-1 via TC-V13-01'
+    assert '\x1b[33mAO-001\x1b[0m' in message
+    assert '\x1b[33mAC-1\x1b[0m' in message
+    assert '\x1b[33mTC-V13-01\x1b[0m' in message
+
+
 def _unit_plan_body_with_obligations(obligations: list[str]) -> str:
     return f"""# Unit Plan Confirmation
 

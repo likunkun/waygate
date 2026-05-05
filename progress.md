@@ -2,6 +2,22 @@
 
 ## 会话：2026-05-05
 
+### V0.5.2 现场 tmux-codex 派发竞态与关键信息着色修复
+- **状态：** complete
+- 现场 7 号窗口的“回车发不出去”不是 Ctrl 键卡住；证据显示 Codex 写出 `done.json` 后仍在 `Working`，controller 已读到 `DONE_FILE` 并立即把下一轮 prompt 粘进了 Codex 的排队输入框。
+- `tmux-codex` runner 现在在 `DONE_FILE status=done` 后捕获目标 pane，确认其离开 `Working` 状态后才返回完成，避免 controller 提前派发下一轮。
+- runner events 新增 `tmux_agent_busy_after_done` 和 `tmux_agent_idle_after_done`，用于诊断 DONE_FILE 与 TUI 工作态不同步的问题。
+- compact 输出在有色模式下会突出 `[修订]` / `[阻塞]`、自动打回动作，以及 AO/AC/Test Case/Journey/unit 等定位符；默认 `--color auto` 保持不变。
+- README 已补充 tmux-codex post-done 等待和关键信息着色说明。
+- 已验证定向测试：
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `29 passed in 9.96s`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_drive_color_auto_keeps_captured_output_plain workflow_controller/tests/test_rrc_controller.py::test_drive_color_always_adds_ansi_to_compact_output workflow_controller/tests/test_rrc_controller.py::test_drive_auto_revises_invalid_unit_plan_with_short_precheck_status workflow_controller/tests/test_rrc_controller.py::test_colored_auto_revision_message_highlights_gate_and_ids -q` -> `4 passed in 0.69s`
+- 已验证回归测试：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `137 passed in 9.72s`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `40 passed in 12.57s`
+  - `python -m pytest workflow_controller/tests/gates/test_gates_structure.py -q` -> `18 passed in 0.06s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `334 passed in 38.87s`
+
 ### V0.5.2 审批摘要优先 + Unit Plan 进度输出修复
 - **状态：** complete
 - Requirements / Unit Plan approval Markdown 现在顶部先展示 `## 审批摘要`，结论、变更点、需要人确认的点、验收命令和 Controller/Critic 检查摘要都在摘要区。

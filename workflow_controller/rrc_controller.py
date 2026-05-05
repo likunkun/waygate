@@ -1837,6 +1837,7 @@ class RalphRefinerController:
         color_enabled = _color_enabled(color_mode)
         compact_reporter = None if verbose else _CompactDriveReporter(output_func, color_enabled=color_enabled)
         self._drive_compact_reporter = compact_reporter
+        self._drive_color_enabled = color_enabled
         state = self.get_status()
         if print_agent_target:
             self._print_agent_target_resolution(state, output_func)
@@ -1901,9 +1902,10 @@ class RalphRefinerController:
             output_func(_paint('[完成] 工作流已完成。', 'green', color_enabled))
         elif state.get('status') == 'blocked':
             reason = _gate_reason_label(str(state.get('blockedReason') or '工作流已阻塞'))
-            output_func(_paint(f"[阻塞] {reason}", 'red', color_enabled))
+            output_func(_format_blocked_message(reason, color_enabled=color_enabled))
         else:
             output_func(f"[停止] 工作流状态：{state.get('status')}。")
+        self._drive_color_enabled = False
         return state
 
     def _print_drive_progress(
@@ -2181,13 +2183,18 @@ class RalphRefinerController:
             return False
         if not str(error).startswith('requirements gate invalid:'):
             return False
-        output_func('[修订] Controller 校验未通过，已自动打回需求草案生成。')
+        output_func(
+            _format_auto_revision_message(
+                action_label='Controller 校验未通过，已自动打回需求草案生成',
+                color_enabled=bool(getattr(self, '_drive_color_enabled', False)),
+            )
+        )
         try:
             self._revise_requirements_gate(controller_validation_only=True)
             state = self._auto_revise_invalid_requirements_draft(self.store.load_state())
             self._save_state(state)
         except Exception as exc:
-            output_func(f'[修订] 自动打回失败：{exc}')
+            output_func(_format_auto_revision_failure_message(str(exc), color_enabled=bool(getattr(self, '_drive_color_enabled', False))))
             return False
         output_func(f"[修订] 已根据 Controller 校验错误重新生成 {gate_info['label']}。")
         return True
@@ -2207,15 +2214,19 @@ class RalphRefinerController:
         if not self._unit_plan_auto_revision_enabled(self.store.load_state()):
             return False
         output_func(
-            '[修订] Unit Plan 预检失败，已自动打回：'
-            + _gate_reason_label(_strip_gate_invalid_prefix(str(error)))
+            _format_auto_revision_message(
+                gate_label='Unit Plan',
+                action_label='预检失败，已自动打回',
+                reason=_gate_reason_label(_strip_gate_invalid_prefix(str(error))),
+                color_enabled=bool(getattr(self, '_drive_color_enabled', False)),
+            )
         )
         try:
             self._revise_unit_plan_gate(controller_validation_only=True)
             state = self._auto_revise_invalid_unit_plan_draft(self.store.load_state())
             self._save_state(state)
         except Exception as exc:
-            output_func(f'[修订] 自动打回失败：{exc}')
+            output_func(_format_auto_revision_failure_message(str(exc), color_enabled=bool(getattr(self, '_drive_color_enabled', False))))
             return False
         output_func(f"[修订] 已根据 Controller 校验错误重新生成 {gate_info['label']}。")
         return True
@@ -2279,7 +2290,14 @@ class RalphRefinerController:
                     force=True,
                 )
             if output_func is not None:
-                output_func(f'[修订] Requirements 草案未通过 controller 预检，自动打回：{_gate_reason_label(reason)}')
+                output_func(
+                    _format_auto_revision_message(
+                        gate_label='Requirements',
+                        action_label='草案未通过 controller 预检，自动打回',
+                        reason=_gate_reason_label(reason),
+                        color_enabled=bool(getattr(self, '_drive_color_enabled', False)),
+                    )
+                )
             self._revise_requirements_gate(controller_validation_only=True)
             state = self.store.load_state()
 
@@ -2357,8 +2375,12 @@ class RalphRefinerController:
                 )
             if output_func is not None:
                 output_func(
-                    '[修订] Unit Plan 预检失败，已自动打回：'
-                    + _gate_reason_label(_strip_gate_invalid_prefix(reason))
+                    _format_auto_revision_message(
+                        gate_label='Unit Plan',
+                        action_label='预检失败，已自动打回',
+                        reason=_gate_reason_label(_strip_gate_invalid_prefix(reason)),
+                        color_enabled=bool(getattr(self, '_drive_color_enabled', False)),
+                    )
                 )
             self._revise_unit_plan_gate(controller_validation_only=True)
             state = self.store.load_state()
@@ -2417,6 +2439,50 @@ def _gate_reason_label(reason: str) -> str:
     if label:
         return label
     return _compact_controller_reason(reason)
+
+
+def _format_auto_revision_message(
+    *,
+    action_label: str,
+    color_enabled: bool,
+    gate_label: str = '',
+    reason: str = '',
+) -> str:
+    plain_head = '[修订]'
+    head = _paint(plain_head, 'cyan', color_enabled)
+    gate = f"{_paint(gate_label, 'bold', color_enabled)} " if gate_label else ''
+    action = _paint(action_label, 'yellow', color_enabled)
+    if reason:
+        return f'{head} {gate}{action}：{_highlight_validation_tokens(reason, color_enabled=color_enabled)}'
+    return f'{head} {gate}{action}。'
+
+
+def _format_auto_revision_failure_message(reason: str, *, color_enabled: bool) -> str:
+    return (
+        f"{_paint('[修订]', 'cyan', color_enabled)} "
+        f"{_paint('自动打回失败', 'red', color_enabled)}："
+        f'{_highlight_validation_tokens(reason, color_enabled=color_enabled)}'
+    )
+
+
+def _format_blocked_message(reason: str, *, color_enabled: bool) -> str:
+    return (
+        f"{_paint('[阻塞]', 'red', color_enabled)} "
+        f'{_highlight_validation_tokens(reason, color_enabled=color_enabled)}'
+    )
+
+
+def _highlight_validation_tokens(text: str, *, color_enabled: bool) -> str:
+    if not color_enabled:
+        return text
+    token_pattern = re.compile(
+        r'(?<![A-Za-z0-9_-])('
+        r'(?:AO|AC|TC|J)-[A-Za-z0-9_.-]+'
+        r'|(?:target|unit|v\d)[A-Za-z0-9_.-]+'
+        r'|/[^\s;:,，。]+'
+        r')(?![A-Za-z0-9_-])'
+    )
+    return token_pattern.sub(lambda match: _paint(match.group(1), 'yellow', True), text)
 
 
 def _strip_gate_invalid_prefix(reason: str) -> str:

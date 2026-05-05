@@ -396,6 +396,68 @@ if sys.argv[1:2] == ["capture-pane"]:
     assert sleep_calls == [2.0, 1.0]
 
 
+def test_tmux_codex_waits_for_pane_to_leave_working_state_after_done(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    capture_count_path = tmp_path / 'capture-count.txt'
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    monkeypatch.setenv('RRC_TMUX_POST_DONE_IDLE_POLL_SECONDS', '0.1')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["Enter"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "codex wrote done early", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+if sys.argv[1:2] == ["capture-pane"]:
+    path = Path({str(capture_count_path)!r})
+    count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
+    path.write_text(str(count + 1), encoding="utf-8")
+    if count == 0:
+        print("◦ Working (4m 18s • esc to interrupt)")
+    else:
+        print("─ Worked for 4m 21s")
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-codex',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    assert 'capture-pane -t 1.2' in tmux_log.read_text(encoding='utf-8')
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    assert any(event.get('event') == 'tmux_agent_busy_after_done' for event in events)
+    assert any(event.get('event') == 'tmux_agent_idle_after_done' for event in events)
+    assert sleep_calls == [2.0, 0.1]
+
+
 def test_tmux_claude_runner_pastes_short_dispatch_that_points_to_full_prompt(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
