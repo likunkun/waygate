@@ -5,6 +5,7 @@ import stat
 import time
 from pathlib import Path
 
+import workflow_controller.runners.tmux_claude as tmux_runner
 from workflow_controller.runners.base import RunnerRequest, DEFAULT_AGENT_TIMEOUT_SECONDS
 from workflow_controller.runners.codex import _subprocess_agent_command
 from workflow_controller.runners.tmux_claude import _tmux_idle_poll_seconds
@@ -117,7 +118,282 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     prompt = result.prompt_path.read_text(encoding='utf-8')
     assert 'DONE_FILE:' in prompt
     assert 'RUN_ID:' in prompt
+    assert 'If the task requires asking the user a blocking clarification question' in prompt
+    assert 'ask it in the active tmux agent pane' in prompt
+    assert 'Do not write DONE_FILE while waiting for the user answer' in prompt
     assert 'Implement this unit.' in prompt
+
+
+def test_tmux_codex_runner_reuses_tmux_dispatch_and_records_backend(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["Enter"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{
+            "status": "done",
+            "summary": "codex tmux finished",
+            "run_id": os.environ["RRC_RUN_ID"],
+        }}),
+        encoding="utf-8",
+    )
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-codex',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.backend == 'tmux-codex'
+    assert result.status == 'done'
+    assert result.runner_metadata['backend'] == 'tmux-codex'
+    log = tmux_log.read_text(encoding='utf-8')
+    assert 'paste-buffer -t 1.2' in log
+    assert 'send-keys -t 1.2 Enter' in log
+    assert 'send-keys -t 1.2 C-m' not in log
+    assert 'send-keys -t 1.2 C-j' not in log
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    assert events[0]['event'] == 'dispatch_started'
+    assert events[0]['backend'] == 'tmux-codex'
+    submit_delay = next(event for event in events if event.get('event') == 'tmux_submit_delay')
+    assert submit_delay['seconds'] == 2.0
+    assert sleep_calls == [2.0]
+
+
+def test_tmux_codex_submit_key_can_be_overridden(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "codex override finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+    monkeypatch.setenv('RRC_TMUX_CODEX_SUBMIT_KEY', 'C-m')
+    monkeypatch.setenv('RRC_TMUX_CODEX_SUBMIT_DELAY_SECONDS', '0')
+
+    request = RunnerRequest(
+        backend='tmux-codex',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    assert 'send-keys -t 1.2 C-m' in tmux_log.read_text(encoding='utf-8')
+
+
+def test_tmux_codex_retries_submit_when_prompt_remains_in_input(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    submit_count_path = tmp_path / 'submit-count.txt'
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["Enter"]:
+    path = Path({str(submit_count_path)!r})
+    count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
+    path.write_text(str(count + 1), encoding="utf-8")
+    if count >= 1:
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({{"status": "done", "summary": "codex retry finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+            encoding="utf-8",
+        )
+if sys.argv[1:2] == ["capture-pane"]:
+    print("› workflow-controller dispatch.")
+    print("RUN_ID: " + os.environ["RRC_RUN_ID"])
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-codex',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    log = tmux_log.read_text(encoding='utf-8')
+    assert log.count('send-keys -t 1.2 Enter') == 2
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    retry_event = next(event for event in events if event.get('event') == 'tmux_codex_submit_retry')
+    assert retry_event['reason'] == 'prompt_still_in_input'
+    assert sleep_calls == [2.0, 1.0]
+
+
+def test_tmux_codex_retries_submit_when_codex_collapses_pasted_input(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    submit_count_path = tmp_path / 'submit-count.txt'
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["Enter"]:
+    path = Path({str(submit_count_path)!r})
+    count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
+    path.write_text(str(count + 1), encoding="utf-8")
+    if count >= 1:
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({{"status": "done", "summary": "codex retry finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+            encoding="utf-8",
+        )
+if sys.argv[1:2] == ["capture-pane"]:
+    print("› [Pasted Content 1024 chars]")
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-codex',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    log = tmux_log.read_text(encoding='utf-8')
+    assert log.count('send-keys -t 1.2 Enter') == 2
+    assert sleep_calls == [2.0, 1.0]
+
+
+def test_tmux_codex_retries_submit_when_agent_is_not_working_after_submit(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    submit_count_path = tmp_path / 'submit-count.txt'
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["Enter"]:
+    path = Path({str(submit_count_path)!r})
+    count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
+    path.write_text(str(count + 1), encoding="utf-8")
+    if count >= 1:
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({{"status": "done", "summary": "codex retry finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+            encoding="utf-8",
+        )
+if sys.argv[1:2] == ["capture-pane"]:
+    print("›")
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-codex',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    log = tmux_log.read_text(encoding='utf-8')
+    assert log.count('send-keys -t 1.2 Enter') == 2
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    retry_event = next(event for event in events if event.get('event') == 'tmux_codex_submit_retry')
+    assert retry_event['reason'] == 'agent_not_working_after_submit'
+    assert sleep_calls == [2.0, 1.0]
 
 
 def test_tmux_claude_runner_pastes_short_dispatch_that_points_to_full_prompt(tmp_path: Path) -> None:
@@ -162,15 +438,57 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert dispatch_path.exists()
     dispatch_text = dispatch_path.read_text(encoding='utf-8')
     assert len(dispatch_text) < 2000
-    assert f'PROMPT_FILE: {result.prompt_path}' in dispatch_text
-    assert f'DONE_FILE: {result.done_path}' in dispatch_text
+    assert f'PROMPT_FILE: {result.prompt_path.resolve()}' in dispatch_text
+    assert f'DONE_FILE: {result.done_path.resolve()}' in dispatch_text
     assert f'RUN_ID: {result.run_dir.name}' in dispatch_text
     assert 'Read PROMPT_FILE first' in dispatch_text
+    assert 'If PROMPT_FILE instructs you to ask the user a clarification question' in dispatch_text
+    assert 'ask it in this tmux pane and continue after the user answers' in dispatch_text
+    assert 'Do not write DONE_FILE until the task is complete or truly blocked' in dispatch_text
     full_prompt = result.prompt_path.read_text(encoding='utf-8')
     assert 'Implement this unit with a long body.' in full_prompt
     log = tmux_log.read_text(encoding='utf-8')
     assert f'load-buffer {dispatch_path}' in log
     assert f'load-buffer {result.prompt_path}' not in log
+
+
+def test_tmux_runner_dispatch_prompt_uses_absolute_paths_for_relative_artifact_dir(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({"status": "done", "summary": "ok", "run_id": os.environ["RRC_RUN_ID"]}),
+        encoding="utf-8",
+    )
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=Path('relative-artifacts'),
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    dispatch_text = (result.run_dir / 'dispatch.md').read_text(encoding='utf-8')
+    assert f'PROMPT_FILE: {result.prompt_path.resolve()}' in dispatch_text
+    assert f'DONE_FILE: {result.done_path.resolve()}' in dispatch_text
 
 
 def test_tmux_claude_runner_does_not_clear_claude_session_by_default(tmp_path: Path) -> None:
@@ -485,6 +803,7 @@ def test_runner_request_default_timeout_is_two_hours() -> None:
 
 def test_make_runner_maps_state_to_backend() -> None:
     assert make_runner({'agentRunner': 'tmux-claude'}).backend == 'tmux-claude'
+    assert make_runner({'agentRunner': 'tmux-codex'}).backend == 'tmux-codex'
     assert make_runner({'agentRunner': 'subprocess'}).backend == 'subprocess'
     assert make_runner({'agentCommand': 'claude'}).backend == 'subprocess'
 

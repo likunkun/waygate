@@ -120,6 +120,15 @@
 - `.rrc-controller-V0.2*` 和 `.rrc-controller-v0.1` 是本地运行 state-dir，应继续保持未跟踪；它们不是版本规划或产品能力交付物。
 - V0.4.6 的主线仍未完成：Requirements-stage Test Strategist 和 strict non-manual AC test presence gate 仍是下一步；本轮只把 Unit Plan Test Strategist 的 fake/mock E2E 风险识别作为前置强化纳入基线。
 
+## 2026-05-05 V0.5.2 审批摘要与 Unit Plan 输出发现
+
+- 审批文件不需要拆附件；把摘要放在顶部、完整矩阵和原始正文放在同一 Markdown 附录区，可以同时满足人工快速审阅和现有 parser/validator 全文扫描。
+- `## Controller State Patch` 仍需保持精确 heading，不能改成带前缀的附录标题，否则现有 `extract_unit_plan_state_patch()` 不能可靠定位 fenced JSON。
+- Plannotator 重新审阅 approval Markdown 本身后，顶部摘要成为默认落点；`artifacts/*-body.md` 仍可保留为 agent 原始输出 artifact，但不再是人工 gate 的审阅目标。
+- Unit Plan 自动预检必须发生在人工菜单之前；否则用户按 `a` 才看到 controller 可判定错误，会形成“人工已确认但 controller 又拒绝”的错误心智模型。
+- compact 输出不能只按 current unit 去重；同一 unit 内从 Unit Plan 生成、预检、自动打回到等待确认也需要重新打印状态卡。
+- 完整 validation error 可以进入 state 和 controller-validation artifact；终端 compact 输出只显示短原因，避免大量 AO/Journey 缺口刷屏。
+
 ## 2026-05-04 V0.4+ 路线图整合发现
 
 - `AGENTS.md` / `CLAUDE.md` 应作为项目初始化规约进入 V0.4.0，但它们只定义 agent 如何工作、去哪读事实源，不能替代 requirements、acceptance、state 或 evidence。

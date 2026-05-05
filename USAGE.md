@@ -10,6 +10,10 @@ Requirements Draft → Unit Plan → Builder → Verifier → Final Acceptance
 
 每个人工 gate 处 controller 自动启动 Plannotator（默认 `http://localhost:20000`）并打印网址，等待浏览器操作后自动继续。
 
+Requirements Draft 阶段不会由 controller 终端问卷打断；如果目标 Claude/Codex agent 判断缺少会导致方向做错的关键信息，它会直接在自己的 tmux pane 里集中提问，用户回答后继续生成 Requirements Gate。
+
+生成后的 Requirements Gate 会先经过 controller 预检；缺 Journey、缺 verification layer、缺 AO/AC 映射等可自动判定的问题会直接打回 Requirements Drafter，不先进入人工审核。
+
 ---
 
 ## 环境准备
@@ -31,7 +35,7 @@ source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 推荐短命令：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+python -m workflow_controller.cli go V1.0
 ```
 
 这会自动推断：
@@ -39,9 +43,17 @@ python -m workflow_controller.cli go V1.0 --tmux-target 1.2
 | 项 | 推断值 |
 |----|--------|
 | target | `V1.0` |
-| workspace-dir | 当前目录 `.`，即目标项目根目录 |
+| workspace-dir | 当前目录，即目标项目根目录 |
 | state-dir | `<workspace-dir>/.rrc-controller-v1.0`；未显式传 `--workspace-dir` 时表现为 `.rrc-controller-v1.0` |
-| runner | 传入 `--tmux-target` 时自动使用 `tmux-claude` |
+| runner | 未传 `--tmux-target` 且在 tmux 内时自动右侧创建 Claude pane；传入 `--tmux-target` 时自动识别 `tmux-codex` 或 `tmux-claude` |
+
+如果已经有正在运行的 Codex 或 Claude pane，可以指定目标 pane：
+
+```bash
+python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+```
+
+未显式传 `--workspace-dir` 时，controller 会使用目标 pane 的当前目录作为 workspace，并把默认 state-dir 放在该目录下。
 
 完全展开的 `start` 写法仍然兼容：
 
@@ -60,8 +72,7 @@ python -m workflow_controller.cli start \
 
 ```bash
 python -m workflow_controller.cli go V1.0 \
-  --workspace-dir ~/works/target-project \
-  --tmux-target 1.2
+  --workspace-dir ~/works/target-project
 ```
 
 ### 两步法（先 init 再 drive）
@@ -87,7 +98,10 @@ python -m workflow_controller.cli drive \
 按目标推断常用参数，等价于 `start` 的便捷层：state-dir 不存在时初始化，存在时按现有 `start` 兼容性校验继续。
 
 ```bash
-# 新目标：推断目标项目内的 .rrc-controller-v1.0、workspace-dir .，并因 tmux target 自动选择 tmux-claude
+# 新目标：推断目标项目内的 .rrc-controller-v1.0；在 tmux 内无 target 时自动创建 Claude pane
+python -m workflow_controller.cli go V1.0
+
+# 指向已有 pane：自动识别 Codex 或 Claude
 python -m workflow_controller.cli go V1.0 --tmux-target 1.2
 
 # 显式使用 subprocess runner
@@ -224,8 +238,8 @@ start / drive
 | `--state-dir` | 存放 `session.json` 和 `artifacts/` 的目录 | 必填 |
 | `--workspace-dir` | 项目工作区目录 | 可选 |
 | `--target` | 目标标签，如 `V1.0` | 可选 |
-| `--runner` | `subprocess` 或 `tmux-claude` | `tmux-claude` |
-| `--tmux-target` | tmux pane 地址，如 `1.2` | tmux 模式必填 |
+| `--runner` | `subprocess`、`tmux-claude` 或 `tmux-codex` | 未指定时由 `go`/tmux target 解析 |
+| `--tmux-target` | tmux pane 地址，如 `1.2` | 可选；未传且在 tmux 内时自动创建 Claude pane |
 | `--agent` | 覆盖 agent 命令字符串 | 可选 |
 | `--force` | 强制重新初始化，覆盖已有 `session.json` | 关闭 |
 | `--auto-approve` | 自动批准低风险 gate（测试/干跑用） | 关闭 |
@@ -241,8 +255,8 @@ start / drive
 | `TARGET` / `--target` | 用作目标标签；两者同时传入且不一致时报错 |
 | `--state-dir` | 有 target 时推断为 `<workspace-dir>/.rrc-controller-<target-slug>`；未显式传 `--workspace-dir` 时表现为当前目录下的 `.rrc-controller-<target-slug>` |
 | target slug | 小写；保留字母、数字、点、下划线、连字符；其他字符替换为 `-`；去掉首尾 `-` |
-| `--workspace-dir` | 当前目录 `.`，即目标项目根目录 |
-| `--runner` | 传了 `--tmux-target` 时为 `tmux-claude`，否则为 `subprocess` |
+| `--workspace-dir` | 当前目录；指定 `--tmux-target` 且未显式传 workspace 时，使用目标 pane 当前目录 |
+| `--runner` | 传了 `--tmux-target` 时自动识别 `tmux-codex` / `tmux-claude`；未传 target 且在 tmux 内时自动创建 Claude pane；显式 `--runner subprocess` 不使用 tmux |
 
 ### `start` / `drive` 运行时参数
 

@@ -45,6 +45,65 @@ def run_rrc_with_pythonpath(*args: str, cwd: Path) -> subprocess.CompletedProces
     )
 
 
+def _make_fake_tmux(
+    tmp_path: Path,
+    *,
+    pane_command: str = '',
+    pane_title: str = '',
+    pane_current_path: str = '',
+    pane_pid: str = '',
+    pane_output: str = '',
+    split_pane_id: str = '%42',
+) -> Path:
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = tmp_path / 'tmux'
+    fake_tmux.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args) + "\\n")
+if args[:2] == ["display-message", "-p"]:
+    fmt = args[-1] if args else ""
+    if "pane_current_command" in fmt:
+        print({pane_command!r})
+    elif "pane_current_path" in fmt:
+        print({pane_current_path!r})
+    elif "pane_pid" in fmt:
+        print({pane_pid!r})
+    elif "pane_title" in fmt:
+        print({pane_title!r})
+elif args[:1] == ["capture-pane"]:
+    print({pane_output!r})
+elif args[:1] == ["split-window"]:
+    print({split_pane_id!r})
+""",
+        encoding='utf-8',
+    )
+    fake_tmux.chmod(0o755)
+    return fake_tmux
+
+
+def _make_fake_ps(tmp_path: Path, output: str) -> Path:
+    fake_ps = tmp_path / 'ps'
+    fake_ps.write_text(
+        f"""#!/usr/bin/env python3
+print({output!r})
+""",
+        encoding='utf-8',
+    )
+    fake_ps.chmod(0o755)
+    return fake_ps
+
+
+def _prepend_path(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
+    current_path = os.environ.get('PATH')
+    monkeypatch.setenv('PATH', f"{directory}{os.pathsep}{current_path}" if current_path else str(directory))
+
+
 def test_init_creates_session_and_events_files(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
 
@@ -177,6 +236,254 @@ def test_init_with_target_and_workspace_without_ralph_creates_target_acceptance_
     assert str(workspace / 'task_plan.md') in state['targetContextFiles']
     assert Path(state['promptPath']).exists()
     assert 'Target acceptance: V3.0' in Path(state['promptPath']).read_text(encoding='utf-8')
+
+
+def test_init_with_tmux_target_detects_codex_agent_and_selects_tmux_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, pane_command='codex')
+    _prepend_path(monkeypatch, tmp_path)
+
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target='1.2',
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTarget'] == '1.2'
+
+
+def test_init_with_tmux_target_detects_claude_agent_and_selects_tmux_claude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, pane_title='Claude Code')
+    _prepend_path(monkeypatch, tmp_path)
+
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target='1.2',
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTarget'] == '1.2'
+
+
+def test_init_with_tmux_target_blocks_explicit_runner_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, pane_output='codex is ready')
+    _prepend_path(monkeypatch, tmp_path)
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner='tmux-claude',
+        tmux_target='1.2',
+        agent_guides_enabled=False,
+    )
+
+    with pytest.raises(ValueError, match='--runner=tmux-claude.*tmux-codex'):
+        controller.init_state(force=True)
+
+
+def test_init_with_tmux_target_blocks_reverse_explicit_runner_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, pane_output='Claude Code is ready')
+    _prepend_path(monkeypatch, tmp_path)
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner='tmux-codex',
+        tmux_target='1.2',
+        agent_guides_enabled=False,
+    )
+
+    with pytest.raises(ValueError, match='--runner=tmux-codex.*tmux-claude'):
+        controller.init_state(force=True)
+
+
+def test_init_with_unknown_tmux_target_and_no_explicit_runner_defaults_to_tmux_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path)
+    _prepend_path(monkeypatch, tmp_path)
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target='1.2',
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTarget'] == '1.2'
+
+
+def test_init_without_tmux_target_inside_tmux_creates_claude_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, split_pane_id='%99')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target=None,
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTarget'] == '%99'
+    tmux_calls = [
+        json.loads(line)
+        for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
+    ]
+    split_call = next(args for args in tmux_calls if args[:1] == ['split-window'])
+    assert split_call == ['split-window', '-h', '-P', '-F', '#{pane_id}', '-c', str(workspace), 'claude']
+
+
+def test_init_without_workspace_uses_current_directory_for_auto_claude_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, split_pane_id='%77')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+    monkeypatch.chdir(workspace)
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=None,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target=None,
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTarget'] == '%77'
+    tmux_calls = [
+        json.loads(line)
+        for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
+    ]
+    split_call = next(args for args in tmux_calls if args[:1] == ['split-window'])
+    assert split_call[-2:] == [str(workspace), 'claude']
+
+
+def test_init_without_tmux_target_outside_tmux_blocks_with_actionable_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    monkeypatch.delenv('TMUX', raising=False)
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target=None,
+        agent_guides_enabled=False,
+    )
+
+    with pytest.raises(ValueError, match='--tmux-target.*tmux session'):
+        controller.init_state(force=True)
+
+
+def test_init_with_explicit_subprocess_runner_does_not_auto_create_tmux_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    monkeypatch.delenv('TMUX', raising=False)
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner='subprocess',
+        tmux_target=None,
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'subprocess'
+    assert state['tmuxTarget'] is None
+
+
+def test_start_existing_session_with_tmux_target_re_detects_agent_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    RalphRefinerController(
+        state_dir=state_dir,
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner='subprocess',
+        agent_guides_enabled=False,
+    ).init_state(force=True)
+    _make_fake_tmux(tmp_path, pane_command='codex')
+    _prepend_path(monkeypatch, tmp_path)
+    controller = RalphRefinerController(
+        state_dir=state_dir,
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target='1.2',
+        agent_guides_enabled=False,
+    )
+
+    controller.start(max_steps=0, output_func=lambda _message: None)
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTarget'] == '1.2'
 
 
 def test_init_with_test_strategist_flag_enables_it_in_session(tmp_path: Path) -> None:
@@ -1688,8 +1995,8 @@ def test_go_infers_target_state_dir_workspace_and_tmux_runner(monkeypatch) -> No
         assert args.command == 'go'
         assert args.target == 'V1.0'
         assert args.state_dir == '.rrc-controller-v1.0'
-        assert args.workspace_dir == '.'
-        assert args.runner == 'tmux-claude'
+        assert args.workspace_dir is None
+        assert args.runner is None
         assert args.tmux_target == '1.2'
 
 
@@ -1727,7 +2034,7 @@ def test_go_infers_state_dir_inside_explicit_workspace(monkeypatch, tmp_path: Pa
 
         assert args.workspace_dir == str(workspace)
         assert args.state_dir == str(workspace / '.rrc-controller-v1.0')
-        assert args.runner == 'tmux-claude'
+        assert args.runner is None
 
 
 def test_go_state_dir_slug_replaces_unsupported_target_characters(monkeypatch) -> None:
@@ -1762,19 +2069,238 @@ def test_rrc_go_dry_run_creates_and_resumes_inferred_state_dir(tmp_path: Path) -
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
 
-    result = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+    result = run_rrc_with_pythonpath('go', 'V1.0', '--runner', 'subprocess', '--dry-run', '--max-steps', '0', cwd=workspace)
 
     assert result.returncode == 0, result.stderr
     state_dir = workspace / '.rrc-controller-v1.0'
     assert (state_dir / 'session.json').exists()
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['requestedOutcome'] == 'V1.0'
-    assert state['workspacePath'] == '.'
+    assert state['workspacePath'] == str(workspace)
 
-    resume = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+    resume = run_rrc_with_pythonpath('go', 'V1.0', '--runner', 'subprocess', '--dry-run', '--max-steps', '0', cwd=workspace)
 
     assert resume.returncode == 0, resume.stderr
     assert '[继续] 使用已有状态' in resume.stdout
+
+
+def test_rrc_go_inside_tmux_auto_creates_claude_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, split_pane_id='%88')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+
+    result = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((workspace / '.rrc-controller-v1.0' / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTarget'] == '%88'
+    assert '[tmux] target=%88' in result.stdout
+    assert 'runner=tmux-claude' in result.stdout
+    assert 'submitKey=C-m' in result.stdout
+    assert 'source=auto-created' in result.stdout
+    tmux_calls = [
+        json.loads(line)
+        for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
+    ]
+    assert ['split-window', '-h', '-P', '-F', '#{pane_id}', '-c', str(workspace), 'claude'] in tmux_calls
+
+
+def test_rrc_go_with_tmux_target_detects_codex_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(
+        tmp_path,
+        pane_command='codex',
+        pane_title='Codex CLI',
+        pane_current_path=str(workspace),
+    )
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.delenv('TMUX', raising=False)
+
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--tmux-target',
+        '1.2',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((workspace / '.rrc-controller-v1.0' / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTarget'] == '1.2'
+    assert '[tmux] target=1.2' in result.stdout
+    assert 'command=codex' in result.stdout
+    assert 'title=Codex CLI' in result.stdout
+    assert f'path={workspace}' in result.stdout
+    assert 'detected=tmux-codex' in result.stdout
+    assert 'runner=tmux-codex' in result.stdout
+    assert 'submitKey=Enter' in result.stdout
+    assert 'submitDelay=2.0s' in result.stdout
+
+
+def test_rrc_go_with_tmux_target_detects_codex_from_process_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(
+        tmp_path,
+        pane_command='node',
+        pane_title='CLIProxyAPI',
+        pane_current_path=str(workspace),
+        pane_pid='12345',
+    )
+    _make_fake_ps(
+        tmp_path,
+        '12345 1 12345 zsh -zsh\n'
+        '12346 12345 12346 node node /home/user/.nvm/bin/codex\n'
+        '12347 12346 12346 codex /home/user/.nvm/lib/node_modules/@openai/codex/vendor/codex',
+    )
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.delenv('TMUX', raising=False)
+
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--tmux-target',
+        '1.2',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((workspace / '.rrc-controller-v1.0' / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTargetResolution']['detectedSource'] == 'process-tree'
+    assert 'command=node' in result.stdout
+    assert 'detected=tmux-codex' in result.stdout
+    assert 'detectedSource=process-tree' in result.stdout
+
+
+def test_rrc_go_with_tmux_target_uses_target_pane_directory_as_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller_cwd = tmp_path / 'controller-cwd'
+    controller_cwd.mkdir()
+    (controller_cwd / 'task_plan.md').write_text('workflow-controller V0.4.5a progress\n', encoding='utf-8')
+    (controller_cwd / 'progress.md').write_text('wrong controller progress\n', encoding='utf-8')
+    workspace = tmp_path / 'target-workspace'
+    workspace.mkdir()
+    (workspace / 'task_plan.md').write_text('CLIProxyAPI usage web target V1.1\n', encoding='utf-8')
+    (workspace / 'progress.md').write_text('usage web implementation progress\n', encoding='utf-8')
+    _make_fake_tmux(tmp_path, pane_command='codex', pane_current_path=str(workspace))
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.delenv('TMUX', raising=False)
+
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V1.1',
+        '--tmux-target',
+        '1.2',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=controller_cwd,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state_dir = workspace / '.rrc-controller-v1.1'
+    assert (state_dir / 'session.json').exists()
+    assert not (controller_cwd / '.rrc-controller-v1.1' / 'session.json').exists()
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['workspacePath'] == str(workspace)
+    assert state['executionWorkspacePath'] == str(workspace)
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTarget'] == '1.2'
+
+
+def test_rrc_go_with_tmux_target_rebases_before_continuing_stale_implicit_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller_cwd = tmp_path / 'controller-cwd'
+    controller_cwd.mkdir()
+    (controller_cwd / 'task_plan.md').write_text('workflow-controller V0.4.5a progress\n', encoding='utf-8')
+    (controller_cwd / 'progress.md').write_text('wrong controller progress\n', encoding='utf-8')
+    workspace = tmp_path / 'target-workspace'
+    workspace.mkdir()
+    (workspace / 'task_plan.md').write_text('CLIProxyAPI usage web target V1.1\n', encoding='utf-8')
+    (workspace / 'progress.md').write_text('usage web implementation progress\n', encoding='utf-8')
+    stale = run_rrc_with_pythonpath(
+        'go',
+        'V1.1',
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=controller_cwd,
+    )
+    assert stale.returncode == 0, stale.stderr
+    stale_state_dir = controller_cwd / '.rrc-controller-v1.1'
+    assert (stale_state_dir / 'session.json').exists()
+
+    _make_fake_tmux(tmp_path, pane_command='codex', pane_current_path=str(workspace))
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.delenv('TMUX', raising=False)
+
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V1.1',
+        '--tmux-target',
+        '1.2',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=controller_cwd,
+    )
+
+    assert result.returncode == 0, result.stderr
+    target_state_dir = workspace / '.rrc-controller-v1.1'
+    assert (target_state_dir / 'session.json').exists()
+    stale_state = json.loads((stale_state_dir / 'session.json').read_text(encoding='utf-8'))
+    target_state = json.loads((target_state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert stale_state['workspacePath'] == str(controller_cwd)
+    assert target_state['workspacePath'] == str(workspace)
+    assert target_state['agentRunner'] == 'tmux-codex'
+    assert str(workspace / 'task_plan.md') in target_state['targetContextFiles']
+    assert str(controller_cwd / 'task_plan.md') not in target_state['targetContextFiles']
+    assert f'使用已有状态：{stale_state_dir}' not in result.stdout
+    prompt = Path(target_state['promptPath']).read_text(encoding='utf-8')
+    assert 'CLIProxyAPI usage web target V1.1' in prompt
+    assert 'workflow-controller V0.4.5a progress' not in prompt
+
+
+def test_rrc_go_without_runner_or_tmux_target_outside_tmux_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    monkeypatch.delenv('TMUX', raising=False)
+
+    result = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+
+    assert result.returncode != 0
+    assert '--tmux-target' in result.stderr
+    assert 'tmux session' in result.stderr
 
 
 def test_rrc_go_with_explicit_workspace_creates_state_dir_in_workspace(tmp_path: Path) -> None:
@@ -1788,6 +2314,8 @@ def test_rrc_go_with_explicit_workspace_creates_state_dir_in_workspace(tmp_path:
         'V1.0',
         '--workspace-dir',
         str(workspace),
+        '--runner',
+        'subprocess',
         '--dry-run',
         '--max-steps',
         '0',
@@ -1805,7 +2333,7 @@ def test_rrc_go_uses_start_target_conflict_for_existing_state_dir(tmp_path: Path
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     state_dir = workspace / '.rrc-controller-v1.0'
-    init_result = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+    init_result = run_rrc_with_pythonpath('go', 'V1.0', '--runner', 'subprocess', '--dry-run', '--max-steps', '0', cwd=workspace)
     assert init_result.returncode == 0, init_result.stderr
 
     result = run_rrc_with_pythonpath(
@@ -1813,6 +2341,8 @@ def test_rrc_go_uses_start_target_conflict_for_existing_state_dir(tmp_path: Path
         'V2.0',
         '--state-dir',
         str(state_dir),
+        '--runner',
+        'subprocess',
         '--dry-run',
         '--max-steps',
         '0',
@@ -2019,6 +2549,59 @@ def test_drive_compact_output_shows_planning_roadmap_before_unit_execution(tmp_p
     assert '当前   生成需求与验收草案' in rendered
     assert '阶段 [需求草案*] [需求确认] [Unit Plan] [Unit Plan确认] [构建]' in rendered
     assert '阶段 [构建] [精修] [评审] [验证] [单元完成]' not in rendered
+
+
+def test_drive_compact_output_updates_for_unit_plan_generation_and_waiting(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, dry_run=True, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'target-v5-2',
+            'currentStep': 'UNIT_PLAN_DRAFT',
+            'lastVerifiedStep': 'REQUIREMENTS_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'V5.2',
+            'feasibleOutcome': 'V5.2',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': False,
+            'objectiveCoverage': [
+                {'objective': 'V5.2 target acceptance', 'units': ['target-v5-2'], 'status': 'partial'},
+            ],
+            'units': [
+                {
+                    'id': 'target-v5-2',
+                    'name': 'V5.2 target',
+                    'passes': False,
+                    'test_cases': [
+                        {
+                            'id': 'TC-1',
+                            'acceptance_criterion': 'AC-1',
+                            'layer': 'unit',
+                            'fixture': 'fixtures/unit.json',
+                            'command': 'python -m pytest tests/unit -q',
+                            'expected': 'unit plan is valid',
+                        },
+                    ],
+                    'verification_commands': ['python -m pytest tests/unit -q'],
+                },
+            ],
+        },
+        force=True,
+    )
+    output: list[str] = []
+
+    controller.drive(input_func=lambda _prompt: (_ for _ in ()).throw(EOFError), output_func=output.append, timestamp_output=False)
+    rendered = '\n'.join(output)
+
+    assert '当前   生成 Unit Plan 草案' in rendered
+    assert '当前   等待 Unit Plan 确认' in rendered
+    assert rendered.index('当前   生成 Unit Plan 草案') < rendered.index('当前   等待 Unit Plan 确认')
+    assert '阶段 [需求草案] [需求确认] [Unit Plan*] [Unit Plan确认] [构建]' in rendered
+    assert '阶段 [需求草案] [需求确认] [Unit Plan] [Unit Plan确认*] [构建]' in rendered
 
 
 def test_compact_output_counts_units_for_requested_target_not_historical_units(tmp_path: Path) -> None:
@@ -2821,7 +3404,7 @@ print('{"decision":"dismissed"}')
     assert any(event['type'] == 'plannotator_review_requested' for event in events)
 
 
-def test_drive_plannotator_reviews_requirements_body_artifact_when_available(
+def test_drive_plannotator_reviews_requirements_approval_markdown_when_body_artifact_exists(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2887,17 +3470,17 @@ print('{"decision":"dismissed"}')
     )
 
     assert result.returncode == 0, result.stderr
-    assert f'审阅文件：{body_path}' in result.stdout
-    assert f'确认文件：{approval_path}' in result.stdout
+    assert f'审阅文件：{body_path}' not in result.stdout
+    assert f'确认文件：{approval_path}' not in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
         'annotate',
-        str(body_path),
+        str(approval_path),
         '--gate',
         '--json',
     ]
     summary = json.loads((state_dir / 'plannotator' / 'requirements-last-review.json').read_text(encoding='utf-8'))
-    assert summary['gate_path'] == str(body_path)
-    assert summary['review_path'] == str(body_path)
+    assert summary['gate_path'] == str(approval_path)
+    assert summary['review_path'] == str(approval_path)
     assert summary['approval_gate_path'] == str(approval_path)
 
 
@@ -2998,6 +3581,446 @@ print('{"decision":"approved"}')
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['unitPlanAccepted'] is True
     assert state['currentStep'] == 'PLAN_CREATED'
+
+
+def test_drive_auto_revises_requirements_when_plannotator_approve_fails_controller_validation(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1: User completes the delivery journey.
+""",
+    )
+    fake_plannotator = tmp_path / 'fake-plannotator'
+    fake_plannotator.write_text(
+        """#!/usr/bin/env python3
+print('Open this link on your local machine to annotate:')
+print('https://share.plannotator.ai/#approved-invalid')
+print('{"decision":"approved"}')
+""",
+        encoding='utf-8',
+    )
+    fake_plannotator.chmod(0o755)
+
+    result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--max-steps',
+        '1',
+        '--actor',
+        'tester',
+        '--plannotator-command',
+        str(fake_plannotator),
+        input_text='v\nq\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '[确认] 需求与验收 无法确认：requirements gate invalid' in result.stdout
+    assert '[修订] Controller 校验未通过，已自动打回需求草案生成。' in result.stdout
+    assert '[修订] 已根据 Controller 校验错误重新生成 需求与验收。' in result.stdout
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requirementsAccepted'] is False
+    assert state['requirementsRevisionCount'] == 1
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    revision = json.loads(
+        (state_dir / 'artifacts' / 'requirements-revisions' / 'revision-1.json').read_text(encoding='utf-8')
+    )
+    assert revision['controller_validation_error'].startswith('requirements gate invalid:')
+    assert '## Controller Validation Error' in revision['feedback']
+
+
+def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_review(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    bodies = [
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: e2e]: User completes the delivery journey.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+""",
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: e2e]: User completes the delivery journey.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+
+## Journey Acceptance Matrix
+| Journey | Title | Status | Steps | AC | Verification Layer |
+| --- | --- | --- | --- | --- | --- |
+| J-001 | Delivery happy path | active | Start request -> complete delivery -> see confirmation | AC-1 | e2e |
+""",
+    ]
+    captured_prompts: list[str] = []
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        captured_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
+        body_path.write_text(bodies.pop(0), encoding='utf-8')
+        return RunnerResult(
+            backend='tmux-claude',
+            status='done',
+            command=['fake-claude'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=state_dir / 'artifacts' / 'requirements-draft' / f'run-{len(captured_prompts)}',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert len(captured_prompts) == 2
+    assert '## Controller Validation Error' in captured_prompts[1]
+    assert 'journey contract required' in captured_prompts[1]
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsAccepted'] is False
+    assert state['requirementsRevisionCount'] == 1
+    assert state.get('blockedReason') is None
+    gate_content = (state_dir / 'approvals' / 'requirements-and-acceptance.md').read_text(encoding='utf-8')
+    assert '## Journey Acceptance Matrix' in gate_content
+
+
+def test_unit_plan_draft_auto_revises_controller_invalid_gate_before_human_review(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.unit_plan as unit_plan_step
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'UNIT_PLAN_DRAFT',
+            'lastVerifiedStep': 'REQUIREMENTS_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-codex',
+            'agentCommand': 'codex',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': False,
+            'acceptanceObligations': [
+                {'id': 'AO-001', 'title': 'six-step UX unclear', 'priority': 'must', 'status': 'open'},
+                {'id': 'AO-002', 'title': 'materials missing coverage', 'priority': 'must', 'status': 'open'},
+            ],
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: integration]: Delivery behavior covers AO-001 and AO-002.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+| AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    bodies = [
+        _unit_plan_body_with_obligations(['AO-001']),
+        _unit_plan_body_with_obligations(['AO-001', 'AO-002']),
+    ]
+    captured_prompts: list[str] = []
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-codex', agent_command='fake-codex', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        captured_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        body_path = request.artifact_dir / 'unit-plan-body.md'
+        body_path.write_text(bodies.pop(0), encoding='utf-8')
+        return RunnerResult(
+            backend='tmux-codex',
+            status='done',
+            command=['fake-codex'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=request.artifact_dir / f'run-{len(captured_prompts)}',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(unit_plan_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(unit_plan_step, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert len(captured_prompts) == 2
+    assert '## Controller Validation Error' in captured_prompts[1]
+    assert 'missing Acceptance Obligation coverage' in captured_prompts[1]
+    assert 'AO-002' in captured_prompts[1]
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert state['unitPlanRevisionCount'] == 1
+    assert state.get('blockedReason') is None
+    gate_content = (state_dir / 'approvals' / 'unit-plan.md').read_text(encoding='utf-8')
+    assert '"covers_obligations": ["AO-001", "AO-002"]' in gate_content
+
+
+def test_drive_auto_revises_invalid_unit_plan_with_short_precheck_status(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.unit_plan as unit_plan_step
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'REQUIREMENTS_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-codex',
+            'agentCommand': 'codex',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'acceptanceObligations': [
+                {'id': 'AO-001', 'title': 'six-step UX unclear', 'priority': 'must', 'status': 'open'},
+                {'id': 'AO-002', 'title': 'materials missing coverage', 'priority': 'must', 'status': 'open'},
+            ],
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: integration]: Delivery behavior covers AO-001 and AO-002.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+| AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(gate_path, _unit_plan_body_with_obligations(['AO-001']))
+    captured_prompts: list[str] = []
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-codex', agent_command='fake-codex', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        captured_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        body_path = request.artifact_dir / 'unit-plan-body.md'
+        body_path.write_text(_unit_plan_body_with_obligations(['AO-001', 'AO-002']), encoding='utf-8')
+        return RunnerResult(
+            backend='tmux-codex',
+            status='done',
+            command=['fake-codex'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=request.artifact_dir / f'run-{len(captured_prompts)}',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(unit_plan_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(unit_plan_step, 'run_agent_backend', fake_run_agent_backend)
+    output: list[str] = []
+
+    controller.drive(
+        input_func=lambda _prompt: (_ for _ in ()).throw(EOFError),
+        output_func=output.append,
+        timestamp_output=False,
+    )
+    rendered = '\n'.join(output)
+
+    assert captured_prompts
+    assert '## Controller Validation Error' in captured_prompts[0]
+    assert '[修订] Unit Plan 预检失败，已自动打回：' in rendered
+    assert '当前   自动打回 Unit Plan 草案' in rendered
+    assert 'unit plan gate invalid:' not in rendered
+    assert rendered.index('[修订] Unit Plan 预检失败') < rendered.index('[人工确认] Unit Plan')
+
+
+def test_gate_reason_label_compacts_large_acceptance_obligation_lists() -> None:
+    reason = (
+        'unit plan gate invalid: missing Acceptance Obligation coverage: '
+        + ', '.join(f'AO-{index:03d} detailed obligation title {index}' for index in range(78, 120))
+    )
+
+    label = rrc_controller_module._gate_reason_label(reason)
+
+    assert '42 AO missing (AO-078..AO-119)' in label
+    assert 'full detail sent to revision prompt' in label
+    assert 'detailed obligation title 100' not in label
+    assert len(label) < 180
+
+
+def _unit_plan_body_with_obligations(obligations: list[str]) -> str:
+    return f"""# Unit Plan Confirmation
+
+## Test Case Matrix
+| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |
+| --- | --- | --- | --- | --- |
+| AC-1 covers {', '.join(obligations)} | TC-1 | integration | pytest tests/test_delivery.py -q | Delivery behavior works |
+
+## Controller State Patch
+
+```json
+{{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {{"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}}
+  ],
+  "units": [
+    {{
+      "id": "unit-01",
+      "name": "Delivery",
+      "passes": false,
+      "test_cases": [
+        {{
+          "id": "TC-1",
+          "acceptance_criterion": "AC-1 covers {', '.join(obligations)}",
+          "covers_obligations": {json.dumps(obligations)},
+          "layer": "integration",
+          "fixture": "tests/fixtures/delivery.json",
+          "command": "pytest tests/test_delivery.py -q",
+          "expected": "Delivery behavior works"
+        }}
+      ],
+      "verification_commands": ["pytest tests/test_delivery.py -q"]
+    }}
+  ]
+}}
+```
+"""
 
 
 def test_drive_announces_plannotator_feedback_before_revising_gate(
@@ -4144,6 +5167,110 @@ def test_unit_plan_approval_enriches_journey_contract_from_mapped_test_case(tmp_
     assert journey['test_cases'] == ['TC-AC1-E2E']
     assert journey['verification_command'] == 'pytest tests/e2e/test_delivery.py -q'
 
+
+
+def test_unit_plan_approval_accepts_covers_journeys_mapping(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'journeyContractPath': str(state_dir / 'artifacts' / 'journeys' / 'journeys.json'),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    journey_path = state_dir / 'artifacts' / 'journeys' / 'journeys.json'
+    journey_path.parent.mkdir(parents=True, exist_ok=True)
+    journey_path.write_text(
+        json.dumps(
+            {
+                'version': 1,
+                'journeys': [
+                    {
+                        'journey_id': 'J-001',
+                        'title': 'Delivery happy path',
+                        'status': 'active',
+                        'steps': ['Start request', 'complete delivery'],
+                        'linked_acceptance_criteria': ['AC-1'],
+                        'linked_units': [],
+                        'verification_layer': 'e2e',
+                        'verification_command': None,
+                        'test_cases': [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    gate_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery unit",
+      "passes": false,
+      "workflow_validation_level": "closure",
+      "test_cases": [
+        {
+          "id": "TC-AC1-E2E",
+          "covers_journeys": ["J-001"],
+          "acceptance_criterion": "AC-1",
+          "layer": "e2e",
+          "fixture": "tests/fixtures/delivery.json",
+          "command": "pytest tests/e2e/test_delivery.py -q",
+          "expected": "delivery confirmation is visible",
+          "golden_path": true
+        }
+      ],
+      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is True
+    contract = json.loads(journey_path.read_text(encoding='utf-8'))
+    journey = contract['journeys'][0]
+    assert journey['test_cases'] == ['TC-AC1-E2E']
 
 
 def test_run_rejects_preapproved_unit_plan_missing_acceptance_obligation(tmp_path: Path) -> None:

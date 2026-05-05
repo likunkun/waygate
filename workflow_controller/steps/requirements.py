@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
-from workflow_controller.gates import render_requirements_gate_body, write_gate_file
+from workflow_controller.gates import format_requirements_gate_body, render_requirements_gate_body, write_gate_file
 from workflow_controller.prompts.requirements import _render_requirements_draft_prompt
 from workflow_controller.requirements_dialogue_brief import write_requirements_dialogue_brief
 from workflow_controller.steps._common import StepResult, _write_json, _now_iso
@@ -25,7 +25,7 @@ def run_requirements_drafter(
     state['requirementsDialogueBriefPath'] = dialogue_brief['artifact_paths']['markdown']
     state['requirementsDialogueBriefHash'] = dialogue_brief['brief_hash']
 
-    if dry_run or state.get('agentRunner') != 'tmux-claude':
+    if dry_run or state.get('agentRunner') not in {'tmux-claude', 'tmux-codex'}:
         body = render_requirements_gate_body(state)
         write_gate_file(gate_path, body)
         body_path.write_text(body, encoding='utf-8')
@@ -92,7 +92,7 @@ def run_requirements_drafter(
             f"Requirements drafter did not write {body_path}. See {summary_path}"
         )
 
-    write_gate_file(gate_path, body_path.read_text(encoding='utf-8'))
+    write_gate_file(gate_path, format_requirements_gate_body(state, body_path.read_text(encoding='utf-8')))
     return StepResult(
         summary='requirements draft generated',
         outputs=[str(gate_path), str(summary_path), dialogue_brief['artifact_paths']['markdown']],

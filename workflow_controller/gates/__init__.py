@@ -2,6 +2,8 @@ from workflow_controller.gates.generators import (  # noqa: F401
     ensure_final_acceptance_gate,
     ensure_requirements_gate,
     ensure_unit_plan_gate,
+    format_requirements_gate_body,
+    format_unit_plan_gate_body,
     normalize_final_acceptance_rejection_routing,
     render_requirements_gate_body,
     render_unit_plan_gate_body,

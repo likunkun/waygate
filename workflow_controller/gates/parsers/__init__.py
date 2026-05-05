@@ -238,6 +238,8 @@ def _write_summary(
                 'process_id': process_id,
                 'stdout_path': str(stdout_path),
                 'stderr_path': str(stderr_path),
+                'summary_path': str(summary_path),
+                'full_path': str(gate_path),
                 'timed_out': timed_out,
                 'reviewed_at': datetime.now(timezone.utc).isoformat(),
             },

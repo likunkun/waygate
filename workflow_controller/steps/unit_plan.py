@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
-from workflow_controller.gates import render_unit_plan_gate_body, write_gate_file
+from workflow_controller.gates import format_unit_plan_gate_body, render_unit_plan_gate_body, write_gate_file
 from workflow_controller.prompts.unit_plan import (
     _render_unit_plan_draft_prompt,
     _render_test_strategist_prompt,
@@ -38,7 +38,7 @@ def run_unit_plan_drafter(
     body_path = draft_dir / 'unit-plan-body.md'
     summary_path = draft_dir / 'unit-plan-draft-summary.json'
 
-    if dry_run or state.get('agentRunner') != 'tmux-claude':
+    if dry_run or state.get('agentRunner') not in {'tmux-claude', 'tmux-codex'}:
         body = render_unit_plan_gate_body(state)
         write_gate_file(gate_path, body)
         body_path.write_text(body, encoding='utf-8')
@@ -132,7 +132,7 @@ def run_unit_plan_drafter(
             draft_dir,
             retry_count=retry_count,
         )
-    write_gate_file(gate_path, gate_body)
+    write_gate_file(gate_path, format_unit_plan_gate_body(state, gate_body))
     state.pop('unitPlanRevisionFeedback', None)
     return StepResult(summary='unit plan draft generated', outputs=[str(gate_path), str(summary_path)])
 

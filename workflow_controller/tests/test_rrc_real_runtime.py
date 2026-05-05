@@ -50,6 +50,8 @@ def test_init_with_target_creates_target_acceptance_unit_and_prompt(tmp_path: Pa
         str(workspace),
         '--agent',
         'claude',
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
     )
@@ -88,6 +90,8 @@ def test_target_acceptance_prompt_keeps_relevant_context_compact(tmp_path: Path)
         str(workspace),
         '--agent',
         'codex',
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
     )

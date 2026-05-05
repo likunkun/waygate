@@ -132,7 +132,7 @@ def run_builder(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) ->
         )
         if agent_result.returncode != 0:
             tmux_hint = ''
-            if agent_result.backend == 'tmux-claude':
+            if agent_result.backend in {'tmux-claude', 'tmux-codex'}:
                 tmux_hint = f" tmux target {state.get('tmuxTarget')!s} failed."
             stderr_hint = f" stderr: {agent_result.stderr.strip()}" if agent_result.stderr.strip() else ''
             raise RuntimeError(
@@ -984,6 +984,8 @@ def _journey_ids_from_case(case: dict[str, Any]) -> list[str]:
         or case.get('journeys')
         or case.get('journey_ids')
         or case.get('journeyIds')
+        or case.get('covers_journeys')
+        or case.get('coversJourneys')
     )
     if isinstance(raw, list):
         return [str(item).strip() for item in raw if str(item).strip()]

@@ -31,7 +31,7 @@ def ensure_requirements_gate(state: dict[str, Any], approvals_dir: Path) -> Path
 
 
 def render_requirements_gate_body(state: dict[str, Any]) -> str:
-    return _requirements_body(state)
+    return format_requirements_gate_body(state, _requirements_body(state))
 
 
 def ensure_unit_plan_gate(state: dict[str, Any], approvals_dir: Path) -> Path:
@@ -73,6 +73,24 @@ def render_unit_plan_gate_body(state: dict[str, Any]) -> str:
     return _unit_plan_body(state)
 
 
+def format_requirements_gate_body(state: dict[str, Any], raw_body: str) -> str:
+    return _with_approval_summary(
+        raw_body,
+        default_title='# 需求与验收确认',
+        summary_lines=_requirements_summary_lines(state),
+        appendix_title='## 附录 A：完整需求与验收正文',
+    )
+
+
+def format_unit_plan_gate_body(state: dict[str, Any], raw_body: str) -> str:
+    return _with_approval_summary(
+        raw_body,
+        default_title='# 单元计划确认（Unit Plan Confirmation）',
+        summary_lines=_unit_plan_summary_lines(state),
+        appendix_title='## 附录 A：Unit Plan 原始正文',
+    )
+
+
 def ensure_final_acceptance_gate(
     state: dict[str, Any],
     approvals_dir: Path,
@@ -89,6 +107,136 @@ def ensure_final_acceptance_gate(
         if normalized != body:
             write_gate_file(path, normalized)
     return path
+
+
+def _with_approval_summary(
+    raw_body: str,
+    *,
+    default_title: str,
+    summary_lines: list[str],
+    appendix_title: str,
+) -> str:
+    body = gate_body(raw_body).rstrip()
+    if _approval_body_has_summary(body):
+        return body + '\n'
+
+    title, detail = _split_markdown_title(body, default_title)
+    lines = [
+        title,
+        '',
+        *summary_lines,
+        '',
+        appendix_title,
+        '',
+    ]
+    if detail.strip():
+        lines.append(detail.strip())
+    else:
+        lines.append('- 原始正文为空；请重新生成审批内容。')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _approval_body_has_summary(body: str) -> bool:
+    return bool(re.search(r'(?m)^##\s+审批摘要\s*$', body))
+
+
+def _split_markdown_title(body: str, default_title: str) -> tuple[str, str]:
+    lines = body.splitlines()
+    if lines and re.match(r'^#\s+\S', lines[0].strip()):
+        return lines[0].strip(), '\n'.join(lines[1:]).strip()
+    return default_title, body.strip()
+
+
+def _requirements_summary_lines(state: dict[str, Any]) -> list[str]:
+    unit = _current_unit(state)
+    commands = unit.get('verification_commands') or state.get('verificationCommands') or []
+    command_lines = [f'- `{command}`' for command in commands[:5]]
+    if len(commands) > 5:
+        command_lines.append(f'- 另有 {len(commands) - 5} 条命令见附录。')
+    if not command_lines:
+        command_lines.append('- 待在正文测试策略中补充验证命令或人工证据。')
+
+    obligations = active_must_obligations(state)
+    ao_summary = (
+        f'{len(obligations)} 条 active must AO 需要在 AC 中覆盖。'
+        if obligations
+        else '当前没有 active must AO。'
+    )
+    return [
+        '## 审批摘要',
+        '',
+        '### 结论',
+        '- 待人工确认 Requirements 与 Acceptance Criteria 后进入 Unit Plan。',
+        '',
+        '### 变更点',
+        f"- 请求目标：`{state.get('requestedOutcome') or '-'}`",
+        f"- 可行目标：`{state.get('feasibleOutcome') or '-'}`",
+        f"- 当前单元：`{state.get('currentUnitId') or '-'}`",
+        f'- AO 覆盖要求：{ao_summary}',
+        '',
+        '### 需要人确认的点',
+        '- 需求描述、用户旅程和验收标准是否准确。',
+        '- 每条 AC 是否声明 verification layer，并能被测试或人工证据验证。',
+        '- Product Design / Technical Architecture 引用是否足以支持后续执行。',
+        '- Journey Acceptance Matrix 是否覆盖跨单元闭环；不涉及跨流程时确认其为空是合理的。',
+        '',
+        '### 验收命令',
+        *command_lines,
+        '',
+        '### Controller/Critic 检查摘要',
+        '- Controller 会在人工确认前预检 AO/AC 映射、verification layer、设计/架构引用和 Journey 合约。',
+        '- Critic：未配置独立审批模型；最终确认仍由人或 controller 规则完成。',
+    ]
+
+
+def _unit_plan_summary_lines(state: dict[str, Any]) -> list[str]:
+    units = [unit for unit in state.get('units') or [] if isinstance(unit, dict)]
+    pending_units = [unit for unit in units if not unit.get('passes')]
+    commands = []
+    for unit in pending_units:
+        for command in unit.get('verification_commands') or []:
+            command_text = str(command)
+            if command_text not in commands:
+                commands.append(command_text)
+    command_lines = [f'- `{command}`' for command in commands[:6]]
+    if len(commands) > 6:
+        command_lines.append(f'- 另有 {len(commands) - 6} 条命令见附录。')
+    if not command_lines:
+        command_lines.append('- 待在 Unit Plan 正文中补充验证命令或人工证据。')
+
+    coverage_lines = []
+    for item in state.get('objectiveCoverage') or []:
+        if not isinstance(item, dict):
+            continue
+        units_text = ', '.join(str(unit_id) for unit_id in item.get('units') or []) or '-'
+        coverage_lines.append(f"- `{item.get('status') or '-'}` {item.get('objective') or '-'} -> {units_text}")
+    if not coverage_lines:
+        coverage_lines.append('- 待补目标覆盖矩阵。')
+
+    return [
+        '## 审批摘要',
+        '',
+        '### 结论',
+        '- 待人工确认 Unit Plan 后进入执行阶段。',
+        '',
+        '### 变更点',
+        f"- 当前单元：`{state.get('currentUnitId') or '-'}`",
+        f'- 待执行单元数：{len(pending_units)} / {len(units) or 1}',
+        *coverage_lines[:4],
+        '',
+        '### 需要人确认的点',
+        '- 每个目标是否映射到一个或多个可执行 unit。',
+        '- 每条非 manual AC 是否有 Test Case、fixture/setup、命令或人工证据、具体 expected assertion。',
+        '- Journey 是否映射到 closure 或 E2E 测试用例。',
+        '- Controller State Patch 是否只改变当前计划允许的 state 字段。',
+        '',
+        '### 验收命令',
+        *command_lines,
+        '',
+        '### Controller/Critic 检查摘要',
+        '- Controller 会在进入人工确认前预检 Controller State Patch、AO 覆盖、测试用例覆盖、验证环境、Golden Path 和 Journey 映射。',
+        '- Critic：未配置独立审批模型；最终确认仍由人或 controller 规则完成。',
+    ]
 
 
 def _requirements_body(state: dict[str, Any]) -> str:
@@ -149,6 +297,20 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '| --- | --- | --- | --- |',
         '| 待补 AC ID | 待补产品设计引用 | 待补技术架构引用 | 待补说明 |',
         '',
+        '## 4.7 Journey Acceptance Matrix',
+        '',
+        '- e2e 或 closure 验收必须至少有一行 active Journey；不涉及时可以只保留表头。',
+        '- Steps 使用 `->` 分隔关键路径步骤；AC 填关联 AC ID；Verification Layer 只能使用 functional / integration / e2e / manual。',
+        '',
+        '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        '',
+        '## 4.8 已澄清事项、关键假设与待确认风险',
+        '',
+        '- **已澄清事项**：如 agent 在 tmux pane 中向用户提问，在这里记录用户回答形成的具体决策。',
+        '- **关键假设**：列出为避免打断而采用的保守假设，并说明对需求和验收的影响。',
+        '- **待确认风险**：列出仍需人工在 gate 审阅时重点确认的风险；不能把阻断性缺口藏在这里。',
+        '',
         '## 5. 测试策略（Test Strategy）',
     ])
     if commands:
@@ -194,14 +356,16 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
     lines = [
         '# 单元计划确认（Unit Plan Confirmation）',
         '',
-        '## 目标覆盖矩阵',
+        *_unit_plan_summary_lines(state),
+        '',
+        '## 附录 A：目标覆盖矩阵',
     ]
     for item in state.get('objectiveCoverage', []):
         units = ', '.join(item.get('units', []))
         lines.append(f"- `{item.get('status')}` {item.get('objective')} -> {units}")
     lines.extend([
         '',
-        '## 测试用例矩阵（Test Case Matrix）',
+        '## 附录 B：测试用例矩阵（Test Case Matrix）',
         '',
         '| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |',
         '|---|---|---|---|---|---|---|---|',
@@ -239,7 +403,7 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | 补充产品设计引用 | 补充技术架构引用 | 补充 fixture 或测试数据 | 补充命令或人工证据 | 补充预期结果 |')
     lines.extend([
         '',
-        '## 执行单元',
+        '## 附录 C：执行单元',
     ])
     for unit in state.get('units', []):
         lines.extend([
@@ -273,7 +437,7 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         json.dumps(_controller_state_patch(state), ensure_ascii=False, indent=2),
         '```',
         '',
-        '## 人工审阅清单',
+        '## 附录 D：人工审阅清单',
         '- [ ] 每个目标都映射到一个或多个单元。',
         '- [ ] 每个单元都声明了足够的验证证据。',
         '- [ ] E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言，并至少标记一个 Golden Path 正常流程。',

@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）以及 V0.4.1–V0.4.5a 控制平面收敛。下一步按 `ROADMAP.md` 推进 V0.4.6 Strict Test Presence + Requirements-stage Test Strategist。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛以及 V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
 
 ## 各阶段
 
@@ -278,6 +278,9 @@
 - **状态：** complete
 
 ### 阶段 30：V0.4.1 Requirements Negotiation Loop
+- [x] Requirements Drafter 可在目标 tmux agent pane 中集中提出关键澄清问题，拿到回答后继续生成 gate。
+- [x] 可用保守假设推进时不打断用户，必须把假设和待确认风险写入 Requirements Gate。
+- [x] Requirements 草案生成后先跑 controller 预检；预检失败自动打回 drafter，不进入人工审核。
 - [x] Requirements gate 支持多轮批注、返工、确认。
 - [x] 每轮 requirements revision 写入 artifact，保留 diff summary、反馈来源和处理结果。
 - [x] Requirements revision prompt 携带 controller validation error、Plannotator annotations 和历史 revision feedback。
@@ -316,6 +319,7 @@
 ### 阶段 35：V0.4.5a Requirements Dialogue Brief
 - [x] Requirements Draft 前生成 `artifacts/requirements-dialogue-brief/requirements-dialogue-brief.json` 和 `.md`。
 - [x] brief 汇总原始用户目标、可行目标、当前 unit、target context、AO ledger 和 revision feedback。
+- [x] 明确 brief 是上下文压缩，不是提问机制；提问发生在目标 agent pane。
 - [x] Requirements prompt 注入 brief path、hash 和 markdown 摘要，降低需求背景被 progress 误解释的风险。
 - **状态：** complete
 
@@ -325,6 +329,17 @@
 - [ ] Requirements approval 前检查 AC 可验证性、测试层级合理性和 Journey/E2E coverage 需求。
 - [ ] Unit Plan approval 阶段强制每条非 manual AC 至少映射一个可执行 test case。
 - **状态：** pending
+
+### 阶段 37：V0.5.2 审批摘要优先 + Unit Plan 进度输出修复
+- [x] Requirements approval Markdown 顶部新增 `## 审批摘要`，完整正文、矩阵和 Journey 映射保留在同一文件附录区。
+- [x] Unit Plan approval Markdown 顶部新增 `## 审批摘要`，目标覆盖、测试矩阵、执行单元和 `## Controller State Patch` 保留在同一文件附录区。
+- [x] `## Human Confirmation` 仍由 `write_gate_file()` / `approve_gate_file()` 自动追加，生成正文不包含确认段落。
+- [x] Plannotator 改为打开 approval Markdown 本身，review summary 记录 review path、approval gate path 和 full path。
+- [x] Unit Plan controller 预检失败时在人工审批前自动打回，并把完整原因写入 state 和 `artifacts/unit-plan-draft/controller-validation-error.json`。
+- [x] compact drive 输出覆盖 Unit Plan 草案生成、预检、自动打回、等待确认，以及 controller-validation-only / human feedback revision 状态卡。
+- [x] 定向 RED/GREEN 覆盖 summary-first、appendix parser、Plannotator approval path、Unit Plan 自动预检打回和 compact Unit Plan 状态。
+- [x] 全量 `workflow_controller/tests` 通过：`332 passed in 43.67s`。
+- **状态：** complete
 
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。

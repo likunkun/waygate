@@ -93,8 +93,8 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate approval artifacts during init and runtime')
     init_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     init_parser.add_argument('--agent', default='claude', help='Agent command used by the real builder runtime')
-    init_parser.add_argument('--runner', default='subprocess', help='Agent runner backend: subprocess or tmux-claude')
-    init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
+    init_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     init_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     init_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     init_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout during init')
@@ -168,8 +168,8 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate low-risk approval artifacts during runtime')
     start_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     start_parser.add_argument('--agent', default=None, help='Agent command used by the real builder runtime')
-    start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess or tmux-claude')
-    start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
+    start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     start_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     start_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     start_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
@@ -200,8 +200,8 @@ def parse_args() -> argparse.Namespace:
     drive_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate low-risk approval artifacts during runtime')
     drive_parser.add_argument('--workspace-dir', default=None, help='Override workspace path stored in session.json')
     drive_parser.add_argument('--agent', default=None, help='Override agent command used by the builder runtime')
-    drive_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess or tmux-claude')
-    drive_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for --runner tmux-claude')
+    drive_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    drive_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for tmux-codex or tmux-claude')
     drive_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     drive_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     drive_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
@@ -222,8 +222,8 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate approval artifacts during runtime')
     run_parser.add_argument('--workspace-dir', default=None, help='Override workspace path stored in session.json')
     run_parser.add_argument('--agent', default=None, help='Override agent command used by the builder runtime')
-    run_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess or tmux-claude')
-    run_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for --runner tmux-claude')
+    run_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    run_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for tmux-codex or tmux-claude')
     run_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     run_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
 
@@ -246,6 +246,7 @@ def main() -> None:
         claude_md_enabled=getattr(args, 'claude_md', False),
         plannotator_command=getattr(args, 'plannotator_command', 'plannotator'),
         plannotator_port=getattr(args, 'plannotator_port', 20000),
+        state_dir_explicit=getattr(args, 'state_dir_explicit', True),
     )
 
     if args.command == 'init':

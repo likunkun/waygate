@@ -51,10 +51,10 @@ Final Acceptance rejected as defect_fix
 
 | 能力 | 说明 |
 |---|---|
-| 短命令启动 | `go V1.0 --tmux-target 1.2` 自动推断 state-dir、workspace 和 runner。 |
+| 短命令启动 | `go V1.0` 自动推断 state-dir/workspace，并在 tmux 内自动创建 Claude pane；指定 `--tmux-target` 时自动识别 Codex/Claude。 |
 | 可恢复状态机 | 所有进度写在 `session.json` 和 `events.jsonl`，中断后继续跑。 |
-| 人工 Gate | Requirements、Unit Plan、Final Acceptance、Bug Fix 都生成 Markdown 审核文件。 |
-| Plannotator 审阅 | 人工 gate 可用浏览器批注、批准或拒绝。 |
+| 人工 Gate | Requirements、Unit Plan、Final Acceptance、Bug Fix 都生成 Markdown 审核文件；Requirements 和 Unit Plan 顶部先展示审批摘要，完整矩阵留在同一文件附录区。 |
+| Plannotator 审阅 | 人工 gate 可用浏览器批注、批准或拒绝；默认打开 approval Markdown 本身，先看到顶部摘要。 |
 | 单元化执行 | 每次只推进一个 unit，避免 AI 一口气改完整个世界。 |
 | CodeSimplifier | Builder 后默认进入代码精修审查，不合格会打回 Builder。 |
 | Reviewer | 独立审查风险、缺失测试和明显回归。 |
@@ -92,10 +92,10 @@ cd /home/lichangkun/works/ai-works/worktrees/workflow-controller
 source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 ```
 
-最常用的启动方式是 `go`：
+最常用的启动方式是在 tmux 里运行 `go`：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+python -m workflow_controller.cli go V1.0
 ```
 
 这条命令等价于“为 V1.0 创建或继续一个 controller session，然后持续驱动 workflow”。它会自动推断：
@@ -103,16 +103,23 @@ python -m workflow_controller.cli go V1.0 --tmux-target 1.2
 | 项 | 推断值 |
 |---|---|
 | target | `V1.0` |
-| workspace-dir | 当前目录 `.`，也就是你运行命令时所在的目标项目根目录 |
+| workspace-dir | 当前目录，也就是你运行命令时所在的目标项目根目录 |
 | state-dir | `<workspace-dir>/.rrc-controller-v1.0`；未显式传 `--workspace-dir` 时表现为 `.rrc-controller-v1.0` |
-| runner | 传了 `--tmux-target` 时自动使用 `tmux-claude` |
+| runner | 未传 `--tmux-target` 且在 tmux 内时自动创建 Claude pane 并使用 `tmux-claude`；传了 `--tmux-target` 时自动识别 `tmux-codex` 或 `tmux-claude` |
+
+如果已经有可用的 Codex 或 Claude pane，可以显式指定：
+
+```bash
+python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+```
+
+未显式传 `--workspace-dir` 时，指定已有 pane 会使用该 pane 的当前目录作为 workspace，state-dir 也会落在这个目录下。
 
 如果你不是在目标项目根目录执行命令，应显式传入目标项目目录：
 
 ```bash
 python -m workflow_controller.cli go V1.0 \
-  --workspace-dir /path/to/target-project \
-  --tmux-target 1.2
+  --workspace-dir /path/to/target-project
 ```
 
 此时 `state-dir` 会自动落在 `/path/to/target-project/.rrc-controller-v1.0`。
@@ -126,7 +133,7 @@ python -m workflow_controller.cli go V1.0 --runner subprocess
 如果只是想试流程，不调用真实 agent：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --dry-run --max-steps 20
+python -m workflow_controller.cli go V1.0 --runner subprocess --dry-run --max-steps 20
 ```
 
 更多 CLI 参数见 [USAGE.md](USAGE.md)。
@@ -136,8 +143,8 @@ python -m workflow_controller.cli go V1.0 --dry-run --max-steps 20
 运行 `go` 后，Controller 会做这些事：
 
 1. 如果 state-dir 不存在，先初始化 `session.json`、`approvals/`、`artifacts/`。
-2. 生成 Requirements Gate，让人确认需求和验收标准。
-3. Requirements 批准后，生成 Unit Plan Gate，让人确认任务拆分和测试矩阵。
+2. 生成 Requirements Gate，让人确认需求和验收标准；如果存在会导致方向做错的缺口，Requirements Drafter 会先在目标 tmux agent pane 里集中提问；如果草案没通过 controller 预检，会自动打回 drafter，不进入人工审核。
+3. Requirements 批准后，生成 Unit Plan Gate，让人确认任务拆分和测试矩阵；如果 Unit Plan 草案没通过 controller 预检，会先自动打回 planner，不进入人工审核菜单。
 4. Unit Plan 批准后，按 unit 调 Builder。
 5. Builder 改完后，进入 CodeSimplifier / Refiner。
 6. Refiner 通过后，进入 Reviewer。
@@ -151,7 +158,7 @@ python -m workflow_controller.cli go V1.0 --dry-run --max-steps 20
 | 失败位置 | Controller 怎么处理 |
 |---|---|
 | Requirements 不完整 | 留在 Requirements Gate，要求 revise。 |
-| Unit Plan 缺测试 | 留在 Unit Plan Gate 或触发 planner 返工。 |
+| Unit Plan 缺测试、缺 AO/Journey 映射或 state patch 无效 | 人工审核前自动预检；失败时写入 controller validation artifact 并打回 planner。 |
 | CodeSimplifier 要求修改 | 回 Builder。 |
 | Reviewer 发现问题 | 回 Builder 或阻塞。 |
 | Verifier 命令失败 | 记录 failure，回实现或阻塞。 |
@@ -167,6 +174,10 @@ python -m workflow_controller.cli go V1.0 --dry-run --max-steps 20
 | Unit Plan Gate | unit 拆得是否合理，每条 AC 有没有测试或人工证据。 |
 | Final Acceptance Gate | 证据矩阵是否可信，改动是否满足已批准需求。 |
 | Bug Fix Gate | 缺陷是否属于已批准范围，回归验证是否足够。 |
+
+需求阶段的澄清发生在目标 Claude/Codex pane 中，不走 controller 终端问卷。Agent 拿到回答后继续生成 gate，并把已澄清事项、关键假设和待确认风险写进 `requirements-and-acceptance.md`。Controller 能自己判定的 requirements / unit plan 质量问题会先自动返工；只有通过预检的 gate 才交给人审阅。
+
+Requirements 和 Unit Plan approval Markdown 都是“摘要优先、细节后置”的单文件结构：文件顶部是 `## 审批摘要`，包含结论、变更点、需要人确认的点、验收命令和 Controller/Critic 检查摘要；完整 AO/AC/Journey/Test Case 矩阵、原始正文和 `## Controller State Patch` 保留在同一个 Markdown 的附录区。`## Human Confirmation` 只由 controller 自动追加，agent 不应生成。
 
 Gate 都是 Markdown 文件，默认在：
 
@@ -200,7 +211,7 @@ Controller 会要求选择返工路由，而不是把所有问题都粗暴丢回
 
 | 顺序 | 阶段 | 发给谁 | Prompt / 文档路径 | 人工是否审核 | 目的 |
 |---|---|---|---|---|---|
-| 1 | Requirements Draft | Requirements Drafter | `<state-dir>/artifacts/requirements-draft/requirements-draft-prompt.md` | 否 | 生成需求、AC、AO、用户旅程、测试策略草案。 |
+| 1 | Requirements Draft | Requirements Drafter | `<state-dir>/artifacts/requirements-draft/requirements-draft-prompt.md` | 否 | 生成需求、AC、AO、用户旅程、测试策略草案；必要时在目标 agent pane 里集中提问后继续。 |
 | 2 | Requirements Gate | Human | `<state-dir>/approvals/requirements-and-acceptance.md` | 是 | 冻结需求范围、验收标准、产品设计概要和架构概要。 |
 | 3 | Requirements Revision | Requirements Drafter | `<state-dir>/artifacts/requirements-revisions/revision-<n>.json` 记录差异 | 是 | 根据人工批注返工，并记录每轮 revision diff。 |
 | 4 | Unit Plan Draft | Unit Planner / Test Strategist | `<state-dir>/artifacts/unit-plan-draft/unit-plan-draft-prompt.md` | 否 | 生成 unit 拆分、测试用例矩阵、journey 映射和 state patch。 |
@@ -229,11 +240,13 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
   artifacts/                                  # Agent、Verifier 和 Controller 生成的审计证据
     requirements-draft/                       # Requirements Drafter 的输入、正文和摘要
       requirements-draft-prompt.md            # 发给 Requirements Drafter 的完整 prompt
-      requirements-body.md                    # Requirements Gate 正文草案，供人工审阅
+      requirements-body.md                    # Requirements Drafter 原始正文草案；approval Markdown 会把它包装成摘要优先结构
+      controller-validation-error.json        # Requirements 自动预检失败的完整原因，终端只打印短摘要
       requirements-draft-summary.json         # Requirements Drafter 运行摘要和 runner metadata
     unit-plan-draft/                          # Unit Planner / Test Strategist 的产物目录
       unit-plan-draft-prompt.md               # 发给 Unit Planner 的完整 prompt
-      unit-plan-body.md                       # Unit Plan Gate 正文草案，供人工审阅
+      unit-plan-body.md                       # Unit Plan 原始正文草案；approval Markdown 会把它包装成摘要优先结构
+      controller-validation-error.json        # Unit Plan 自动预检失败的完整原因，终端只打印短摘要
       test-strategy.json                      # Test Strategist 结构化测试策略
       unit-plan-gap-report.json               # Test Strategist 发现的测试策略缺口
       unit-plan-review-package.json           # 合并给人工 gate 的测试策略审查包
@@ -278,6 +291,33 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
 
 ```markdown
 # 需求与验收确认
+
+## 审批摘要
+
+### 结论
+- 待人工确认 Requirements 与 Acceptance Criteria 后进入 Unit Plan。
+
+### 变更点
+- 请求目标：`V1.0`
+- 可行目标：`V1.0`
+- 当前单元：`target-v1-0`
+- AO 覆盖要求：3 条 active must AO 需要在 AC 中覆盖。
+
+### 需要人确认的点
+- 需求描述、用户旅程和验收标准是否准确。
+- 每条 AC 是否声明 verification layer，并能被测试或人工证据验证。
+- Product Design / Technical Architecture 引用是否足以支持后续执行。
+- Journey Acceptance Matrix 是否覆盖跨单元闭环。
+
+### 验收命令
+- `python -m pytest workflow_controller/tests/test_rrc_controller.py -q`
+- `python -m pytest workflow_controller/tests/test_rrc_e2e.py -q`
+
+### Controller/Critic 检查摘要
+- Controller 会在人工确认前预检 AO/AC 映射、verification layer、设计/架构引用和 Journey 合约。
+- Critic：未配置独立审批模型；最终确认仍由人或 controller 规则完成。
+
+## 附录 A：完整需求与验收正文
 
 ## 1. 需求
 - 请求目标：`V1.0`
@@ -349,10 +389,34 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
 ```markdown
 # 单元计划确认（Unit Plan Confirmation）
 
-## 目标覆盖矩阵
+## 审批摘要
+
+### 结论
+- 待人工确认 Unit Plan 后进入执行阶段。
+
+### 变更点
+- 当前单元：`unit-v1-0-controller-start`
+- 待执行单元数：2 / 2
 - `partial` V1.0 controlled delivery -> unit-v1-0-controller-start, unit-v1-0-delivery-loop
 
-## 测试用例矩阵（Test Case Matrix）
+### 需要人确认的点
+- 每个目标是否映射到一个或多个可执行 unit。
+- 每条非 manual AC 是否有 Test Case、fixture/setup、命令或人工证据、具体 expected assertion。
+- Journey 是否映射到 closure 或 E2E 测试用例。
+- Controller State Patch 是否只改变当前计划允许的 state 字段。
+
+### 验收命令
+- `python -m pytest workflow_controller/tests/test_rrc_controller.py -q`
+- `python -m pytest workflow_controller/tests/test_rrc_e2e.py -q`
+
+### Controller/Critic 检查摘要
+- Controller 会在进入人工确认前预检 Controller State Patch、AO 覆盖、测试用例覆盖、验证环境、Golden Path 和 Journey 映射。
+- Critic：未配置独立审批模型；最终确认仍由人或 controller 规则完成。
+
+## 附录 A：目标覆盖矩阵
+- `partial` V1.0 controlled delivery -> unit-v1-0-controller-start, unit-v1-0-delivery-loop
+
+## 附录 B：测试用例矩阵（Test Case Matrix）
 
 | 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |
 |---|---|---|---|---|---|---|---|
@@ -365,7 +429,7 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
 |---|---|---|---|---|
 | JOURNEY-001 | AC-001, AC-002, AC-003 | unit-v1-0-delivery-loop | e2e | verification.json + final-acceptance.md |
 
-## Units
+## 附录 C：执行单元
 
 ### unit-v1-0-controller-start - Controller 启动与 state-dir 推断
 - Workflow validation level: `fragment`
@@ -415,7 +479,7 @@ Controller 的 state-dir 是整个 workflow 的事实源。一个典型目录如
 }
 ~~~
 
-## 人工审阅清单
+## 附录 D：人工审阅清单
 - [ ] unit 粒度足够小，可以独立实现和验证。
 - [ ] journey acceptance 覆盖了跨 unit 的真实用户闭环。
 - [ ] 每条非 manual AC 都有可执行测试命令。
@@ -607,17 +671,16 @@ python -m workflow_controller.cli approve \
 |---|---|
 | `subprocess` | 本地命令式 agent，适合测试、dry-run 或简单集成。 |
 | `tmux-claude` | 把 prompt 派发到已有 tmux pane 里的 Claude Code。 |
+| `tmux-codex` | 把 prompt 派发到已有 tmux pane 里的 Codex。 |
 | `codex` / `opencode` | runner 抽象中已有适配或预留。 |
 
 最常用的是 tmux：
 
 ```bash
-python -m workflow_controller.cli go V1.0 \
-  --runner tmux-claude \
-  --tmux-target 1.2
+python -m workflow_controller.cli go V1.0
 ```
 
-因为 `go` 会自动根据 `--tmux-target` 推断 runner，通常可以写短一点：
+未指定 `--tmux-target` 时，controller 必须运行在 tmux 内，会自动在右侧创建 Claude pane。指定已有 pane 时，controller 会检测目标里运行的是 Codex 还是 Claude：
 
 ```bash
 python -m workflow_controller.cli go V1.0 --tmux-target 1.2
@@ -629,7 +692,7 @@ python -m workflow_controller.cli go V1.0 --tmux-target 1.2
 
 | 角色 | 职责 |
 |---|---|
-| Requirements Drafter | 写需求、验收标准、用户旅程和追溯矩阵。 |
+| Requirements Drafter | 写需求、验收标准、用户旅程和追溯矩阵；仅在关键缺口会导致方向错误时，在目标 agent pane 里向用户集中提问。 |
 | Unit Planner | 把需求拆成 unit、测试用例和验证命令。 |
 | Test Strategist | 可选角色，独立挑战测试策略。 |
 | Builder | 只实现当前 unit。 |

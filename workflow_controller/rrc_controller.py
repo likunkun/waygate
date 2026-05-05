@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -135,7 +137,14 @@ WAITING_HUMAN_GATE_STEPS = {
 DEFAULT_MAX_AUTOMATIC_STEPS = 2000
 DEFAULT_MAX_NO_PROGRESS_STEPS = 50
 DEFAULT_SAME_FAILURE_MAX_RETRIES = 1
+DEFAULT_MAX_REQUIREMENTS_AUTO_REVISIONS = 2
+DEFAULT_MAX_UNIT_PLAN_AUTO_REVISIONS = 2
 COLOR_MODES = ('auto', 'always', 'never')
+TMUX_AGENT_BACKENDS = {'tmux-claude', 'tmux-codex'}
+TMUX_DETECTED_AGENT_BACKENDS = {
+    'claude': 'tmux-claude',
+    'codex': 'tmux-codex',
+}
 ANSI_STYLES = {
     'bold': '\033[1m',
     'dim': '\033[2m',
@@ -149,7 +158,7 @@ ANSI_RESET = '\033[0m'
 
 ACTION_LABELS = {
     'run_requirements_drafter': '生成需求与验收草案',
-    'run_unit_plan_drafter': '生成 Unit Plan',
+    'run_unit_plan_drafter': '生成 Unit Plan 草案',
     'check_requirements_acceptance': '检查需求与验收确认',
     'check_unit_plan_approval': '检查 Unit Plan 确认',
     'check_final_acceptance': '检查最终验收确认',
@@ -252,8 +261,10 @@ class RalphRefinerController:
         claude_md_enabled: bool = False,
         plannotator_command: str = 'plannotator',
         plannotator_port: int | None = 20000,
+        state_dir_explicit: bool = True,
     ) -> None:
         self.state_dir = state_dir or Path('.plan-ralph')
+        self.state_dir_explicit = state_dir_explicit
         self.dry_run = dry_run
         self.auto_approve = auto_approve
         self.workspace_dir = workspace_dir
@@ -280,20 +291,30 @@ class RalphRefinerController:
         force: bool = False,
         strategist_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        target_workspace_dir: Path | None = None
+        if self.target:
+            target_workspace_dir = self._target_workspace_dir()
+            self._rebase_implicit_state_dir(target_workspace_dir)
         self.store.ensure_layout()
         if self.store.session_path.exists() and not force:
             raise FileExistsError(
                 f'Session already exists: {self.store.session_path}. Use --force to overwrite.'
             )
         if self.target:
-            workspace_dir = self.workspace_dir or Path.cwd()
+            workspace_dir = target_workspace_dir or self._target_workspace_dir()
+            agent_runner, tmux_target, tmux_resolution = self._resolve_target_agent_runner(
+                workspace_dir=workspace_dir,
+                state=None,
+                allow_auto_create=True,
+            )
             state = build_state_from_target_acceptance(
                 workspace_dir=workspace_dir,
                 target=self.target,
                 agent_command=self.agent_command or 'claude',
-                agent_runner=self.agent_runner or 'subprocess',
-                tmux_target=self.tmux_target,
+                agent_runner=agent_runner,
+                tmux_target=tmux_target,
             )
+            _apply_tmux_target_resolution(state, tmux_resolution)
             prompt_path = self.state_dir / 'target-acceptance-prompt.md'
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
             state['promptPath'] = str(prompt_path)
@@ -331,14 +352,13 @@ class RalphRefinerController:
         state['autoApprove'] = self.auto_approve or state.get('autoApprove', False)
         if self.agent_command:
             state['agentCommand'] = self.agent_command
-        if self.agent_runner:
-            state['agentRunner'] = self.agent_runner
-        if self.tmux_target:
-            state['tmuxTarget'] = self.tmux_target
+        before_agent_target = (state.get('agentRunner'), state.get('tmuxTarget'))
+        state = self._apply_agent_target_overrides(state, allow_auto_create=False)
+        agent_target_changed = before_agent_target != (state.get('agentRunner'), state.get('tmuxTarget'))
         state = reconcile_state(state, self.artifacts_dir)
         before_validation = _unit_plan_validation_state_key(state)
         state = self._refresh_unit_plan_gate_validation(state)
-        if _unit_plan_validation_state_key(state) != before_validation:
+        if agent_target_changed or _unit_plan_validation_state_key(state) != before_validation:
             self._save_state(state)
         state['nextAction'] = compute_next_allowed_action(state)
         return state
@@ -491,7 +511,13 @@ class RalphRefinerController:
         feedback, _ = self._revision_feedback_and_annotations_for_gate(gate, gate_path)
         return feedback
 
-    def _revision_feedback_and_annotations_for_gate(self, gate: str, gate_path: Path) -> tuple[str, list[Any] | None]:
+    def _revision_feedback_and_annotations_for_gate(
+        self,
+        gate: str,
+        gate_path: Path,
+        *,
+        allow_controller_validation_only: bool = False,
+    ) -> tuple[str, list[Any] | None]:
         gate_content = gate_path.read_text(encoding='utf-8')
         plannotator_feedback, plannotator_annotations, pending_reason = _read_plannotator_submitted_feedback(
             self.state_dir,
@@ -499,12 +525,15 @@ class RalphRefinerController:
             gate_path,
             gate_content,
         )
-        if pending_reason:
+        validation_feedback = self._validation_feedback_for_gate(gate)
+        if pending_reason and not (
+            (gate == 'requirements' and validation_feedback)
+            or (allow_controller_validation_only and validation_feedback)
+        ):
             raise ValueError(
                 'Plannotator 尚未提交可供 controller 读取的返工反馈；'
                 f'{pending_reason}。'
             )
-        validation_feedback = self._validation_feedback_for_gate(gate)
         feedback = _strip_html_comments(gate_content).rstrip()
         if validation_feedback:
             feedback += (
@@ -855,7 +884,7 @@ class RalphRefinerController:
             if current_unit_id in (coverage.get('units') or []):
                 coverage['status'] = 'partial'
 
-    def _revise_requirements_gate(self) -> Path:
+    def _revise_requirements_gate(self, *, controller_validation_only: bool = False) -> Path:
         state = self.store.load_state()
         if state.get('currentStep') not in {'WAITING_REQUIREMENTS_ACCEPTANCE', 'WAITING_UNIT_PLAN_APPROVAL'}:
             raise ValueError(
@@ -874,13 +903,14 @@ class RalphRefinerController:
         state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
         revision_count = int(state.get('requirementsRevisionCount') or 0)
         revision_feedback = state['requirementsRevisionFeedback']
-        self._append_acceptance_obligations_from_feedback(
-            state,
-            source='requirements_feedback',
-            source_ref=f"requirements:revision-{revision_count}",
-            feedback_text=revision_feedback,
-            annotations=requirements_annotations,
-        )
+        if not controller_validation_only:
+            self._append_acceptance_obligations_from_feedback(
+                state,
+                source='requirements_feedback',
+                source_ref=f"requirements:revision-{revision_count}",
+                feedback_text=revision_feedback,
+                annotations=requirements_annotations,
+            )
         state['requirementsAccepted'] = False
         state['unitPlanAccepted'] = False
         state.pop('requirementsAcceptedHash', None)
@@ -941,7 +971,7 @@ class RalphRefinerController:
         self._save_state(state)
         return gate_path
 
-    def _revise_unit_plan_gate(self) -> Path:
+    def _revise_unit_plan_gate(self, *, controller_validation_only: bool = False) -> Path:
         state = self.store.load_state()
         if state.get('currentStep') != 'WAITING_UNIT_PLAN_APPROVAL':
             raise ValueError('Unit plan can only be revised at WAITING_UNIT_PLAN_APPROVAL')
@@ -952,15 +982,20 @@ class RalphRefinerController:
                 f'Unit plan gate not found: {gate_path}. Run the unit plan drafter first.'
             )
 
-        state['unitPlanRevisionFeedback'], unit_plan_annotations = self._revision_feedback_and_annotations_for_gate('unit-plan', gate_path)
-        state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
-        self._append_acceptance_obligations_from_feedback(
-            state,
-            source='unit_plan_feedback',
-            source_ref=f"unit-plan:revision-{state['unitPlanRevisionCount']}",
-            feedback_text=state['unitPlanRevisionFeedback'],
-            annotations=unit_plan_annotations,
+        state['unitPlanRevisionFeedback'], unit_plan_annotations = self._revision_feedback_and_annotations_for_gate(
+            'unit-plan',
+            gate_path,
+            allow_controller_validation_only=controller_validation_only,
         )
+        state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
+        if not controller_validation_only:
+            self._append_acceptance_obligations_from_feedback(
+                state,
+                source='unit_plan_feedback',
+                source_ref=f"unit-plan:revision-{state['unitPlanRevisionCount']}",
+                feedback_text=state['unitPlanRevisionFeedback'],
+                annotations=unit_plan_annotations,
+            )
         state['unitPlanAccepted'] = False
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
@@ -1026,17 +1061,25 @@ class RalphRefinerController:
         if timestamp_output:
             output_func = _timestamped_output(output_func)
 
+        if self.target:
+            self._rebase_implicit_state_dir(self._target_workspace_dir())
+
         if self.store.session_path.exists():
             if force:
                 output_func('[初始化] --force 已指定，重新创建 controller 状态')
-                self.init_state(force=True, strategist_overrides=strategist_overrides)
+                state_for_report = self.init_state(force=True, strategist_overrides=strategist_overrides)
             else:
                 existing_state = self.store.load_state()
+                existing_state = self._apply_agent_target_overrides(existing_state, allow_auto_create=True)
                 self._validate_start_compatible(existing_state)
+                self._save_state(existing_state)
                 output_func(f'[继续] 使用已有状态：{self.store.session_path}')
+                state_for_report = existing_state
         else:
             output_func('[初始化] 创建新的 controller 状态')
-            self.init_state(force=False, strategist_overrides=strategist_overrides)
+            state_for_report = self.init_state(force=False, strategist_overrides=strategist_overrides)
+
+        self._print_agent_target_resolution(state_for_report, output_func)
 
         return self.drive(
             max_steps=max_steps,
@@ -1046,6 +1089,7 @@ class RalphRefinerController:
             input_func=input_func,
             output_func=output_func,
             timestamp_output=False,
+            print_agent_target=False,
         )
 
     def _validate_start_compatible(self, state: dict[str, Any]) -> None:
@@ -1079,6 +1123,160 @@ class RalphRefinerController:
                 + '; '.join(mismatches)
                 + '. Use --force to reinitialize.'
             )
+
+    def _target_workspace_dir(self) -> Path:
+        if self.workspace_dir is not None:
+            return self.workspace_dir
+        if self.tmux_target:
+            pane_path = _tmux_target_current_path(
+                self.tmux_target,
+                Path.cwd(),
+                tmux_command=_tmux_command_for_controller(self.agent_command),
+            )
+            if pane_path is not None:
+                return pane_path
+        return Path.cwd()
+
+    def _rebase_implicit_state_dir(self, workspace_dir: Path) -> None:
+        if self.state_dir_explicit or self.state_dir.is_absolute() or self.state_dir.parent != Path('.'):
+            return
+        self.state_dir = workspace_dir / self.state_dir
+        self.store = StateStore(
+            session_path=self.state_dir / 'session.json',
+            events_path=self.state_dir / 'events.jsonl',
+        )
+        self.change_requests_path = self.state_dir / 'change_requests.jsonl'
+        self.approvals_dir = self.state_dir / 'approvals'
+        self.artifacts_dir = self.state_dir / 'artifacts'
+
+    def _resolve_target_agent_runner(
+        self,
+        *,
+        workspace_dir: Path,
+        state: dict[str, Any] | None,
+        allow_auto_create: bool,
+    ) -> tuple[str, str | None, dict[str, Any] | None]:
+        tmux_target = self.tmux_target or (str(state.get('tmuxTarget')) if state and state.get('tmuxTarget') else None)
+        explicit_runner = self.agent_runner
+        state_runner = str(state.get('agentRunner')) if state and state.get('agentRunner') else None
+        agent_runner = explicit_runner or state_runner
+
+        if tmux_target:
+            inspection = _inspect_tmux_target(
+                tmux_target,
+                workspace_dir,
+                tmux_command=_tmux_command_for_controller(self.agent_command),
+            )
+            detected_backend = inspection.get('detectedBackend')
+            if detected_backend and explicit_runner and explicit_runner != detected_backend:
+                raise ValueError(
+                    f'--runner={explicit_runner} conflicts with detected {detected_backend} '
+                    f'agent in --tmux-target={tmux_target} '
+                    f'({_format_tmux_inspection_details(inspection)})'
+                )
+            resolved_runner = detected_backend or agent_runner or 'tmux-codex'
+            self.agent_runner = resolved_runner
+            self.tmux_target = tmux_target
+            return resolved_runner, tmux_target, _tmux_target_resolution(
+                target=tmux_target,
+                runner=resolved_runner,
+                inspection=inspection,
+                source=_tmux_resolution_source(
+                    detected_backend=detected_backend,
+                    explicit_runner=explicit_runner,
+                    state_runner=state_runner,
+                ),
+            )
+
+        if agent_runner == 'tmux-codex':
+            raise ValueError('--runner=tmux-codex requires --tmux-target pointing at an existing Codex pane')
+
+        if agent_runner == 'tmux-claude' or agent_runner is None:
+            if not allow_auto_create and agent_runner is None:
+                raise ValueError('No tmux target configured for this target acceptance session')
+            tmux_target = _create_tmux_claude_pane(workspace_dir)
+            self.agent_runner = 'tmux-claude'
+            self.tmux_target = tmux_target
+            return 'tmux-claude', tmux_target, {
+                'target': tmux_target,
+                'runner': 'tmux-claude',
+                'detectedBackend': 'tmux-claude',
+                'detectedSource': 'auto-created',
+                'source': 'auto-created',
+                'workspacePath': str(workspace_dir),
+            }
+
+        self.agent_runner = agent_runner
+        return agent_runner, None, None
+
+    def _apply_agent_target_overrides(self, state: dict[str, Any], *, allow_auto_create: bool) -> dict[str, Any]:
+        workspace_dir = _agent_guide_workspace_dir(
+            explicit_workspace=self.workspace_dir,
+            state_dir=self.state_dir,
+            state=state,
+        )
+
+        if self.tmux_target:
+            agent_runner, tmux_target, tmux_resolution = self._resolve_target_agent_runner(
+                workspace_dir=workspace_dir,
+                state=state,
+                allow_auto_create=False,
+            )
+            state['agentRunner'] = agent_runner
+            state['tmuxTarget'] = tmux_target
+            _apply_tmux_target_resolution(state, tmux_resolution)
+            return state
+
+        if self.agent_runner:
+            if self.agent_runner in TMUX_AGENT_BACKENDS:
+                agent_runner, tmux_target, tmux_resolution = self._resolve_target_agent_runner(
+                    workspace_dir=workspace_dir,
+                    state=state,
+                    allow_auto_create=allow_auto_create,
+                )
+                state['agentRunner'] = agent_runner
+                state['tmuxTarget'] = tmux_target
+                _apply_tmux_target_resolution(state, tmux_resolution)
+            else:
+                state['agentRunner'] = self.agent_runner
+                _apply_tmux_target_resolution(state, None)
+            return state
+
+        if state.get('tmuxTarget') and not state.get('agentRunner'):
+            agent_runner, tmux_target, tmux_resolution = self._resolve_target_agent_runner(
+                workspace_dir=workspace_dir,
+                state=state,
+                allow_auto_create=False,
+            )
+            state['agentRunner'] = agent_runner
+            state['tmuxTarget'] = tmux_target
+            _apply_tmux_target_resolution(state, tmux_resolution)
+            return state
+
+        if (
+            allow_auto_create
+            and _is_target_acceptance_state(state)
+            and not state.get('agentRunner')
+            and not state.get('tmuxTarget')
+        ):
+            agent_runner, tmux_target, tmux_resolution = self._resolve_target_agent_runner(
+                workspace_dir=workspace_dir,
+                state=state,
+                allow_auto_create=True,
+            )
+            state['agentRunner'] = agent_runner
+            state['tmuxTarget'] = tmux_target
+            _apply_tmux_target_resolution(state, tmux_resolution)
+        return state
+
+    def _print_agent_target_resolution(
+        self,
+        state: dict[str, Any],
+        output_func: Callable[[str], None],
+    ) -> None:
+        message = _format_tmux_target_resolution(state.get('tmuxTargetResolution'))
+        if message:
+            output_func(message)
 
     def _run_controller_unit_plan_drafter(
         self,
@@ -1150,6 +1348,7 @@ class RalphRefinerController:
                 'task_id': state.get('task_id'),
                 'path': str(self.approvals_dir / 'requirements-and-acceptance.md'),
             })
+            state = self._auto_revise_invalid_requirements_draft(state)
             self._save_state(state)
             return state
 
@@ -1166,6 +1365,7 @@ class RalphRefinerController:
             state['unitPlanAccepted'] = False
             state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
             state = self._refresh_unit_plan_gate_validation(state)
+            state = self._auto_revise_invalid_unit_plan_draft(state)
             self.store.append_event('unit_plan_draft_generated', {
                 'task_id': state.get('task_id'),
                 'path': str(self.approvals_dir / 'unit-plan.md'),
@@ -1626,6 +1826,7 @@ class RalphRefinerController:
         input_func: Callable[[str], str] = input,
         output_func: Callable[[str], None] = print,
         timestamp_output: bool = True,
+        print_agent_target: bool = True,
     ) -> dict[str, Any]:
         if timestamp_output:
             output_func = _timestamped_output(output_func)
@@ -1635,13 +1836,17 @@ class RalphRefinerController:
         no_progress_steps = 0
         color_enabled = _color_enabled(color_mode)
         compact_reporter = None if verbose else _CompactDriveReporter(output_func, color_enabled=color_enabled)
+        self._drive_compact_reporter = compact_reporter
         state = self.get_status()
+        if print_agent_target:
+            self._print_agent_target_resolution(state, output_func)
         while state.get('status') not in {'done', 'blocked', 'failed'}:
             if verbose:
                 self._print_drive_progress(state, output_func)
             else:
-                compact_reporter.print_roadmap_if_needed(state)
+                compact_reporter.print_status(state)
 
+            state = self._auto_revise_invalid_unit_plan_draft(state)
             gate_info = self._pending_gate_info(state)
             if gate_info:
                 handled = self._handle_drive_gate(gate_info, actor, input_func, output_func)
@@ -1695,7 +1900,8 @@ class RalphRefinerController:
         if state.get('status') == 'done':
             output_func(_paint('[完成] 工作流已完成。', 'green', color_enabled))
         elif state.get('status') == 'blocked':
-            output_func(_paint(f"[阻塞] {state.get('blockedReason') or '工作流已阻塞'}", 'red', color_enabled))
+            reason = _gate_reason_label(str(state.get('blockedReason') or '工作流已阻塞'))
+            output_func(_paint(f"[阻塞] {reason}", 'red', color_enabled))
         else:
             output_func(f"[停止] 工作流状态：{state.get('status')}。")
         return state
@@ -1830,7 +2036,9 @@ class RalphRefinerController:
                     try:
                         self.approve_human_gate(str(gate_info['gate']), actor=actor)
                     except ValueError as exc:
-                        output_func(f"[确认] {gate_info['label']} 无法确认：{exc}")
+                        output_func(f"[确认] {gate_info['label']} 无法确认：{_gate_reason_label(str(exc))}")
+                        if self._auto_revise_gate_after_validation_error(gate_info, exc, output_func):
+                            return True
                         continue
                     output_func('[Plannotator] 已收到 Approve，等同于人工确认通过。')
                     return True
@@ -1848,6 +2056,7 @@ class RalphRefinerController:
                         'feedback_count': _plannotator_feedback_count(decision),
                         'feedback_preview': feedback_preview,
                     })
+                    self._print_compact_revision_status(gate_info, source='plannotator')
                     try:
                         self.revise_human_gate(str(gate_info['gate']))
                     except Exception as exc:
@@ -1896,11 +2105,14 @@ class RalphRefinerController:
                 try:
                     self.approve_human_gate(str(gate_info['gate']), actor=actor)
                 except ValueError as exc:
-                    output_func(f"[确认] {gate_info['label']} 无法确认：{exc}")
+                    output_func(f"[确认] {gate_info['label']} 无法确认：{_gate_reason_label(str(exc))}")
+                    if self._auto_revise_gate_after_validation_error(gate_info, exc, output_func):
+                        return True
                     continue
                 output_func(f"[确认] {gate_info['label']} 已确认，继续推进。")
                 return True
             if choice in {'r', 'revise'} and gate_info.get('can_revise'):
+                self._print_compact_revision_status(gate_info, source='human')
                 try:
                     self.revise_human_gate(str(gate_info['gate']))
                 except Exception as exc:
@@ -1935,9 +2147,300 @@ class RalphRefinerController:
                 return False
             output_func('[提示] 请输入 v / a / r / p / q。')
 
+    def _print_compact_revision_status(self, gate_info: dict[str, Any], *, source: str) -> None:
+        compact_reporter = getattr(self, '_drive_compact_reporter', None)
+        if compact_reporter is None:
+            return
+        gate = str(gate_info.get('gate') or '')
+        state = self.store.load_state()
+        source_label = 'Plannotator 反馈' if source == 'plannotator' else '人工反馈'
+        if gate == 'requirements':
+            compact_reporter.print_status(
+                state,
+                current_label=f'根据{source_label}修订 Requirements 草案',
+                planning_stage='Requirements confirmation',
+                force=True,
+            )
+        elif gate == 'unit-plan':
+            compact_reporter.print_status(
+                state,
+                current_label=f'根据{source_label}修订 Unit Plan 草案',
+                planning_stage='Unit plan confirmation',
+                force=True,
+            )
+
+    def _auto_revise_requirements_after_validation_error(
+        self,
+        gate_info: dict[str, Any],
+        error: ValueError,
+        output_func: Callable[[str], None],
+    ) -> bool:
+        if str(gate_info.get('gate')) != 'requirements':
+            return False
+        if not gate_info.get('can_revise'):
+            return False
+        if not str(error).startswith('requirements gate invalid:'):
+            return False
+        output_func('[修订] Controller 校验未通过，已自动打回需求草案生成。')
+        try:
+            self._revise_requirements_gate(controller_validation_only=True)
+            state = self._auto_revise_invalid_requirements_draft(self.store.load_state())
+            self._save_state(state)
+        except Exception as exc:
+            output_func(f'[修订] 自动打回失败：{exc}')
+            return False
+        output_func(f"[修订] 已根据 Controller 校验错误重新生成 {gate_info['label']}。")
+        return True
+
+    def _auto_revise_unit_plan_after_validation_error(
+        self,
+        gate_info: dict[str, Any],
+        error: ValueError,
+        output_func: Callable[[str], None],
+    ) -> bool:
+        if str(gate_info.get('gate')) != 'unit-plan':
+            return False
+        if not gate_info.get('can_revise'):
+            return False
+        if not str(error).startswith('unit plan gate invalid:'):
+            return False
+        if not self._unit_plan_auto_revision_enabled(self.store.load_state()):
+            return False
+        output_func(
+            '[修订] Unit Plan 预检失败，已自动打回：'
+            + _gate_reason_label(_strip_gate_invalid_prefix(str(error)))
+        )
+        try:
+            self._revise_unit_plan_gate(controller_validation_only=True)
+            state = self._auto_revise_invalid_unit_plan_draft(self.store.load_state())
+            self._save_state(state)
+        except Exception as exc:
+            output_func(f'[修订] 自动打回失败：{exc}')
+            return False
+        output_func(f"[修订] 已根据 Controller 校验错误重新生成 {gate_info['label']}。")
+        return True
+
+    def _auto_revise_gate_after_validation_error(
+        self,
+        gate_info: dict[str, Any],
+        error: ValueError,
+        output_func: Callable[[str], None],
+    ) -> bool:
+        return (
+            self._auto_revise_requirements_after_validation_error(gate_info, error, output_func)
+            or self._auto_revise_unit_plan_after_validation_error(gate_info, error, output_func)
+        )
+
+    def _auto_revise_invalid_requirements_draft(self, state: dict[str, Any]) -> dict[str, Any]:
+        if not self._requirements_auto_revision_enabled(state):
+            return state
+
+        gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
+        max_revisions = int(
+            state.get('requirementsAutoRevisionMax')
+            or DEFAULT_MAX_REQUIREMENTS_AUTO_REVISIONS
+        )
+        output_func = getattr(self, '_drive_progress_callback', None)
+        compact_reporter = getattr(self, '_drive_compact_reporter', None)
+        attempts = 0
+        while attempts < max_revisions:
+            if compact_reporter is not None:
+                compact_reporter.print_status(
+                    state,
+                    current_label='预检 Requirements 草案',
+                    planning_stage='Requirements confirmation',
+                )
+            reason = self._requirements_gate_invalid_reason(state, gate_path)
+            if not reason:
+                state['blockedReason'] = None
+                return state
+
+            attempts += 1
+            state['requirementsAccepted'] = False
+            state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+            state['blockedReason'] = reason
+            self._save_state(state)
+            self.store.append_event('requirements_draft_auto_revision_requested', {
+                'task_id': state.get('task_id'),
+                'path': str(gate_path),
+                'reason': reason,
+                'attempt': attempts,
+            })
+            self._write_controller_validation_artifact(
+                gate='requirements',
+                reason=reason,
+                attempt=attempts,
+            )
+            if compact_reporter is not None:
+                compact_reporter.print_status(
+                    state,
+                    current_label='自动打回 Requirements 草案',
+                    planning_stage='Requirements confirmation',
+                    force=True,
+                )
+            if output_func is not None:
+                output_func(f'[修订] Requirements 草案未通过 controller 预检，自动打回：{_gate_reason_label(reason)}')
+            self._revise_requirements_gate(controller_validation_only=True)
+            state = self.store.load_state()
+
+        reason = self._requirements_gate_invalid_reason(state, gate_path)
+        if reason:
+            state['requirementsAccepted'] = False
+            state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+            state['status'] = 'blocked'
+            state['blockedReason'] = (
+                f'requirements gate invalid after automatic revisions: {reason}'
+            )
+            self.store.append_event('requirements_draft_auto_revision_blocked', {
+                'task_id': state.get('task_id'),
+                'path': str(gate_path),
+                'reason': reason,
+                'attempts': max_revisions,
+            })
+        else:
+            state['blockedReason'] = None
+        return state
+
+    def _requirements_auto_revision_enabled(self, state: dict[str, Any]) -> bool:
+        if self.dry_run:
+            return False
+        return state.get('agentRunner') in TMUX_AGENT_BACKENDS
+
+    def _auto_revise_invalid_unit_plan_draft(self, state: dict[str, Any]) -> dict[str, Any]:
+        if not self._unit_plan_auto_revision_enabled(state):
+            return state
+
+        gate_path = self.approvals_dir / 'unit-plan.md'
+        if state.get('currentStep') != 'WAITING_UNIT_PLAN_APPROVAL' or not gate_path.exists():
+            return state
+
+        max_revisions = int(
+            state.get('unitPlanAutoRevisionMax')
+            or DEFAULT_MAX_UNIT_PLAN_AUTO_REVISIONS
+        )
+        output_func = getattr(self, '_drive_progress_callback', None)
+        compact_reporter = getattr(self, '_drive_compact_reporter', None)
+        attempts = 0
+        while attempts < max_revisions:
+            if compact_reporter is not None:
+                compact_reporter.print_status(
+                    state,
+                    current_label='预检 Unit Plan 草案',
+                    planning_stage='Unit plan confirmation',
+                )
+            state = self._refresh_unit_plan_gate_validation(state)
+            reason = str(state.get('blockedReason') or '')
+            if not reason.startswith('unit plan gate invalid:'):
+                return state
+
+            attempts += 1
+            state['unitPlanAccepted'] = False
+            state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+            self._save_state(state)
+            self.store.append_event('unit_plan_draft_auto_revision_requested', {
+                'task_id': state.get('task_id'),
+                'path': str(gate_path),
+                'reason': reason,
+                'attempt': attempts,
+            })
+            self._write_controller_validation_artifact(
+                gate='unit-plan',
+                reason=reason,
+                attempt=attempts,
+            )
+            if compact_reporter is not None:
+                compact_reporter.print_status(
+                    state,
+                    current_label='自动打回 Unit Plan 草案',
+                    planning_stage='Unit plan confirmation',
+                    force=True,
+                )
+            if output_func is not None:
+                output_func(
+                    '[修订] Unit Plan 预检失败，已自动打回：'
+                    + _gate_reason_label(_strip_gate_invalid_prefix(reason))
+                )
+            self._revise_unit_plan_gate(controller_validation_only=True)
+            state = self.store.load_state()
+
+        state = self._refresh_unit_plan_gate_validation(state)
+        reason = str(state.get('blockedReason') or '')
+        if reason.startswith('unit plan gate invalid:'):
+            state['unitPlanAccepted'] = False
+            state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+            state['status'] = 'blocked'
+            state['blockedReason'] = (
+                f'unit plan gate invalid after automatic revisions: {reason}'
+            )
+            self.store.append_event('unit_plan_draft_auto_revision_blocked', {
+                'task_id': state.get('task_id'),
+                'path': str(gate_path),
+                'reason': reason,
+                'attempts': max_revisions,
+            })
+        return state
+
+    def _unit_plan_auto_revision_enabled(self, state: dict[str, Any]) -> bool:
+        if self.dry_run:
+            return False
+        return state.get('agentRunner') in TMUX_AGENT_BACKENDS
+
+    def _write_controller_validation_artifact(
+        self,
+        *,
+        gate: str,
+        reason: str,
+        attempt: int,
+    ) -> Path:
+        artifact_dir = self.artifacts_dir / f'{gate}-draft'
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        path = artifact_dir / 'controller-validation-error.json'
+        path.write_text(
+            json.dumps(
+                {
+                    'gate': gate,
+                    'attempt': attempt,
+                    'reason': reason,
+                    'short_reason': _gate_reason_label(_strip_gate_invalid_prefix(reason)),
+                    'generated_at': datetime.now(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding='utf-8',
+        )
+        return path
+
 
 def _gate_reason_label(reason: str) -> str:
-    return GATE_REASON_LABELS.get(reason, reason)
+    label = GATE_REASON_LABELS.get(reason)
+    if label:
+        return label
+    return _compact_controller_reason(reason)
+
+
+def _strip_gate_invalid_prefix(reason: str) -> str:
+    return re.sub(
+        r'^(?:unit plan|requirements|final acceptance) gate invalid:\s*',
+        '',
+        str(reason or ''),
+        flags=re.IGNORECASE,
+    ).strip()
+
+
+def _compact_controller_reason(reason: str, *, max_chars: int = 260) -> str:
+    text = ' '.join(str(reason or '').split())
+    if not text:
+        return text
+    if 'missing Acceptance Obligation coverage:' in text:
+        prefix, _, detail = text.partition('missing Acceptance Obligation coverage:')
+        ids = list(dict.fromkeys(re.findall(r'\bAO-\d+\b', detail)))
+        if len(ids) > 5:
+            return (
+                f'{prefix}missing Acceptance Obligation coverage: '
+                f'{len(ids)} AO missing ({ids[0]}..{ids[-1]}); full detail sent to revision prompt'
+            ).strip()
+    return _short_failure_text(text, max_chars=max_chars)
 
 
 def _final_acceptance_rejection_route(content: str) -> str:
@@ -2509,17 +3012,47 @@ class _CompactDriveReporter:
         self.output_func = output_func
         self.color_enabled = color_enabled
         self.current_unit_id: str | None = None
+        self.last_card_key: tuple[Any, ...] | None = None
         self.attempt_number = 0
         self.stage_results: dict[str, str] = {}
 
     def print_roadmap_if_needed(self, state: dict[str, Any]) -> None:
+        self.print_status(state)
+
+    def print_status(
+        self,
+        state: dict[str, Any],
+        *,
+        current_label: str | None = None,
+        planning_stage: str | None = None,
+        force: bool = False,
+    ) -> None:
         unit_id = str(state.get('currentUnitId') or '-')
-        if unit_id == self.current_unit_id:
+        if unit_id != self.current_unit_id:
+            self.current_unit_id = unit_id
+            self.attempt_number = 0
+            self.stage_results = {}
+            self.last_card_key = None
+        action = state.get('nextAction') or compute_next_allowed_action(state)
+        card_key = (
+            unit_id,
+            state.get('currentStep'),
+            action,
+            current_label,
+            planning_stage,
+            state.get('blockedReason'),
+        )
+        if not force and card_key == self.last_card_key:
             return
-        self.current_unit_id = unit_id
-        self.attempt_number = 0
-        self.stage_results = {}
-        self.output_func(_compact_roadmap(state, color_enabled=self.color_enabled))
+        self.last_card_key = card_key
+        self.output_func(
+            _compact_roadmap(
+                state,
+                color_enabled=self.color_enabled,
+                current_label=current_label,
+                planning_stage=planning_stage,
+            )
+        )
 
     def record_transition(
         self,
@@ -2591,7 +3124,13 @@ class _CompactDriveReporter:
         )
 
 
-def _compact_roadmap(state: dict[str, Any], *, color_enabled: bool = False) -> str:
+def _compact_roadmap(
+    state: dict[str, Any],
+    *,
+    color_enabled: bool = False,
+    current_label: str | None = None,
+    planning_stage: str | None = None,
+) -> str:
     unit_id = str(state.get('currentUnitId') or '-')
     units = _display_units_for_state(state)
     unit_ids = [str(unit.get('id')) for unit in units]
@@ -2606,14 +3145,27 @@ def _compact_roadmap(state: dict[str, Any], *, color_enabled: bool = False) -> s
         if not unit.get('passes')
     )
     action = state.get('nextAction') or compute_next_allowed_action(state)
-    now = ACTION_LABELS.get(action, action) if action else '-'
+    now = current_label or _compact_current_label(state, action)
     return (
         f"{_paint('▶', 'green', color_enabled)} {_paint(str(state.get('requestedOutcome') or '-'), 'bold', color_enabled)}\n"
         f"          {_paint('单元', 'cyan', color_enabled)}   {index}/{total}  {unit_id}\n"
-        f"          {_paint('阶段', 'cyan', color_enabled)} {_stage_tokens_for_state(state, color_enabled=color_enabled)}\n"
+        f"          {_paint('阶段', 'cyan', color_enabled)} {_stage_tokens_for_state(state, color_enabled=color_enabled, planning_stage=planning_stage)}\n"
         f"          {_paint('当前', 'cyan', color_enabled)}   {_paint(str(now), 'yellow', color_enabled) if now != '-' else now}\n"
         f"          {_paint('剩余', 'cyan', color_enabled)}   {_paint(str(remaining_after), 'dim', color_enabled)} 个单元"
     )
+
+
+def _compact_current_label(state: dict[str, Any], action: str | None) -> str:
+    step = str(state.get('currentStep') or '')
+    step_labels = {
+        'WAITING_REQUIREMENTS_ACCEPTANCE': '等待需求与验收确认',
+        'WAITING_UNIT_PLAN_APPROVAL': '等待 Unit Plan 确认',
+        'WAITING_FINAL_ACCEPTANCE': '等待最终验收确认',
+        'WAITING_BUG_FIX_GATE': '等待 Bug Fix 确认',
+    }
+    if step in step_labels:
+        return step_labels[step]
+    return ACTION_LABELS.get(action, action) if action else '-'
 
 
 def _display_units_for_state(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2720,9 +3272,14 @@ def _stage_tokens(current_stage: str | None, *, color_enabled: bool = False) -> 
     return _format_stage_tokens(stages, COMPACT_STAGE_LABELS, current_stage, color_enabled=color_enabled)
 
 
-def _stage_tokens_for_state(state: dict[str, Any], *, color_enabled: bool = False) -> str:
+def _stage_tokens_for_state(
+    state: dict[str, Any],
+    *,
+    color_enabled: bool = False,
+    planning_stage: str | None = None,
+) -> str:
     action = state.get('nextAction') or compute_next_allowed_action(state)
-    planning_stage = COMPACT_PLANNING_ACTION_STAGES.get(str(action))
+    planning_stage = planning_stage or COMPACT_PLANNING_ACTION_STAGES.get(str(action))
     if planning_stage:
         stages = [
             'Requirements draft',
@@ -2864,13 +3421,7 @@ def _should_hide_plannotator_output_line(line: str) -> bool:
 
 
 def _plannotator_review_path_for_gate(artifacts_dir: Path, gate: str, approval_gate_path: Path) -> Path:
-    body_paths = {
-        'requirements': artifacts_dir / 'requirements-draft' / 'requirements-body.md',
-        'unit-plan': artifacts_dir / 'unit-plan-draft' / 'unit-plan-body.md',
-    }
-    body_path = body_paths.get(gate)
-    if body_path and body_path.exists():
-        return body_path
+    del artifacts_dir, gate
     return approval_gate_path
 
 
@@ -2888,6 +3439,7 @@ def _record_plannotator_review_paths(
         return
     summary['review_path'] = str(review_path)
     summary['approval_gate_path'] = str(approval_gate_path)
+    summary['full_path'] = str(review_path)
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
@@ -3105,6 +3657,366 @@ def _agent_guide_workspace_dir(
     return state_dir.parent
 
 
+def _detect_tmux_target_backend(
+    tmux_target: str,
+    workspace_dir: Path,
+    *,
+    tmux_command: list[str] | None = None,
+) -> str | None:
+    return _inspect_tmux_target(tmux_target, workspace_dir, tmux_command=tmux_command).get('detectedBackend')
+
+
+def _inspect_tmux_target(
+    tmux_target: str,
+    workspace_dir: Path,
+    *,
+    tmux_command: list[str] | None = None,
+) -> dict[str, Any]:
+    pane_command = _tmux_display_message(
+        tmux_target,
+        '#{pane_current_command}',
+        workspace_dir,
+        tmux_command=tmux_command,
+    ).strip()
+    pane_title = _tmux_display_message(
+        tmux_target,
+        '#{pane_title}',
+        workspace_dir,
+        tmux_command=tmux_command,
+    ).strip()
+    pane_current_path = _tmux_display_message(
+        tmux_target,
+        '#{pane_current_path}',
+        workspace_dir,
+        tmux_command=tmux_command,
+    ).strip()
+    pane_pid = _tmux_display_message(
+        tmux_target,
+        '#{pane_pid}',
+        workspace_dir,
+        tmux_command=tmux_command,
+    ).strip()
+    process_tree = _tmux_pane_process_tree(pane_pid, workspace_dir)
+    pane_output = _tmux_capture_pane(tmux_target, workspace_dir, tmux_command=tmux_command)
+    for source, text in (
+        ('command', pane_command),
+        ('title', pane_title),
+        ('process-tree', process_tree),
+        ('pane-output', pane_output),
+    ):
+        agent = _detect_agent_from_text(text)
+        if agent:
+            return {
+                'target': tmux_target,
+                'paneCommand': pane_command,
+                'paneTitle': pane_title,
+                'paneCurrentPath': pane_current_path,
+                'panePid': pane_pid,
+                'detectedAgent': agent,
+                'detectedBackend': TMUX_DETECTED_AGENT_BACKENDS[agent],
+                'detectedSource': source,
+            }
+    return {
+        'target': tmux_target,
+        'paneCommand': pane_command,
+        'paneTitle': pane_title,
+        'paneCurrentPath': pane_current_path,
+        'panePid': pane_pid,
+        'detectedAgent': None,
+        'detectedBackend': None,
+        'detectedSource': None,
+    }
+
+
+def _tmux_target_resolution(
+    *,
+    target: str,
+    runner: str,
+    inspection: dict[str, Any],
+    source: str,
+) -> dict[str, Any]:
+    return {
+        'target': target,
+        'runner': runner,
+        'detectedBackend': inspection.get('detectedBackend'),
+        'detectedSource': inspection.get('detectedSource'),
+        'source': source,
+        'paneCommand': inspection.get('paneCommand') or '',
+        'paneTitle': inspection.get('paneTitle') or '',
+        'paneCurrentPath': inspection.get('paneCurrentPath') or '',
+        'panePid': inspection.get('panePid') or '',
+    }
+
+
+def _tmux_resolution_source(
+    *,
+    detected_backend: str | None,
+    explicit_runner: str | None,
+    state_runner: str | None,
+) -> str:
+    if detected_backend:
+        return 'detected'
+    if explicit_runner:
+        return 'explicit-runner'
+    if state_runner:
+        return 'state-runner'
+    return 'fallback-default'
+
+
+def _apply_tmux_target_resolution(state: dict[str, Any], resolution: dict[str, Any] | None) -> None:
+    if resolution:
+        state['tmuxTargetResolution'] = resolution
+    elif not state.get('tmuxTarget'):
+        state.pop('tmuxTargetResolution', None)
+
+
+def _format_tmux_target_resolution(resolution: Any) -> str | None:
+    if not isinstance(resolution, dict):
+        return None
+    target = _compact_tmux_probe_value(resolution.get('target')) or '-'
+    runner = _compact_tmux_probe_value(resolution.get('runner')) or '-'
+    detected = _compact_tmux_probe_value(resolution.get('detectedBackend')) or 'unknown'
+    source = _compact_tmux_probe_value(resolution.get('source')) or '-'
+    parts = [
+        f'[tmux] target={target}',
+        f'runner={runner}',
+        f'detected={detected}',
+        f'source={source}',
+    ]
+    submit_key = _tmux_submit_key_for_report(runner)
+    if submit_key:
+        parts.append(f'submitKey={submit_key}')
+    submit_delay = _tmux_submit_delay_for_report(runner)
+    if submit_delay is not None:
+        parts.append(f'submitDelay={submit_delay:.1f}s')
+    pane_command = _compact_tmux_probe_value(resolution.get('paneCommand'))
+    pane_title = _compact_tmux_probe_value(resolution.get('paneTitle'))
+    pane_current_path = _compact_tmux_probe_value(resolution.get('paneCurrentPath'))
+    workspace_path = _compact_tmux_probe_value(resolution.get('workspacePath'))
+    if pane_command:
+        parts.append(f'command={pane_command}')
+    if pane_title:
+        parts.append(f'title={pane_title}')
+    if pane_current_path:
+        parts.append(f'path={pane_current_path}')
+    elif workspace_path:
+        parts.append(f'workspace={workspace_path}')
+    detected_source = _compact_tmux_probe_value(resolution.get('detectedSource'))
+    if detected_source and detected_source != source:
+        parts.append(f'detectedSource={detected_source}')
+    return ' '.join(parts)
+
+
+def _tmux_submit_key_for_report(runner: str) -> str:
+    if runner == 'tmux-codex':
+        return os.environ.get('RRC_TMUX_CODEX_SUBMIT_KEY') or 'Enter'
+    if runner == 'tmux-claude':
+        return os.environ.get('RRC_TMUX_CLAUDE_SUBMIT_KEY') or 'C-m'
+    return ''
+
+
+def _tmux_submit_delay_for_report(runner: str) -> float | None:
+    if runner == 'tmux-codex':
+        return _env_float_for_report(
+            'RRC_TMUX_CODEX_SUBMIT_DELAY_SECONDS',
+            _env_float_for_report('RRC_TMUX_SUBMIT_DELAY_SECONDS', 2.0),
+        )
+    if runner == 'tmux-claude':
+        return _env_float_for_report(
+            'RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS',
+            _env_float_for_report('RRC_TMUX_SUBMIT_DELAY_SECONDS', 0.5),
+        )
+    return None
+
+
+def _env_float_for_report(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _format_tmux_inspection_details(inspection: dict[str, Any]) -> str:
+    parts = []
+    for key, label in (
+        ('paneCommand', 'command'),
+        ('paneTitle', 'title'),
+        ('paneCurrentPath', 'path'),
+        ('panePid', 'pid'),
+        ('detectedSource', 'detectedSource'),
+    ):
+        value = _compact_tmux_probe_value(inspection.get(key))
+        if value:
+            parts.append(f'{label}={value}')
+    return ', '.join(parts) or 'no tmux probe details'
+
+
+def _compact_tmux_probe_value(value: Any, *, limit: int = 160) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    text = re.sub(r'\s+', ' ', text)
+    if len(text) <= limit:
+        return text
+    return text[:limit - 3] + '...'
+
+
+def _tmux_target_current_path(
+    tmux_target: str,
+    cwd: Path,
+    *,
+    tmux_command: list[str] | None = None,
+) -> Path | None:
+    raw_path = _tmux_display_message(
+        tmux_target,
+        '#{pane_current_path}',
+        cwd,
+        tmux_command=tmux_command,
+    ).strip()
+    if not raw_path:
+        return None
+    return Path(raw_path).expanduser()
+
+
+def _is_target_acceptance_state(state: dict[str, Any]) -> bool:
+    return 'targetMatchedPlanStep' in state or bool(state.get('humanGatesRequired'))
+
+
+def _tmux_display_message(
+    tmux_target: str,
+    fmt: str,
+    workspace_dir: Path,
+    *,
+    tmux_command: list[str] | None = None,
+) -> str:
+    completed = _run_tmux_probe(
+        [*(tmux_command or ['tmux']), 'display-message', '-p', '-t', tmux_target, fmt],
+        workspace_dir,
+    )
+    return completed.stdout if completed and completed.returncode == 0 else ''
+
+
+def _tmux_capture_pane(
+    tmux_target: str,
+    workspace_dir: Path,
+    *,
+    tmux_command: list[str] | None = None,
+) -> str:
+    completed = _run_tmux_probe(
+        [*(tmux_command or ['tmux']), 'capture-pane', '-t', tmux_target, '-p', '-S', '-80'],
+        workspace_dir,
+    )
+    if not completed or completed.returncode != 0:
+        return ''
+    return completed.stdout
+
+
+def _run_tmux_probe(command: list[str], workspace_dir: Path) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            command,
+            cwd=workspace_dir,
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _tmux_pane_process_tree(pane_pid: str, workspace_dir: Path) -> str:
+    if not pane_pid:
+        return ''
+    completed = _run_process_probe(
+        ['ps', '-o', 'pid=,ppid=,pgid=,comm=,args=', '-g', pane_pid],
+        workspace_dir,
+    )
+    if completed and completed.returncode == 0:
+        return completed.stdout
+    return ''
+
+
+def _run_process_probe(command: list[str], workspace_dir: Path) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            command,
+            cwd=workspace_dir,
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _tmux_command_for_controller(agent_command: str | None) -> list[str]:
+    parts = shlex.split(agent_command) if agent_command else []
+    if parts and Path(parts[0]).name == 'tmux':
+        return parts
+    return ['tmux']
+
+
+def _detect_agent_from_text(text: str) -> str | None:
+    lowered = text.lower()
+    codex_seen = 'codex' in lowered
+    claude_seen = 'claude' in lowered
+    if codex_seen and not claude_seen:
+        return 'codex'
+    if claude_seen and not codex_seen:
+        return 'claude'
+    return None
+
+
+def _create_tmux_claude_pane(workspace_dir: Path) -> str:
+    if not os.environ.get('TMUX'):
+        raise ValueError(
+            'No --tmux-target was provided and workflow-controller is not running inside a tmux session. '
+            'Pass --tmux-target pointing at an existing Codex or Claude pane, or run the controller inside tmux.'
+        )
+    command = [
+        'tmux',
+        'split-window',
+        '-h',
+        '-P',
+        '-F',
+        '#{pane_id}',
+        '-c',
+        str(workspace_dir),
+        'claude',
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=workspace_dir,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f'Failed to create Claude tmux pane: {exc}') from exc
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f'Failed to create Claude tmux pane: {stderr}')
+    pane_id = _last_nonempty_line(completed.stdout)
+    if not pane_id:
+        raise RuntimeError('Failed to create Claude tmux pane: tmux did not return a pane id')
+    return pane_id
+
+
+def _last_nonempty_line(text: str) -> str:
+    for line in reversed(text.splitlines()):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ''
+
+
 def _go_target_slug(target: str) -> str:
     slug = ''.join(
         char.lower() if char.isalnum() or char in '._-' else '-'
@@ -3137,8 +4049,8 @@ def add_go_parser(subparsers: Any) -> argparse.ArgumentParser:
     go_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate low-risk approval artifacts during runtime')
     go_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     go_parser.add_argument('--agent', default=None, help='Agent command used by the real builder runtime')
-    go_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess or tmux-claude')
-    go_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
+    go_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    go_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     go_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     go_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     go_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
@@ -3160,8 +4072,11 @@ def add_go_parser(subparsers: Any) -> argparse.ArgumentParser:
 
 def normalize_go_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> argparse.Namespace:
     if getattr(args, 'command', None) != 'go':
+        args.state_dir_explicit = True
         return args
 
+    state_dir_explicit = getattr(args, 'state_dir', None) is not None
+    args.state_dir_explicit = state_dir_explicit
     positional_target = getattr(args, 'target_arg', None)
     flag_target = getattr(args, 'target', None)
     if positional_target and flag_target and positional_target != flag_target:
@@ -3170,17 +4085,12 @@ def normalize_go_args(args: argparse.Namespace, parser: argparse.ArgumentParser)
     target = flag_target or positional_target
     args.target = target
     workspace_arg = getattr(args, 'workspace_dir', None)
-    workspace_explicit = workspace_arg is not None
-    if getattr(args, 'workspace_dir', None) is None:
-        args.workspace_dir = '.'
-    if getattr(args, 'runner', None) is None:
-        args.runner = 'tmux-claude' if getattr(args, 'tmux_target', None) else 'subprocess'
     if getattr(args, 'state_dir', None) is None:
         if target:
             args.state_dir = _go_state_dir_in_workspace(
                 _go_state_dir_for_target(target),
                 args.workspace_dir,
-                workspace_explicit,
+                workspace_arg is not None,
             )
         else:
             parser.error('go requires TARGET or --target when --state-dir is omitted')
@@ -3201,8 +4111,8 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate approval artifacts during init and runtime')
     init_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     init_parser.add_argument('--agent', default='claude', help='Agent command used by the real builder runtime')
-    init_parser.add_argument('--runner', default='subprocess', help='Agent runner backend: subprocess or tmux-claude')
-    init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
+    init_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     init_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     init_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     init_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout during init')
@@ -3269,8 +4179,8 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate low-risk approval artifacts during runtime')
     start_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     start_parser.add_argument('--agent', default=None, help='Agent command used by the real builder runtime')
-    start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess or tmux-claude')
-    start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for --runner tmux-claude, for example 1.2')
+    start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     start_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     start_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     start_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
@@ -3301,8 +4211,8 @@ def parse_args() -> argparse.Namespace:
     drive_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate low-risk approval artifacts during runtime')
     drive_parser.add_argument('--workspace-dir', default=None, help='Override workspace path stored in session.json')
     drive_parser.add_argument('--agent', default=None, help='Override agent command used by the builder runtime')
-    drive_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess or tmux-claude')
-    drive_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for --runner tmux-claude')
+    drive_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    drive_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for tmux-codex or tmux-claude')
     drive_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     drive_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     drive_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
@@ -3323,8 +4233,8 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument('--auto-approve', action='store_true', help='Auto-generate approval artifacts during runtime')
     run_parser.add_argument('--workspace-dir', default=None, help='Override workspace path stored in session.json')
     run_parser.add_argument('--agent', default=None, help='Override agent command used by the builder runtime')
-    run_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess or tmux-claude')
-    run_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for --runner tmux-claude')
+    run_parser.add_argument('--runner', default=None, help='Override agent runner backend: subprocess, tmux-claude, or tmux-codex')
+    run_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for tmux-codex or tmux-claude')
     run_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     run_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
 
@@ -3411,6 +4321,7 @@ def main() -> None:
         claude_md_enabled=getattr(args, 'claude_md', False),
         plannotator_command=getattr(args, 'plannotator_command', 'plannotator'),
         plannotator_port=getattr(args, 'plannotator_port', 20000),
+        state_dir_explicit=getattr(args, 'state_dir_explicit', True),
     )
 
     if args.command == 'init':

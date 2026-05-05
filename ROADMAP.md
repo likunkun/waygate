@@ -99,18 +99,20 @@ Builder → CodeSimplifier/Refiner → Reviewer → Verifier → Final Acceptanc
 | 优先级 | 版本 | 主题 | 要做什么 | 为什么先后这样排 |
 |---|---|---|---|---|
 | P0 | V0.4.0 | 项目初始化规约 | `init` 自动生成 `AGENTS.md`、可选 `CLAUDE.md`、标准文档目录结构、事实源表、Agent 操作规则 | 这是所有后续 agent 正确工作的入口，先补 |
-| P0 | V0.4.1 | 需求协商循环 | Requirements gate 支持多轮批注、返工、确认；记录每轮差异 | 对应 ROADMAP V0.4，解决需求被重解释 |
+| P0 | V0.4.1 | 需求协商循环 | Requirements Drafter 可在目标 agent pane 中集中澄清关键缺口；Requirements gate 支持多轮批注、返工、确认并记录差异 | 对应 ROADMAP V0.4，解决需求被重解释 |
 | P0 | V0.4.2 | `change_requests.jsonl` | 所有需求变更必须生成 change request，记录来源、原因、影响 AO/AC/Test Case/Journey | 防止偷偷改需求或弱化验收 |
 | P0 | V0.4.3 | 独立 Bug Fix Gate | `defect_fix` 从 Unit Plan revision 升级为：Bug gate → Root cause → Bug Fix Agent → 回归验证 | 对应 ROADMAP V0.4，补齐缺陷修复控制流 |
 | P0 | V0.4.4 | Journey Acceptance Layer | 新增 `journeys.json`、Journey gate、Journey evidence、Final Acceptance Journey Matrix | 先解决“局部 unit 都通过，但整体流程不通”的任务粒度问题 |
 | P0 | V0.4.5 | Final Scope Audit | 最终验收前生成覆盖/未覆盖/超范围改动/未解释 diff 审计，并纳入 Journey 覆盖 | Journey 成为审计对象后再做最终范围审计 |
-| P1 | V0.4.5a | Requirements Dialogue Brief | Requirements Draft 前由当前对话 Agent 生成需求对话 brief，帮助 drafter 保留用户原始语境 | 作为后续需求体验增强记录，不插队、不影响 V0.4.5 Final Scope Audit |
+| P1 | V0.4.5a | Requirements Dialogue Brief | Requirements Draft 前生成 requirements dialogue brief 上下文压缩，帮助 drafter 保留用户原始语境 | 作为后续需求体验增强记录，不插队、不影响 V0.4.5 Final Scope Audit |
 | P1 | V0.4.6 | Strict Test Presence + Requirements Test Strategist | 把 optional Test Strategist 接到 requirements 阶段；新增“非 manual AC 必须有可执行 test case，没有 test case 不能 pass”的 gate | 先补用户最担心的“根本没有测试”，再让测试策略前移 |
-| P1 | V0.5.1 | per-role runner 完整化 | Builder、Refiner、Reviewer、Verifier、Bug Fix Agent 都支持独立 runner/command/env/timeout | 对应 ROADMAP V0.5，为执行隔离打基础 |
-| P1 | V0.5.2 | opencode runner | 实现 opencode runner，统一 runner metadata 与 artifacts | 对应 ROADMAP V0.5 的 Agent 灵活性目标 |
-| P1 | V0.5.3 | task workspace/branch 隔离 | 每个 unit 独立 workspace 或 branch，产出 patch/checkpoint | 降低越界修改和历史状态污染 |
-| P1 | V0.5.4 | file/tool policy | 不同 role 限制可写文件、可用工具；Implementer 不允许改 approved requirements/acceptance/journeys | 把流程约束从 prompt 提升为 harness 规则 |
-| P1 | V0.5.5 | clean verification | Verifier 支持 clean checkout / clean env 验证 | 避免本地残留导致假通过 |
+| P1 | V0.5.1 | tmux agent detection + auto Claude pane | `--tmux-target` 自动识别 Codex/Claude pane；无 target 且在 tmux 内自动右侧创建 Claude pane | 先让当前 tmux agent 调度可用，执行隔离规划后移 |
+| P1 | V0.5.2 | 审批摘要优先 + Unit Plan 进度输出 | Requirements/Unit Plan 审批 Markdown 顶部先展示摘要，controller 可预检问题自动打回，compact 输出恢复 Unit Plan 草案/预检/打回/等待状态 | 降低人工 gate 审阅成本，并避免按 approve 后才暴露 controller 可判定错误 |
+| P1 | V0.5.6 | per-role runner 完整化 | Builder、Refiner、Reviewer、Verifier、Bug Fix Agent 都支持独立 runner/command/env/timeout | 对应 ROADMAP V0.5，为执行隔离打基础 |
+| P1 | V0.5.7 | opencode runner | 实现 opencode runner，统一 runner metadata 与 artifacts | 对应 ROADMAP V0.5 的 Agent 灵活性目标 |
+| P1 | V0.5.8 | task workspace/branch 隔离 | 每个 unit 独立 workspace 或 branch，产出 patch/checkpoint | 降低越界修改和历史状态污染 |
+| P1 | V0.5.9 | file/tool policy | 不同 role 限制可写文件、可用工具；Implementer 不允许改 approved requirements/acceptance/journeys | 把流程约束从 prompt 提升为 harness 规则 |
+| P1 | V0.5.10 | clean verification | Verifier 支持 clean checkout / clean env 验证 | 避免本地残留导致假通过 |
 | P2 | V0.6.1 | checkpoint/time-travel | 每个状态转移保存 checkpoint，支持恢复、回放、对比 | 强化长任务恢复能力 |
 | P2 | V0.6.2 | unified trace | 统一 run_id、unit_id、AO、AC、Journey、evidence、logs 查询 | 提升可审计性 |
 | P2 | V0.6.3 | evidence 类型扩展 | 标准化截图、Playwright trace、API response、coverage、DB query result | 让不同项目类型都有可靠证据 |
@@ -142,6 +144,9 @@ V0.4 的目标是补齐控制平面的上游入口与跨任务验收：让 agent
 
 **V0.4.1 Requirements Negotiation Loop（已完成）：**
 
+- Requirements Drafter 在生成 gate 前可在目标 tmux agent pane 中集中提出关键澄清问题，拿到用户回答后继续
+- 可用保守假设推进时不打断用户，必须把关键假设和待确认风险写入 Requirements Gate
+- Requirements 草案生成后先跑 controller 预检；可自动判定的 gate invalid 会自动打回 drafter，不进入人工审核
 - Requirements gate 支持多轮批注返工，满意后正式 approve
 - 每轮 requirements 返工保留差异摘要、反馈来源和处理结果
 - Requirements revision prompt 必须携带上一轮 controller validation error 与 Plannotator annotations
@@ -194,8 +199,8 @@ defect_fix 路由触发
 
 **V0.4.5a Requirements Dialogue Brief（已完成）：**
 
-- Requirements Draft 前，由当前对话 Agent 生成一份 requirements dialogue brief
-- brief 聚合用户原始目标、上下文约束、明确反复强调的非目标和待澄清问题
+- Requirements Draft 前生成一份 requirements dialogue brief，用于压缩 controller state、原始目标和上下文文件
+- brief 聚合用户原始目标、上下文约束、明确反复强调的非目标、AO ledger 和 revision feedback；它不是提问机制
 - Requirements drafter 后续可消费该 brief，减少需求重解释；V0.4.5a 不改变 Final Scope Audit 的版本顺序和验收范围
 - brief 写入 `artifacts/requirements-dialogue-brief/`，requirements prompt 会注入其摘要和 hash
 
@@ -224,30 +229,47 @@ defect_fix 路由触发
 
 V0.5 的目标是强化 Execution Plane：把不同 role 的执行环境、runner、权限和验证环境隔离开。
 
-**V0.5.1 per-role runner 完整化：**
+**V0.5.1 tmux agent detection + auto Claude pane：**
+
+- 指定 `--tmux-target` 时检测目标 pane 是 Codex 还是 Claude，并分别使用 `tmux-codex` / `tmux-claude`
+- 显式 `--runner` 与检测结果冲突时阻断
+- 未指定 `--tmux-target` 且 controller 运行在 tmux 内时，右半屏自动创建 Claude pane，并写入 `tmuxTarget` / `agentRunner=tmux-claude`
+- 未指定 `--tmux-target` 且不在 tmux 内时，要求用户传入 tmux target 或显式 `--runner subprocess`
+
+**V0.5.2 审批摘要优先 + Unit Plan 进度输出（已完成）：**
+
+- `approvals/requirements-and-acceptance.md` 和 `approvals/unit-plan.md` 保持单文件结构，顶部新增 `## 审批摘要`
+- 详细 Requirements 矩阵、Journey 映射、Unit Plan 测试矩阵和 `## Controller State Patch` 留在同一 Markdown 的附录区
+- `## Human Confirmation` 仍只由 controller 自动追加，agent 生成正文不会成为确认事实源
+- Plannotator 改为打开同一个 approval Markdown，默认先看到顶部摘要；review summary 记录 review/approval/full path
+- Unit Plan 进入人工确认前会执行 controller 预检；可判定错误自动写入 state/artifact 并打回 drafter，不显示人工审批菜单
+- compact drive 输出覆盖 Requirements/Unit Plan 生成、预检、自动打回、等待确认、Builder/Verifier 等长动作状态
+- 全量测试：`332 passed in 43.67s`
+
+**V0.5.6 per-role runner 完整化：**
 
 - Builder、Refiner、Reviewer、Verifier、Bug Fix Agent、Requirements/Test Strategist 都支持独立 runner/command/env/timeout
 - runner metadata 统一记录 role、backend、command、env keys、run id、artifact path
 
-**V0.5.2 opencode runner：**
+**V0.5.7 opencode runner：**
 
 - 实现 opencode runner
 - 与 tmux_claude/subprocess 使用同一 `RunnerRequest` / `RunnerResult` 语义
 - 保留 stdout/stderr、done payload、run events 和 redaction
 
-**V0.5.3 Task Workspace / Branch Isolation：**
+**V0.5.8 Task Workspace / Branch Isolation：**
 
 - 每个 unit 可选独立 workspace 或 branch
 - 每个 agent run 生成 patch/checkpoint
 - Controller 只合并通过 Refiner/Reviewer/Verifier 的 patch
 
-**V0.5.4 File / Tool Policy：**
+**V0.5.9 File / Tool Policy：**
 
 - 不同 role 限制可读写文件和可调用工具
 - Implementer/Builder 不能修改 approved requirements、acceptance、journeys 或 verifier-only artifacts
 - Verifier 默认不能修改生产代码，只能写 evidence/artifacts
 
-**V0.5.5 Clean Verification：**
+**V0.5.10 Clean Verification：**
 
 - Verifier 支持 clean checkout / clean env 验证
 - 验证结果绑定 commit hash、unit id、run id、command、exit code、artifact refs

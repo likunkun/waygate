@@ -2,6 +2,31 @@
 
 ## 会话：2026-05-05
 
+### V0.5.2 审批摘要优先 + Unit Plan 进度输出修复
+- **状态：** complete
+- Requirements / Unit Plan approval Markdown 现在顶部先展示 `## 审批摘要`，结论、变更点、需要人确认的点、验收命令和 Controller/Critic 检查摘要都在摘要区。
+- Requirements 详细正文、AO/AC traceability、Design/Architecture traceability、Journey Acceptance Matrix、Unit Plan 目标覆盖、Test Case Matrix、执行单元和 `## Controller State Patch` 均保留在同一个审批 Markdown 的附录区。
+- `## Human Confirmation` 仍只由 controller 追加；agent 生成内容不会生成确认段落。
+- Plannotator 审阅路径回到 approval Markdown 本身，summary 记录 `review_path`、`approval_gate_path`、`summary_path` 和 `full_path`。
+- Unit Plan 进入人工确认前会先运行 controller 预检；失败时自动打回 drafter，终端只输出短原因，完整原因写入 state 和 `artifacts/unit-plan-draft/controller-validation-error.json`。
+- compact drive 输出恢复 Unit Plan 阶段状态卡：生成草案、预检草案、自动打回草案、等待确认；controller-only revise 和人工/Plannotator revise 也输出短状态。
+- README 已同步 V0.5.2：说明 approval Markdown 摘要优先结构、Plannotator 审阅 approval Markdown、Unit Plan 人工审核前预检打回，以及 `controller-validation-error.json` artifact。
+- 已验证定向测试：
+  - `python -m pytest workflow_controller/tests/gates/test_gates_structure.py -q` -> `18 passed in 0.08s`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `40 passed in 13.61s`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `136 passed in 10.82s`
+  - `python -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `18 passed in 3.91s`
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `28 passed in 9.82s`
+- 已验证全量测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `332 passed in 43.67s`
+
+### Agent-side Requirements Clarification
+- **状态：** complete
+- Requirements Draft prompt 已明确：信息足够时直接生成 gate；只有关键缺口会导致方向错误时，目标 Claude/Codex agent 才在自己的 tmux pane 中集中提问。
+- Requirements Draft 后新增 controller 预检自动返工：缺 Journey、缺 verification layer、缺 AO/AC 映射等可判定问题不会先进入人工审核。
+- Requirements Gate 模板新增 `## 4.8 已澄清事项、关键假设与待确认风险`，要求把 agent-side 问答形成的决策和保守假设落到 gate 正文。
+- tmux dispatch 文案已说明：agent 提问期间不写 DONE_FILE，回答后继续；只有任务完成或真正阻断时才写 DONE_FILE。
+- ROADMAP / README / USAGE / task_plan 已同步：V0.4.1 是 agent-side clarification + gate revision；V0.4.5a brief 是上下文压缩，不是提问机制。
+
 ### V0.4.1–V0.4.5a 控制平面收敛
 - **状态：** complete
 - 已确认当前未提交实现覆盖 V0.4.1 Requirements Negotiation Loop、V0.4.2 Change Request Ledger、V0.4.3 Independent Bug Fix Gate、V0.4.4 Journey Acceptance Layer、V0.4.5 Final Scope Audit 和 V0.4.5a Requirements Dialogue Brief。

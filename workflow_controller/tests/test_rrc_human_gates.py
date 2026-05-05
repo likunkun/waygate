@@ -250,9 +250,19 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert 'covered/deferred/rejected/out_of_scope' in requirements_prompt
     assert '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）' in requirements_prompt
     assert '| AC | Product Design Ref | Technical Architecture Ref | Notes |' in requirements_prompt
+    assert '## 4.7 Journey Acceptance Matrix' in requirements_prompt
+    assert '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |' in requirements_prompt
+    assert 'e2e 或 workflow_validation_level=closure' in requirements_prompt
+    assert '至少一行 active Journey' in requirements_prompt
     assert '固定测试数据或 fixture' in requirements_prompt
     assert '可断言的期望值' in requirements_prompt
     assert '不能用截图或人工观察替代断言' in requirements_prompt
+    assert 'Agent-side requirements clarification' in requirements_prompt
+    assert '如果信息足够，直接生成 Requirements Gate' in requirements_prompt
+    assert '当前 tmux agent pane' in requirements_prompt
+    assert '一次性提出集中问题' in requirements_prompt
+    assert '用户回答后，将澄清结果写入本 Requirements Gate' in requirements_prompt
+    assert '不要因为一般不确定性反复提问' in requirements_prompt
     assert '`acceptance_criterion`' in unit_plan_prompt
     assert '`fixture`' in unit_plan_prompt
     assert '`product_design_refs`' in unit_plan_prompt
@@ -269,6 +279,10 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert 'unit / functional / integration / e2e / manual' in requirements_body
     assert '需求可追溯矩阵' in requirements_body
     assert '设计与架构可追溯矩阵' in requirements_body
+    assert 'Journey Acceptance Matrix' in requirements_body
+    assert '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |' in requirements_body
+    assert '已澄清事项、关键假设与待确认风险' in requirements_body
+    assert '如 agent 在 tmux pane 中向用户提问' in requirements_body
     assert '每个 active must AO' in requirements_body
     assert '截图或人工观察不能替代断言' in requirements_body
     assert '| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
@@ -372,7 +386,7 @@ def test_controller_generated_gate_bodies_are_chinese_first(tmp_path: Path) -> N
     assert '## 8. 架构概要' in requirements_body
     assert '## 9. 人工审阅清单' in requirements_body
     assert '# 单元计划确认（Unit Plan Confirmation）' in unit_plan_body
-    assert '## 目标覆盖矩阵' in unit_plan_body
+    assert '## 附录 A：目标覆盖矩阵' in unit_plan_body
     assert '## Controller State Patch' in unit_plan_body
     assert '# 最终验收确认' in final_body
     assert '## 证据摘要' in final_body
@@ -400,6 +414,8 @@ def test_target_init_requires_requirements_acceptance_gate(tmp_path: Path) -> No
         str(state_dir),
         '--workspace-dir',
         str(workspace),
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
         '--force',
@@ -424,6 +440,8 @@ def test_auto_approve_does_not_skip_requirements_acceptance_gate(tmp_path: Path)
         str(state_dir),
         '--workspace-dir',
         str(workspace),
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
         '--auto-approve',
@@ -859,6 +877,8 @@ def test_revise_requirements_gate_can_rewind_from_unit_plan_approval(tmp_path: P
         str(state_dir),
         '--workspace-dir',
         str(workspace),
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
         '--force',
@@ -1015,6 +1035,8 @@ def test_requirements_and_unit_plan_gates_must_be_approved_before_scope(tmp_path
         str(state_dir),
         '--workspace-dir',
         str(workspace),
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
         '--force',
@@ -2425,6 +2447,8 @@ def test_approve_command_updates_markdown_gate_hash(tmp_path: Path) -> None:
         str(state_dir),
         '--workspace-dir',
         str(workspace),
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
         '--force',
@@ -2459,6 +2483,8 @@ def test_final_acceptance_approve_command_requires_final_waiting_step(tmp_path: 
         str(state_dir),
         '--workspace-dir',
         str(workspace),
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
         '--force',
@@ -2489,6 +2515,8 @@ def test_gate_approval_becomes_stale_when_content_changes(tmp_path: Path) -> Non
         str(state_dir),
         '--workspace-dir',
         str(workspace),
+        '--runner',
+        'subprocess',
         '--target',
         '1.1',
         '--force',

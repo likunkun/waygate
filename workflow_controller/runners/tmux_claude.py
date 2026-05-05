@@ -14,11 +14,15 @@ from workflow_controller.runners.base import BaseRunner, RunnerRequest, RunnerRe
 
 
 DEFAULT_TMUX_SUBMIT_DELAY_SECONDS = 0.5
+DEFAULT_TMUX_CODEX_SUBMIT_DELAY_SECONDS = 2.0
 DEFAULT_TMUX_CLEAR_DELAY_SECONDS = 0.5
 DEFAULT_TMUX_IDLE_GRACE_SECONDS = 60.0
 DEFAULT_TMUX_IDLE_POLL_SECONDS = 60.0
 DEFAULT_TMUX_IDLE_NUDGE_SECONDS = 120.0
 DEFAULT_TMUX_IDLE_MAX_NUDGES = 3
+DEFAULT_TMUX_CLAUDE_SUBMIT_KEY = 'C-m'
+DEFAULT_TMUX_CODEX_SUBMIT_KEY = 'Enter'
+DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS = 1.0
 
 
 class TmuxClaudeRunner(BaseRunner):
@@ -28,12 +32,27 @@ class TmuxClaudeRunner(BaseRunner):
         return _run_tmux_claude(request)
 
 
+class TmuxCodexRunner(BaseRunner):
+    """Runner that dispatches prompts to a tmux pane and waits for a done signal."""
+
+    def run(self, request: RunnerRequest) -> RunnerResult:
+        return _run_tmux_codex(request)
+
+
 def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
+    return _run_tmux_agent(request, backend='tmux-claude')
+
+
+def _run_tmux_codex(request: RunnerRequest) -> RunnerResult:
+    return _run_tmux_agent(request, backend='tmux-codex')
+
+
+def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     if not request.tmux_target:
-        raise ValueError('tmux-claude runner requires tmuxTarget or tmuxPane in state')
+        raise ValueError(f'{backend} runner requires tmuxTarget or tmuxPane in state')
 
     runner_metadata = _request_metadata(request)
-    run_dir = _new_run_dir(request.artifact_dir, request.unit_id)
+    run_dir = _new_run_dir(request.artifact_dir.resolve(), request.unit_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     run_id = run_dir.name
     done_path = run_dir / 'done.json'
@@ -43,8 +62,8 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     runner_prompt_path.write_text(
         _render_tmux_prompt(
             original_prompt=request.prompt_path.read_text(encoding='utf-8'),
-            done_path=done_path,
-            workspace_dir=request.workspace_dir,
+            done_path=done_path.resolve(),
+            workspace_dir=request.workspace_dir.resolve(),
             unit_id=request.unit_id,
             run_id=run_id,
         ),
@@ -52,8 +71,8 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     )
     dispatch_prompt_path.write_text(
         _render_tmux_dispatch_prompt(
-            prompt_path=runner_prompt_path,
-            done_path=done_path,
+            prompt_path=runner_prompt_path.resolve(),
+            done_path=done_path.resolve(),
             run_id=run_id,
         ),
         encoding='utf-8',
@@ -63,27 +82,28 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
     env = {
         **os.environ,
         **request.env,
-        'RRC_RUN_DONE_FILE': str(done_path),
+        'RRC_RUN_DONE_FILE': str(done_path.resolve()),
         'RRC_RUN_DIR': str(run_dir),
         'RRC_RUN_ID': run_id,
     }
+    submit_key = _tmux_submit_key(backend)
     clear_commands = []
     if _tmux_clear_before_dispatch_enabled():
         clear_commands = [
             [*tmux_command, 'send-keys', '-t', request.tmux_target, 'C-u'],
-            [*tmux_command, 'send-keys', '-t', request.tmux_target, '/clear', 'C-m'],
+            [*tmux_command, 'send-keys', '-t', request.tmux_target, '/clear', submit_key],
         ]
     dispatch_commands = [
         [*tmux_command, 'load-buffer', str(dispatch_prompt_path)],
         [*tmux_command, 'paste-buffer', '-t', request.tmux_target],
-        [*tmux_command, 'send-keys', '-t', request.tmux_target, 'C-m'],
+        [*tmux_command, 'send-keys', '-t', request.tmux_target, submit_key],
     ]
     commands = [*clear_commands, *dispatch_commands]
 
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
     last_returncode = 0
-    _append_event(events_path, {'event': 'dispatch_started', 'backend': 'tmux-claude'})
+    _append_event(events_path, {'event': 'dispatch_started', 'backend': backend})
     for command in commands:
         completed = subprocess.run(
             command,
@@ -104,7 +124,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
         })
         if completed.returncode != 0:
             return RunnerResult(
-                backend='tmux-claude',
+                backend=backend,
                 status='failed',
                 command=dispatch_commands[-1],
                 returncode=completed.returncode,
@@ -123,12 +143,24 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
             })
             time.sleep(delay_seconds)
         if command == dispatch_commands[1]:
-            delay_seconds = _tmux_submit_delay_seconds()
+            delay_seconds = _tmux_submit_delay_seconds(backend)
             _append_event(events_path, {
                 'event': 'tmux_submit_delay',
                 'seconds': delay_seconds,
             })
             time.sleep(delay_seconds)
+
+    if backend == 'tmux-codex':
+        _retry_codex_submit_if_prompt_still_pending(
+            tmux_command=tmux_command,
+            tmux_target=request.tmux_target,
+            workspace_dir=request.workspace_dir,
+            env=env,
+            run_id=run_id,
+            submit_key=submit_key,
+            done_path=done_path,
+            events_path=events_path,
+        )
 
     deadline = time.monotonic() + request.timeout_seconds
     next_idle_check = time.monotonic() + _tmux_idle_grace_seconds()
@@ -152,7 +184,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                     'summary': payload.get('summary'),
                 })
                 return RunnerResult(
-                    backend='tmux-claude',
+                    backend=backend,
                     status='invalid_done_file',
                     command=dispatch_commands[-1],
                     returncode=1,
@@ -170,7 +202,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                     f'DONE_FILE {done_path} has wrong run_id. '
                     f'expected run_id={run_id!r}, actual run_id={actual_run_id!r}. '
                     'This usually means an older tmux agent wrote a stale completion signal; '
-                    'rerun the current controller step after clearing the pane or ensuring Claude uses the latest prompt.'
+                    'rerun the current controller step after clearing the pane or ensuring the pane agent uses the latest prompt.'
                 )
                 _append_event(events_path, {
                     'event': 'done_file_wrong_run',
@@ -178,7 +210,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                     'actual_run_id': actual_run_id,
                 })
                 return RunnerResult(
-                    backend='tmux-claude',
+                    backend=backend,
                     status='done_file_wrong_run',
                     command=dispatch_commands[-1],
                     returncode=1,
@@ -193,7 +225,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
             status = str(payload.get('status') or 'done')
             _append_event(events_path, {'event': 'done_signal_seen', 'status': status})
             return RunnerResult(
-                backend='tmux-claude',
+                backend=backend,
                 status=status,
                 command=dispatch_commands[-1],
                 returncode=0 if status == 'done' else 1,
@@ -226,7 +258,7 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                         'seconds_since_change': now - last_pane_change_time,
                     })
                     subprocess.run(
-                        [*tmux_command, 'send-keys', '-t', request.tmux_target, '继续', 'C-m'],
+                        [*tmux_command, 'send-keys', '-t', request.tmux_target, '继续', submit_key],
                         cwd=request.workspace_dir,
                         capture_output=True,
                         timeout=5,
@@ -244,12 +276,13 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
                         'pane_tail_path': str(run_dir / 'tmux-pane-tail.txt') if pane_tail else None,
                     })
                     timeout_message = _tmux_timeout_message(
+                        backend=backend,
                         done_path=done_path,
                         run_id=run_id,
                         pane_tail=pane_tail,
                     )
                     return RunnerResult(
-                        backend='tmux-claude',
+                        backend=backend,
                         status='agent_idle_without_done',
                         command=dispatch_commands[-1],
                         returncode=124 if last_returncode == 0 else last_returncode,
@@ -277,12 +310,13 @@ def _run_tmux_claude(request: RunnerRequest) -> RunnerResult:
         'pane_tail_path': str(run_dir / 'tmux-pane-tail.txt') if pane_tail else None,
     })
     timeout_message = _tmux_timeout_message(
+        backend=backend,
         done_path=done_path,
         run_id=run_id,
         pane_tail=pane_tail,
     )
     return RunnerResult(
-        backend='tmux-claude',
+        backend=backend,
         status=status,
         command=dispatch_commands[-1],
         returncode=124 if last_returncode == 0 else last_returncode,
@@ -315,6 +349,8 @@ Execute the task below in the workspace. When finished, write DONE_FILE as JSON:
 If blocked, write DONE_FILE as JSON:
 {{"status": "blocked", "summary": "<exact blocker>", "run_id": "{run_id}"}}
 
+If the task requires asking the user a blocking clarification question, ask it in the active tmux agent pane and continue after the user answers. Do not write DONE_FILE while waiting for the user answer. Only write DONE_FILE when the task is complete or truly blocked.
+
 IMPORTANT: The summary value must not contain ASCII double quotes ("). Use single quotes, Chinese quotes「」, or rephrase instead. The file must be valid JSON.
 
 Original task:
@@ -336,6 +372,7 @@ When finished, write DONE_FILE as JSON with the exact RUN_ID:
 {{"status":"done","summary":"<short summary>","run_id":"{run_id}"}}
 If blocked, write:
 {{"status":"blocked","summary":"<exact blocker>","run_id":"{run_id}"}}
+If PROMPT_FILE instructs you to ask the user a clarification question, ask it in this tmux pane and continue after the user answers. Do not write DONE_FILE until the task is complete or truly blocked.
 IMPORTANT: summary must not contain ASCII double quotes ("). Use single quotes or 「」 to avoid breaking JSON.
 """
 
@@ -347,8 +384,22 @@ def _tmux_command(agent_command: str) -> list[str]:
     return ['tmux']
 
 
-def _tmux_submit_delay_seconds() -> float:
-    return _env_float('RRC_TMUX_SUBMIT_DELAY_SECONDS', DEFAULT_TMUX_SUBMIT_DELAY_SECONDS)
+def _tmux_submit_delay_seconds(backend: str) -> float:
+    backend_env = 'RRC_TMUX_CODEX_SUBMIT_DELAY_SECONDS' if backend == 'tmux-codex' else 'RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS'
+    backend_default = DEFAULT_TMUX_CODEX_SUBMIT_DELAY_SECONDS if backend == 'tmux-codex' else DEFAULT_TMUX_SUBMIT_DELAY_SECONDS
+    if os.environ.get(backend_env) is not None:
+        return _env_float(backend_env, backend_default)
+    return _env_float('RRC_TMUX_SUBMIT_DELAY_SECONDS', backend_default)
+
+
+def _tmux_codex_submit_retry_delay_seconds() -> float:
+    return _env_float('RRC_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS', DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS)
+
+
+def _tmux_submit_key(backend: str) -> str:
+    if backend == 'tmux-codex':
+        return os.environ.get('RRC_TMUX_CODEX_SUBMIT_KEY', DEFAULT_TMUX_CODEX_SUBMIT_KEY).strip() or DEFAULT_TMUX_CODEX_SUBMIT_KEY
+    return os.environ.get('RRC_TMUX_CLAUDE_SUBMIT_KEY', DEFAULT_TMUX_CLAUDE_SUBMIT_KEY).strip() or DEFAULT_TMUX_CLAUDE_SUBMIT_KEY
 
 
 def _tmux_clear_before_dispatch_enabled() -> bool:
@@ -424,14 +475,75 @@ def _capture_tmux_pane(
     return completed.stdout.strip()
 
 
-def _tmux_timeout_message(*, done_path: Path, run_id: str, pane_tail: str) -> str:
+def _retry_codex_submit_if_prompt_still_pending(
+    *,
+    tmux_command: list[str],
+    tmux_target: str,
+    workspace_dir: Path,
+    env: dict[str, str],
+    run_id: str,
+    submit_key: str,
+    done_path: Path,
+    events_path: Path,
+) -> None:
+    if done_path.exists():
+        _append_event(events_path, {'event': 'tmux_codex_submit_retry_skipped', 'reason': 'done_file_exists'})
+        return
+    delay_seconds = _tmux_codex_submit_retry_delay_seconds()
+    if delay_seconds > 0:
+        _append_event(events_path, {
+            'event': 'tmux_codex_submit_retry_delay',
+            'seconds': delay_seconds,
+        })
+        time.sleep(delay_seconds)
+    pane_tail = _capture_tmux_pane(
+        tmux_command=tmux_command,
+        tmux_target=tmux_target,
+        workspace_dir=workspace_dir,
+        env=env,
+    )
+    retry_reason = _codex_submit_retry_reason(pane_tail, run_id)
+    if retry_reason is None:
+        _append_event(events_path, {
+            'event': 'tmux_codex_submit_retry_skipped',
+            'reason': 'agent_already_working',
+        })
+        return
+    completed = subprocess.run(
+        [*tmux_command, 'send-keys', '-t', tmux_target, submit_key],
+        cwd=workspace_dir,
+        capture_output=True,
+        timeout=5,
+        check=False,
+        env=env,
+    )
+    _append_event(events_path, {
+        'event': 'tmux_codex_submit_retry',
+        'reason': retry_reason,
+        'returncode': completed.returncode,
+    })
+
+
+def _codex_submit_retry_reason(pane_tail: str, run_id: str) -> str | None:
+    if 'Working (' in pane_tail or '• Working' in pane_tail or '◦ Working' in pane_tail:
+        return None
+    if run_id in pane_tail and 'workflow-controller dispatch.' in pane_tail:
+        return 'prompt_still_in_input'
+    # Codex collapses long pasted input in the TUI. tmux capture then loses the
+    # RUN_ID even though the dispatch is still sitting in the input box.
+    if 'Pasted Content' in pane_tail:
+        return 'pasted_content_still_in_input'
+    return 'agent_not_working_after_submit'
+
+
+def _tmux_timeout_message(*, backend: str, done_path: Path, run_id: str, pane_tail: str) -> str:
     pane_hint = ''
     if pane_tail:
         pane_hint = f'\n\nLast captured tmux pane output:\n{_tail_text(pane_tail, max_chars=4000)}'
     return (
-        f'tmux-claude timed out waiting for DONE_FILE: {done_path} (run_id={run_id}).'
+        f'{backend} timed out waiting for DONE_FILE: {done_path} (run_id={run_id}).'
         ' The tmux pane output stopped changing, so the agent likely finished or stalled without writing DONE_FILE.'
-        ' If the agent finished in the pane, ask it to write done.json there,'
+        ' If the pane agent finished, ask it to write done.json there,'
         ' or write done.json manually with '
         f'{{"status":"done","summary":"<short summary>","run_id":"{run_id}"}} and rerun the controller.'
         f'{pane_hint}'

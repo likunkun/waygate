@@ -10,7 +10,7 @@ from workflow_controller.runners.base import (
     RunnerResult,
 )
 from workflow_controller.runners.codex import _run_subprocess_agent
-from workflow_controller.runners.tmux_claude import _run_tmux_claude
+from workflow_controller.runners.tmux_claude import _run_tmux_claude, _run_tmux_codex
 
 
 def make_runner(state: dict[str, Any], role: str | None = None) -> RunnerConfig:
@@ -46,6 +46,8 @@ def run_agent_backend(request: RunnerRequest) -> RunnerResult:
         return _run_subprocess_agent(request)
     if request.backend == 'tmux-claude':
         return _run_tmux_claude(request)
+    if request.backend == 'tmux-codex':
+        return _run_tmux_codex(request)
     raise ValueError(f'Unsupported agent runner backend: {request.backend}')
 
 
