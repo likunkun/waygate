@@ -2441,6 +2441,36 @@ def test_drive_compact_output_shows_unit_roadmap_and_attempt_summary(tmp_path: P
     assert '[执行]' not in rendered
 
 
+def test_compact_reporter_dedupes_identical_rendered_status_cards() -> None:
+    output: list[str] = []
+    reporter = rrc_controller_module._CompactDriveReporter(output.append, color_enabled=False)
+    state = {
+        'requestedOutcome': 'V1.3',
+        'currentUnitId': 'v13-key-model-drilldown',
+        'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+        'nextAction': 'check_unit_plan_approval',
+        'status': 'active',
+        'objectiveCoverage': [
+            {
+                'objective': 'V1.3 controlled delivery',
+                'units': ['v13-key-model-drilldown'],
+                'status': 'partial',
+            },
+        ],
+        'units': [
+            {'id': 'v13-key-model-drilldown', 'passes': False},
+        ],
+    }
+
+    reporter.print_status(state, current_label='检查 Unit Plan 确认')
+    changed_internal_state = dict(state)
+    changed_internal_state['blockedReason'] = 'not rendered in the status card'
+    reporter.print_status(changed_internal_state, current_label='检查 Unit Plan 确认')
+
+    assert len(output) == 1
+    assert output[0].count('当前   检查 Unit Plan 确认') == 1
+
+
 def test_complete_unit_keeps_multi_unit_objective_partial_until_all_units_pass(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)

@@ -1,1 +1,1 @@
-"""Ralph Refiner Controller package."""
+"""Waygate workflow control surface package."""

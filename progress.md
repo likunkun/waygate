@@ -2,6 +2,31 @@
 
 ## 会话：2026-05-06
 
+### V0.5.3 Waygate 安装化与现场降噪
+- **状态：** complete
+- 对外项目名、deb 包名和安装后命令统一为 Waygate / `waygate`；内部 Python package 仍保留 `workflow_controller`，避免大规模 import 重命名。
+- 新增 Debian 包构建脚本 `packaging/debian/build-deb.sh`，默认输出 `dist/waygate_0.5.3_all.deb`。
+- deb 包安装 `/usr/bin/waygate` wrapper，通过 `python3 -m workflow_controller.cli` 调用内部 CLI，并安装 README / USAGE / ROADMAP 到 `/usr/share/doc/waygate/`。
+- CLI help 和面向用户的 README / USAGE 示例已切换到 `waygate`；源码调试仍兼容 `python -m workflow_controller.cli ...`。
+- compact reporter 现在按最终渲染状态卡去重，避免 Plannotator approve 后因未渲染字段变化重复打印相同 `检查 Unit Plan 确认` 状态卡。
+- 相对 artifact 目录 runner 测试改为在 `tmp_path` 下运行，避免生成 repo root `relative-artifacts/` 测试产物。
+- 已验证 RED：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_compact_reporter_dedupes_identical_rendered_status_cards -q` 先失败于重复输出相同状态卡。
+  - `python -m pytest workflow_controller/tests/test_packaging.py::test_build_deb_creates_waygate_package -q` 先失败于缺少 `packaging/debian/build-deb.sh`。
+- 已验证 GREEN：
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_packaging.py -q` -> `1 passed in 0.38s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py::test_compact_reporter_dedupes_identical_rendered_status_cards -q` -> `1 passed in 0.43s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_runner_dispatch_prompt_uses_absolute_paths_for_relative_artifact_dir -q && test ! -e relative-artifacts` -> `1 passed in 0.68s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `29 passed in 9.64s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `140 passed in 9.53s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `40 passed in 13.83s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/gates/test_gates_structure.py -q` -> `18 passed in 0.04s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.3_all.deb`
+  - `dpkg-deb --info dist/waygate_0.5.3_all.deb` -> `Package: waygate`, `Version: 0.5.3`, `Depends: python3`
+  - `dpkg-deb --contents dist/waygate_0.5.3_all.deb` -> 包含 `/usr/bin/waygate`、`workflow_controller/cli.py`、README / USAGE / ROADMAP docs
+  - `python -m workflow_controller.cli --help` -> `usage: waygate ...`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `339 passed in 40.64s`
+
 ### Unit Plan Journey 映射字段兼容修复
 - **状态：** complete
 - Unit Plan Journey gate validator 现在识别 `journey_refs` 和 `journeyRefs`，同时保留 `journey_id`、`journey_ids`、`covers_journeys` 等既有字段。
@@ -591,7 +616,7 @@
 | 问题 | 答案 |
 |------|------|
 | 我在哪里？ | `~/works/ai-works/worktrees/workflow-controller` 的 `workflow-controller` 分支 |
-| 我要去哪里？ | 后续所有 Workflow Controller 开发都在此 worktree 继续 |
+| 我要去哪里？ | 后续所有 Waygate 开发都在此 worktree 继续 |
 | 目标是什么？ | 保留当前已修复功能，并以可测试、可提交的新工作区作为开发基线 |
 | 我学到了什么？ | 见 `findings.md` |
 | 我做了什么？ | 见上方阶段记录 |

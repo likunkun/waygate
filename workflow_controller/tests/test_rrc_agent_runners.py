@@ -514,7 +514,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert f'load-buffer {result.prompt_path}' not in log
 
 
-def test_tmux_runner_dispatch_prompt_uses_absolute_paths_for_relative_artifact_dir(tmp_path: Path) -> None:
+def test_tmux_runner_dispatch_prompt_uses_absolute_paths_for_relative_artifact_dir(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     prompt_path = workspace / 'prompt.md'
@@ -533,6 +533,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     )
 """,
     )
+    monkeypatch.chdir(tmp_path)
 
     request = RunnerRequest(
         backend='tmux-claude',

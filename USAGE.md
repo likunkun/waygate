@@ -1,8 +1,8 @@
-# Workflow Controller 使用说明
+# Waygate 使用说明
 
 ## 概览
 
-Controller 把一个开发目标拆分为若干 Unit，依次驱动以下阶段，在人工 gate 处暂停等待确认：
+Waygate 把一个开发目标拆分为若干 Unit，依次驱动以下阶段，在人工 gate 处暂停等待确认：
 
 ```
 Requirements Draft → Unit Plan → Builder → Verifier → Final Acceptance
@@ -17,6 +17,16 @@ Requirements Draft 阶段不会由 controller 终端问卷打断；如果目标 
 ---
 
 ## 环境准备
+
+安装 deb 包后直接使用 `waygate`：
+
+```bash
+bash packaging/debian/build-deb.sh
+sudo apt install ./dist/waygate_0.5.3_all.deb
+waygate --help
+```
+
+开发工作区可继续使用源码环境：
 
 ```bash
 # 进入工作区
@@ -35,7 +45,7 @@ source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 推荐短命令：
 
 ```bash
-python -m workflow_controller.cli go V1.0
+waygate go V1.0
 ```
 
 这会自动推断：
@@ -50,7 +60,7 @@ python -m workflow_controller.cli go V1.0
 如果已经有正在运行的 Codex 或 Claude pane，可以指定目标 pane：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+waygate go V1.0 --tmux-target 1.2
 ```
 
 未显式传 `--workspace-dir` 时，controller 会使用目标 pane 的当前目录作为 workspace，并把默认 state-dir 放在该目录下。
@@ -58,7 +68,7 @@ python -m workflow_controller.cli go V1.0 --tmux-target 1.2
 完全展开的 `start` 写法仍然兼容：
 
 ```bash
-python -m workflow_controller.cli start \
+waygate start \
   --state-dir .rrc-controller-v1.0 \
   --workspace-dir . \
   --target "V1.0" \
@@ -71,7 +81,7 @@ python -m workflow_controller.cli start \
 跨目录启动时应显式传目标项目目录；`go` 会把默认 state-dir 放到该目录下：
 
 ```bash
-python -m workflow_controller.cli go V1.0 \
+waygate go V1.0 \
   --workspace-dir ~/works/target-project
 ```
 
@@ -80,14 +90,14 @@ python -m workflow_controller.cli go V1.0 \
 适合需要检查初始状态后再启动的场景：
 
 ```bash
-python -m workflow_controller.cli init \
+waygate init \
   --state-dir .rrc-controller-v1.0 \
   --workspace-dir . \
   --target "V1.0" \
   --runner tmux-claude \
   --tmux-target 1.2
 
-python -m workflow_controller.cli drive \
+waygate drive \
   --state-dir .rrc-controller-v1.0
 ```
 
@@ -99,16 +109,16 @@ python -m workflow_controller.cli drive \
 
 ```bash
 # 新目标：推断目标项目内的 .rrc-controller-v1.0；在 tmux 内无 target 时自动创建 Claude pane
-python -m workflow_controller.cli go V1.0
+waygate go V1.0
 
 # 指向已有 pane：自动识别 Codex 或 Claude
-python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+waygate go V1.0 --tmux-target 1.2
 
 # 显式使用 subprocess runner
-python -m workflow_controller.cli go V1.0 --runner subprocess
+waygate go V1.0 --runner subprocess
 
 # 缺少 TARGET 且未显式传 --state-dir 时会报错，避免串错目标项目
-python -m workflow_controller.cli go --tmux-target 1.2
+waygate go --tmux-target 1.2
 ```
 
 `TARGET` 也可用 `--target TARGET` 传入；若位置参数和 `--target` 同时传入且不一致，CLI 会直接报错。没有 TARGET 时必须显式传 `--state-dir`，否则 `go` 会拒绝启动。
@@ -118,7 +128,7 @@ python -m workflow_controller.cli go --tmux-target 1.2
 创建 `session.json`、`approvals/`、`artifacts/` 等目录结构，不启动工作流。
 
 ```bash
-python -m workflow_controller.cli init \
+waygate init \
   --state-dir .rrc-controller-v1.0 \
   --workspace-dir . \
   --target "V1.0" \
@@ -131,7 +141,7 @@ python -m workflow_controller.cli init \
 等同于 `init`（如尚未初始化）+ `drive`。是最常用的启动命令。
 
 ```bash
-python -m workflow_controller.cli start \
+waygate start \
   --state-dir .rrc-controller-v1.0 \
   --verbose
 ```
@@ -141,7 +151,7 @@ python -m workflow_controller.cli start \
 从已有 session 继续执行，遇到人工确认 gate 时暂停，等待 Plannotator 或终端操作。
 
 ```bash
-python -m workflow_controller.cli drive \
+waygate drive \
   --state-dir .rrc-controller-v1.0
 ```
 
@@ -149,23 +159,23 @@ python -m workflow_controller.cli drive \
 
 ```bash
 # 执行一步
-python -m workflow_controller.cli run --state-dir .rrc-controller-v1.0
+waygate run --state-dir .rrc-controller-v1.0
 
 # 跑到 done/blocked/failed
-python -m workflow_controller.cli run --state-dir .rrc-controller-v1.0 --until-done
+waygate run --state-dir .rrc-controller-v1.0 --until-done
 ```
 
 ### `status` — 查看当前状态
 
 ```bash
-python -m workflow_controller.cli status --state-dir .rrc-controller-v1.0
+waygate status --state-dir .rrc-controller-v1.0
 ```
 
 ### `approve` — 手动批准 gate
 
 ```bash
 # 批准 unit-plan gate
-python -m workflow_controller.cli approve \
+waygate approve \
   --state-dir .rrc-controller-v1.0 \
   --gate unit-plan
 
@@ -175,13 +185,13 @@ python -m workflow_controller.cli approve \
 ### `reject` — 拒绝最终验收
 
 ```bash
-python -m workflow_controller.cli reject --state-dir .rrc-controller-v1.0
+waygate reject --state-dir .rrc-controller-v1.0
 ```
 
 ### `revise` — 触发返工
 
 ```bash
-python -m workflow_controller.cli revise \
+waygate revise \
   --state-dir .rrc-controller-v1.0 \
   --gate unit-plan
 
@@ -193,7 +203,7 @@ python -m workflow_controller.cli revise \
 用于升级旧版本生成的 state-dir，修复 gate 文件格式不兼容问题：
 
 ```bash
-python -m workflow_controller.cli migrate --state-dir .rrc-controller-v1.0
+waygate migrate --state-dir .rrc-controller-v1.0
 ```
 
 ---
@@ -309,7 +319,7 @@ start / drive
 **最简启用**（沿用全局 runner 命令）：
 
 ```bash
-python -m workflow_controller.cli start \
+waygate start \
   --state-dir .rrc-controller-v1.0 \
   --test-strategist
 ```
@@ -317,7 +327,7 @@ python -m workflow_controller.cli start \
 **指定独立命令和代理环境**（推荐用于 Codex 等需要单独代理的 runner）：
 
 ```bash
-python -m workflow_controller.cli start \
+waygate start \
   --state-dir .rrc-controller-v1.0 \
   --test-strategist \
   --test-strategist-command "codex exec --dangerously-bypass-approvals-and-sandbox -" \

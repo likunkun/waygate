@@ -80,7 +80,11 @@ def render_status_line(state: dict[str, Any]) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Workflow Controller', allow_abbrev=False)
+    parser = argparse.ArgumentParser(
+        prog='waygate',
+        description='Waygate workflow control surface',
+        allow_abbrev=False,
+    )
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     init_parser = subparsers.add_parser(

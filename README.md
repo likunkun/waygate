@@ -1,12 +1,12 @@
-# Workflow Controller
+# Waygate
 
-Workflow Controller 是一个给 AI 编程任务用的“流程控制器”。
+Waygate 是一个给 AI 编程任务用的“流程控制面”。
 
 它不是新的聊天机器人，也不是另一个代码生成器。它做的事情更朴素：把一次容易失控的 AI 编程任务，拆成需求确认、任务计划、实现、精修、评审、验证、最终验收几个明确步骤；每一步都有状态、有文件、有证据，失败了能回到正确的位置继续修。
 
 一句话说：
 
-> 让 AI 写代码，但让 Controller 管范围、顺序、证据和完成判定。
+> 让 AI 写代码，但让 Waygate 管范围、顺序、证据和完成判定。
 
 ## 为什么需要它
 
@@ -18,7 +18,7 @@ Workflow Controller 是一个给 AI 编程任务用的“流程控制器”。
 - 长任务中途断了，再继续时只能靠上下文猜状态。
 - 最终验收发现问题时，不知道该回需求、回计划、回实现，还是只修一个 bug。
 
-Workflow Controller 的思路是：AI 可以负责产出草案和代码，但不能自己宣布完成。完成必须由状态机推进，并且要有可审计的 artifact。
+Waygate 的思路是：AI 可以负责产出草案和代码，但不能自己宣布完成。完成必须由状态机推进，并且要有可审计的 artifact。
 
 ## 现在能做什么
 
@@ -86,7 +86,15 @@ Final Acceptance rejected as defect_fix
 
 ## 三分钟上手
 
-先进入项目根目录并激活环境：
+安装 deb 包后，系统会提供 `waygate` 命令：
+
+```bash
+bash packaging/debian/build-deb.sh
+sudo apt install ./dist/waygate_0.5.3_all.deb
+waygate --help
+```
+
+开发工作区仍然可以直接从源码运行。先进入项目根目录并激活环境：
 
 ```bash
 cd /home/lichangkun/works/ai-works/worktrees/workflow-controller
@@ -96,7 +104,7 @@ source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 最常用的启动方式是在 tmux 里运行 `go`：
 
 ```bash
-python -m workflow_controller.cli go V1.0
+waygate go V1.0
 ```
 
 这条命令等价于“为 V1.0 创建或继续一个 controller session，然后持续驱动 workflow”。它会自动推断：
@@ -111,7 +119,7 @@ python -m workflow_controller.cli go V1.0
 如果已经有可用的 Codex 或 Claude pane，可以显式指定：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+waygate go V1.0 --tmux-target 1.2
 ```
 
 未显式传 `--workspace-dir` 时，指定已有 pane 会使用该 pane 的当前目录作为 workspace，state-dir 也会落在这个目录下。
@@ -119,7 +127,7 @@ python -m workflow_controller.cli go V1.0 --tmux-target 1.2
 如果你不是在目标项目根目录执行命令，应显式传入目标项目目录：
 
 ```bash
-python -m workflow_controller.cli go V1.0 \
+waygate go V1.0 \
   --workspace-dir /path/to/target-project
 ```
 
@@ -128,16 +136,16 @@ python -m workflow_controller.cli go V1.0 \
 如果不想用 tmux，只想用本地 subprocess：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --runner subprocess
+waygate go V1.0 --runner subprocess
 ```
 
 如果只是想试流程，不调用真实 agent：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --runner subprocess --dry-run --max-steps 20
+waygate go V1.0 --runner subprocess --dry-run --max-steps 20
 ```
 
-更多 CLI 参数见 [USAGE.md](USAGE.md)。
+开发者调试时也可以继续使用内部 Python 包入口：`python -m workflow_controller.cli ...`。安装后的推荐入口是 `waygate`。更多 CLI 参数见 [USAGE.md](USAGE.md)。
 
 ## 一次运行时会发生什么
 
@@ -193,7 +201,7 @@ Gate 都是 Markdown 文件，默认在：
 人工可以通过 Plannotator 在浏览器里批注和批准，也可以直接用 CLI：
 
 ```bash
-python -m workflow_controller.cli approve \
+waygate approve \
   --state-dir .rrc-controller-v1.0 \
   --gate unit-plan
 ```
@@ -201,7 +209,7 @@ python -m workflow_controller.cli approve \
 最终验收拒绝时：
 
 ```bash
-python -m workflow_controller.cli reject --state-dir .rrc-controller-v1.0
+waygate reject --state-dir .rrc-controller-v1.0
 ```
 
 Controller 会要求选择返工路由，而不是把所有问题都粗暴丢回实现阶段。
@@ -650,7 +658,7 @@ Unit Plan 里会定义 verification commands 和 test cases。Verifier 执行后
 状态不靠聊天上下文，而是写在 state-dir 里。断了以后重新跑：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+waygate go V1.0 --tmux-target 1.2
 ```
 
 如果 `.rrc-controller-v1.0/session.json` 已存在，Controller 会续跑；如果 target、runner、tmux target 等关键参数冲突，会拒绝继续，避免串错任务。
@@ -674,16 +682,16 @@ python -m workflow_controller.cli go V1.0 --tmux-target 1.2
 
 ```bash
 # 查看状态
-python -m workflow_controller.cli status --state-dir .rrc-controller-v1.0
+waygate status --state-dir .rrc-controller-v1.0
 
 # 执行一步
-python -m workflow_controller.cli run --state-dir .rrc-controller-v1.0
+waygate run --state-dir .rrc-controller-v1.0
 
 # 持续推进已有 session
-python -m workflow_controller.cli drive --state-dir .rrc-controller-v1.0
+waygate drive --state-dir .rrc-controller-v1.0
 
 # 批准最终验收
-python -m workflow_controller.cli approve \
+waygate approve \
   --state-dir .rrc-controller-v1.0 \
   --gate final-acceptance
 ```
@@ -702,13 +710,13 @@ python -m workflow_controller.cli approve \
 最常用的是 tmux：
 
 ```bash
-python -m workflow_controller.cli go V1.0
+waygate go V1.0
 ```
 
 未指定 `--tmux-target` 时，controller 必须运行在 tmux 内，会自动在右侧创建 Claude pane。指定已有 pane 时，controller 会检测目标里运行的是 Codex 还是 Claude：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+waygate go V1.0 --tmux-target 1.2
 ```
 
 `tmux-codex` 使用 Codex TUI 的 Enter 提交语义。Codex 写出 `DONE_FILE` 后，controller 会先确认目标 pane 已离开 `Working` 状态，再推进下一步；这样可以避免上一轮 agent 尚未完全退出时，下一轮 prompt 被粘到 Codex 的排队输入框里，看起来像“回车没有发出去”。
@@ -736,7 +744,7 @@ python -m workflow_controller.cli go V1.0 --tmux-target 1.2
 假设你要交付 `V1.0`：
 
 ```bash
-python -m workflow_controller.cli go V1.0 --tmux-target 1.2
+waygate go V1.0 --tmux-target 1.2
 ```
 
 Controller 可能先生成：
@@ -748,7 +756,7 @@ Controller 可能先生成：
 你审核后批准：
 
 ```bash
-python -m workflow_controller.cli approve \
+waygate approve \
   --state-dir .rrc-controller-v1.0 \
   --gate requirements
 ```
@@ -762,7 +770,7 @@ python -m workflow_controller.cli approve \
 你确认 unit 和 test matrix 合理后批准：
 
 ```bash
-python -m workflow_controller.cli approve \
+waygate approve \
   --state-dir .rrc-controller-v1.0 \
   --gate unit-plan
 ```
@@ -778,7 +786,7 @@ python -m workflow_controller.cli approve \
 这时再批准 Final Acceptance：
 
 ```bash
-python -m workflow_controller.cli approve \
+waygate approve \
   --state-dir .rrc-controller-v1.0 \
   --gate final-acceptance
 ```
@@ -856,6 +864,6 @@ workflow_controller/
 
 ## 最后再说一遍
 
-Workflow Controller 的价值不在于“让 AI 更会写代码”，而在于让 AI 写代码这件事变得可控、可恢复、可审计、可验收。
+Waygate 的价值不在于“让 AI 更会写代码”，而在于让 AI 写代码这件事变得可控、可恢复、可审计、可验收。
 
 它把一次模糊的聊天式编程，变成一条能停、能看、能改、能证明的交付流程。

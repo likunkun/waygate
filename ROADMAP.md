@@ -1,4 +1,4 @@
-# Workflow Controller — 版本路线图（确认版）
+# Waygate — 版本路线图（确认版）
 
 ## V0.1 — Test Strategist 接入（已完成）
 
@@ -108,6 +108,7 @@ Builder → CodeSimplifier/Refiner → Reviewer → Verifier → Final Acceptanc
 | P1 | V0.4.6 | Strict Test Presence + Requirements Test Strategist | 把 optional Test Strategist 接到 requirements 阶段；新增“非 manual AC 必须有可执行 test case，没有 test case 不能 pass”的 gate | 先补用户最担心的“根本没有测试”，再让测试策略前移 |
 | P1 | V0.5.1 | tmux agent detection + auto Claude pane | `--tmux-target` 自动识别 Codex/Claude pane；无 target 且在 tmux 内自动右侧创建 Claude pane | 先让当前 tmux agent 调度可用，执行隔离规划后移 |
 | P1 | V0.5.2 | 审批摘要优先 + Unit Plan 进度输出 | Requirements/Unit Plan 审批 Markdown 顶部先展示摘要，controller 可预检问题自动打回，compact 输出恢复 Unit Plan 草案/预检/打回/等待状态 | 降低人工 gate 审阅成本，并避免按 approve 后才暴露 controller 可判定错误 |
+| P1 | V0.5.3 | Waygate 安装化与现场降噪 | 对外品牌改为 Waygate，提供 `waygate` deb 包和命令，去重 compact 重复状态卡，清理测试产物泄漏 | 在继续 V0.5.6 执行隔离前，先让工具可安装、可识别、现场输出更安静 |
 | P1 | V0.5.6 | per-role runner 完整化 | Builder、Refiner、Reviewer、Verifier、Bug Fix Agent 都支持独立 runner/command/env/timeout | 对应 ROADMAP V0.5，为执行隔离打基础 |
 | P1 | V0.5.7 | opencode runner | 实现 opencode runner，统一 runner metadata 与 artifacts | 对应 ROADMAP V0.5 的 Agent 灵活性目标 |
 | P1 | V0.5.8 | task workspace/branch 隔离 | 每个 unit 独立 workspace 或 branch，产出 patch/checkpoint | 降低越界修改和历史状态污染 |
@@ -245,6 +246,16 @@ V0.5 的目标是强化 Execution Plane：把不同 role 的执行环境、runne
 - Unit Plan 进入人工确认前会执行 controller 预检；可判定错误自动写入 state/artifact 并打回 drafter，不显示人工审批菜单
 - compact drive 输出覆盖 Requirements/Unit Plan 生成、预检、自动打回、等待确认、Builder/Verifier 等长动作状态
 - 全量测试：`332 passed in 43.67s`
+
+**V0.5.3 Waygate 安装化与现场降噪：**
+
+- 对外项目名、安装包名和命令名统一为 Waygate / `waygate`
+- 内部 Python package 暂保留 `workflow_controller`，避免大规模 import 重命名
+- 新增 Debian 包构建脚本，输出 `dist/waygate_0.5.3_all.deb`
+- 安装后提供 `/usr/bin/waygate`，调用内部 `workflow_controller.cli`
+- compact drive 输出按最终渲染状态卡去重，避免 Plannotator approve 后重复打印相同 `检查 Unit Plan 确认`
+- 测试中相对 artifact 目录必须隔离在 `tmp_path`，避免全量测试污染 repo root
+- 全量测试：`339 passed in 40.64s`
 
 **V0.5.6 per-role runner 完整化：**
 

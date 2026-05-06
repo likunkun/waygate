@@ -3079,6 +3079,7 @@ class _CompactDriveReporter:
         self.color_enabled = color_enabled
         self.current_unit_id: str | None = None
         self.last_card_key: tuple[Any, ...] | None = None
+        self.last_rendered_card: str | None = None
         self.attempt_number = 0
         self.stage_results: dict[str, str] = {}
 
@@ -3099,6 +3100,7 @@ class _CompactDriveReporter:
             self.attempt_number = 0
             self.stage_results = {}
             self.last_card_key = None
+            self.last_rendered_card = None
         action = state.get('nextAction') or compute_next_allowed_action(state)
         card_key = (
             unit_id,
@@ -3111,14 +3113,16 @@ class _CompactDriveReporter:
         if not force and card_key == self.last_card_key:
             return
         self.last_card_key = card_key
-        self.output_func(
-            _compact_roadmap(
-                state,
-                color_enabled=self.color_enabled,
-                current_label=current_label,
-                planning_stage=planning_stage,
-            )
+        rendered = _compact_roadmap(
+            state,
+            color_enabled=self.color_enabled,
+            current_label=current_label,
+            planning_stage=planning_stage,
         )
+        if not force and rendered == self.last_rendered_card:
+            return
+        self.last_rendered_card = rendered
+        self.output_func(rendered)
 
     def record_transition(
         self,
@@ -4041,7 +4045,7 @@ def _detect_agent_from_text(text: str) -> str | None:
 def _create_tmux_claude_pane(workspace_dir: Path) -> str:
     if not os.environ.get('TMUX'):
         raise ValueError(
-            'No --tmux-target was provided and workflow-controller is not running inside a tmux session. '
+            'No --tmux-target was provided and Waygate is not running inside a tmux session. '
             'Pass --tmux-target pointing at an existing Codex or Claude pane, or run the controller inside tmux.'
         )
     command = [
@@ -4164,7 +4168,11 @@ def normalize_go_args(args: argparse.Namespace, parser: argparse.ArgumentParser)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Workflow Controller', allow_abbrev=False)
+    parser = argparse.ArgumentParser(
+        prog='waygate',
+        description='Waygate workflow control surface',
+        allow_abbrev=False,
+    )
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     init_parser = subparsers.add_parser(

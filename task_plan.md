@@ -1,10 +1,10 @@
-# 任务计划：Workflow Controller 后续开发基线
+# 任务计划：Waygate 后续开发基线
 
 ## 目标
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛以及 V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）和 V0.5.3 Waygate 安装化与现场降噪（阶段 40）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
 
 ## 各阶段
 
@@ -356,6 +356,16 @@
 - [x] 保留 `unitPlanAutoRevisionMax` 显式覆盖机制，已有 state 可继续按字段覆盖。
 - [x] README 补充默认最多自动打回 5 次说明。
 - [x] 全量 `workflow_controller/tests` 通过：`335 passed in 40.40s`。
+- **状态：** complete
+
+### 阶段 40：V0.5.3 Waygate 安装化与现场降噪
+- [x] 对外项目名、deb 包名和安装后命令名统一为 `waygate` / Waygate。
+- [x] 内部 Python package 保留 `workflow_controller`，避免大规模 import 重命名。
+- [x] 新增 deb 构建脚本，输出 `dist/waygate_0.5.3_all.deb`。
+- [x] compact reporter 按最终渲染状态卡去重，避免重复 `检查 Unit Plan 确认` 噪声。
+- [x] 相对 artifact 目录测试改为隔离在 `tmp_path`，避免生成 `relative-artifacts/` 污染 repo root。
+- [x] README / USAGE / ROADMAP 同步 Waygate 安装和使用方式。
+- [x] 全量 `workflow_controller/tests` 通过：`339 passed in 40.64s`。
 - **状态：** complete
 
 ## 关键问题

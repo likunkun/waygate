@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
+    if shutil.which('dpkg-deb') is None:
+        pytest.skip('dpkg-deb is required to build Debian packages')
+
+    script = ROOT / 'packaging' / 'debian' / 'build-deb.sh'
+    env = os.environ.copy()
+    env['WAYGATE_DIST_DIR'] = str(tmp_path / 'dist')
+    env['WAYGATE_BUILD_ROOT'] = str(tmp_path / 'build')
+
+    result = subprocess.run(
+        ['bash', str(script)],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    deb_path = tmp_path / 'dist' / 'waygate_0.5.3_all.deb'
+    assert deb_path.exists()
+
+    package_name = subprocess.run(
+        ['dpkg-deb', '--field', str(deb_path), 'Package'],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    version = subprocess.run(
+        ['dpkg-deb', '--field', str(deb_path), 'Version'],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    contents = subprocess.run(
+        ['dpkg-deb', '--contents', str(deb_path)],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert package_name == 'waygate'
+    assert version == '0.5.3'
+    assert './usr/bin/waygate' in contents
+    assert './usr/lib/waygate/workflow_controller/cli.py' in contents
+    assert './usr/share/doc/waygate/README.md' in contents

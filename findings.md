@@ -150,6 +150,15 @@
 - 决策：`covers_journeys` 和 `journey_ids` 仍是推荐字段；`journey_refs` / `journeyRefs` 作为历史兼容别名进入 gate validator 和 verifier evidence 识别路径。
 - Prompt 和 README 必须明确：Journey 映射要写进 Controller State Patch 的 `test_cases[]` 结构化字段，不能只写在 Markdown prose、Journey Acceptance Matrix、产品设计引用或技术架构引用里。
 
+## 2026-05-06 V0.5.3 Waygate 安装化与现场降噪
+
+- 对外品牌、deb 包名和安装后命令统一为 Waygate / `waygate`；内部 Python package 暂保留 `workflow_controller`，避免 import 路径和历史 artifact 大规模迁移。
+- deb 包采用最小安装策略：源码安装到 `/usr/lib/waygate/workflow_controller`，`/usr/bin/waygate` 通过 `PYTHONPATH=/usr/lib/waygate python3 -m workflow_controller.cli` 调用内部入口。
+- Debian control 只硬依赖 `python3`；tmux、Plannotator、Codex、Claude 等外部工具继续作为运行模式的现场前置条件，不写成强制 deb 依赖，避免安装包误拉不可控工具链。
+- 包构建产物 `dist/` 和 `.build/` 进入 `.gitignore`；deb 内容排除 tests、`__pycache__`、`.pytest_cache` 和 pyc/pyo。
+- compact 重复状态卡的根因不是状态机重复推进，而是非渲染字段变化导致旧 key 去重失效；V0.5.3 改为再按最终渲染文本去重，保留 unit 切换和 `force=True` 的显式输出。
+- `relative-artifacts/` 泄漏来自测试对相对 artifact dir 的当前工作目录假设；测试应 `chdir(tmp_path)` 后断言 runner 仍使用绝对 prompt/artifact 路径，避免污染 repo root。
+
 ## 2026-05-04 V0.4+ 路线图整合发现
 
 - `AGENTS.md` / `CLAUDE.md` 应作为项目初始化规约进入 V0.4.0，但它们只定义 agent 如何工作、去哪读事实源，不能替代 requirements、acceptance、state 或 evidence。
