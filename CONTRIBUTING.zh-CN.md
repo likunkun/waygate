@@ -9,11 +9,10 @@
 ```bash
 git clone <repo-url>
 cd workflow-controller
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 python -m pytest workflow_controller/tests -q
 ```
 
-如果不使用 Hermes 虚拟环境，请准备一个包含测试依赖的 Python 环境。
+如果不使用项目虚拟环境，请准备一个包含测试依赖的 Python 环境。
 
 ## 提交 PR 前
 
@@ -29,7 +28,6 @@ python -m pytest workflow_controller/tests -q
 推荐验证：
 
 ```bash
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 python -m pytest workflow_controller/tests -q
 ```
 

@@ -222,7 +222,6 @@ Do not commit `.rrc-controller-*` directories. They contain local run state and 
 Run the full test suite:
 
 ```bash
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 python -m pytest workflow_controller/tests -q
 ```
 

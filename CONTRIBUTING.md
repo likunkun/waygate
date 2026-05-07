@@ -9,11 +9,10 @@ Thanks for taking the time to improve Waygate. This project is a workflow contro
 ```bash
 git clone <repo-url>
 cd workflow-controller
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 python -m pytest workflow_controller/tests -q
 ```
 
-If you do not use the Hermes virtual environment, create a Python environment with the dependencies needed by the test suite.
+If you do not use the project virtual environment, create a Python environment with the dependencies needed by the test suite.
 
 ## Before Sending a Pull Request
 
@@ -29,7 +28,6 @@ Please make sure:
 Recommended verification:
 
 ```bash
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 python -m pytest workflow_controller/tests -q
 ```
 

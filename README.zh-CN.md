@@ -52,7 +52,6 @@ python -m workflow_controller.cli --help
 开发时使用的测试环境：
 
 ```bash
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 python -m pytest workflow_controller/tests -q
 ```
 

@@ -59,6 +59,7 @@
 - [x] 现场 V1.4.1 Requirements AO 污染恢复：修复 `out_of_scope` reason 判定，清理 live state 中 `requirements:revision-1` 伪 AO，并推进到 Unit Plan 确认。
 - [x] 现场 V1.6 tmux-codex runner 自动发现修复：显式 `--runner tmux-codex` 无 `--tmux-target` 时发现当前 tmux session 中匹配 workspace 的 Codex pane，跳过当前 controller pane，避免把 `tmux-codex` runner 参数误判为 agent，并重新打包 `dist/waygate_0.5.3_all.deb`。
 - [x] GitHub 发布文档整理：英文 README 作为默认入口，中文 `.zh-CN.md` 完整保留，拆分 docs/architecture 与 docs/workflow，补社区文件、LICENSE、GitHub templates 和双语 package docs。
+- [x] GitHub 发布脱敏：移除已跟踪 `docs/superpowers/`，忽略后续 superpowers 目录；清理本机 venv 激活命令、用户目录和私有工作区绝对路径；更新 agent guide 模板的标准验证命令。
 - **状态：** in_progress
 
 ### 阶段 7：控制器可靠性增强
@@ -74,7 +75,7 @@
 - [x] verifier 在状态变化时输出进度标志
 - [x] 不使用固定 30 秒 heartbeat，避免无意义刷屏
 - [x] 紧凑输出按当前目标单元显示进度，避免 V2.1 误显示为历史总单元数
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - [x] 测试通过
 - **状态：** complete
 
@@ -83,7 +84,7 @@
 - [x] controller retry 输出显示 exit code
 - [x] controller retry 输出优先提取根因，如缺少 `DATABASE_URL`
 - [x] 完整失败详情仍保留在 `verification.json`
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - [x] 测试通过
 - **状态：** complete
 
@@ -92,7 +93,7 @@
 - [x] 可从 `prisma/dev.db` 推导时自动写入 `verification_env.DATABASE_URL`
 - [x] 推导来源写入 `verification_env_inferred`
 - [x] 推导失败时直接 `blocked`，不回 Builder 重试
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - [x] 测试通过
 - **状态：** complete
 
@@ -102,7 +103,7 @@
 - [x] controller 启动 Plannotator 时输出打开网址 `http://localhost:20000`
 - [x] 审阅文件改为 Claude 生成的 body artifact，确认文件仍保留在 `approvals/`
 - [x] 终端回显审阅文件和确认文件路径，避免审阅对象和落盘对象不一致
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - **状态：** complete
 
 ### 阶段 12：Unit Plan Gate 校验与反馈闭环
@@ -119,7 +120,7 @@
 - [x] 未完成且未声明在 `units` 中的单元仍然阻断
 - [x] Unit Plan prompt 更新，说明 completed existing unit 可在 rollup objective 中引用
 - [x] 修复 V2.2 只剩 `v2-2-u5-baidu-search` 时被 `u1-u4` 历史单元卡住的问题
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - **状态：** complete
 
 ### 阶段 14：Unit Plan 确认后执行推进修复
@@ -128,7 +129,7 @@
 - [x] `lastVerifiedStep` 在新 Unit Plan 生效后重置为 `PLAN_CREATED`，避免继承上一单元 `VERIFY_UNIT`
 - [x] 已落盘的卡住状态可在 `get_status()` 中自动修复为 Builder-ready
 - [x] 用当前 V2.2 状态验证 `nextAction=run_builder`
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - **状态：** complete
 
 ### 阶段 15：Final Acceptance Defect Fix 流程
@@ -138,7 +139,7 @@
 - [x] Controller State Patch 允许已 covered objective 被 bug-fix unit 重新打开为 `partial`
 - [x] Builder prompt 在执行 defect-fix unit 时携带最终验收缺陷清单
 - [x] 终端验收路由菜单加入“验收缺陷修复 -> Defect Fix”
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - [x] 全量测试通过
 - **状态：** complete
 
@@ -149,7 +150,7 @@
 - [x] Unit Plan approval 拒绝只有 tsc/lint/typecheck 等静态检查、没有测试用例或人工证据的计划
 - [x] 静态检查可以作为补充，但不能单独证明行为验收
 - [x] Builder prompt 要求优先补齐 mapped test cases，defect-fix unit 要补回归测试或人工证据
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - [x] 全量测试通过
 - **状态：** complete
 
@@ -159,7 +160,7 @@
 - [x] 终端路由写入改为重写 canonical checklist，并校准唯一选中项
 - [x] `reject_final_acceptance_gate()` 从 gate 文件读取路由，Plannotator 反馈只作为返工 prompt 内容
 - [x] final acceptance 路由写入导致 gate mtime 变新时，仍保留本轮 Plannotator 反馈
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - [x] 全量测试通过
 - **状态：** complete
 
@@ -169,7 +170,7 @@
 - [x] 写入 `requestedOutcome=V3.0`、`currentUnitId=target-v3-0`、`workspacePath`、runner 和 tmux target
 - [x] 生成 `target-acceptance-prompt.md`，并进入 `REQUIREMENTS_DRAFT -> run_requirements_drafter`
 - [x] 保留无 target 的默认 demo 初始化兼容行为
-- [x] 同步到实际运行目录 `/home/lichangkun/.hermes/hermes-agent/workflow_controller`
+- [x] 同步到实际运行目录 `<local-runtime-copy>`
 - [x] 用真实 V3.0 state-dir 验证 init 输出正确
 - [x] 全量测试通过
 - **状态：** complete
@@ -187,17 +188,17 @@
 
 ### 阶段 22：V0.3.1 Acceptance Obligation Ledger
 - [x] Phase 0: Initialize — 复用并更新现有 `task_plan.md`、`findings.md`、`progress.md`
-- [x] Phase 1: Brainstorm — 完成 AO Ledger 最小可交付设计，并统一当前实施计划位置为 `/home/lichangkun/.claude/plans/glowing-kindling-engelbart.md`
+- [x] Phase 1: Brainstorm — 完成 AO Ledger 最小可交付设计，并统一当前实施计划位置为 `<implementation-plan>`
 - [x] Phase 1.5: Design System — skipped（非 UI 任务）
 - [x] Phase 2: Write Plan — 完成 V0.3.1 实施计划
 - [x] Phase 2.5: Plan Review — 用户确认按已讨论 V0.3.1 方向执行
 - [x] Phase 3: Execute — 完成 AO helper、feedback 接入、prompt 注入、Unit Plan AO 覆盖 gate 和回归测试
-  - Implementation plan: `/home/lichangkun/.claude/plans/glowing-kindling-engelbart.md`
+  - Implementation plan: `<implementation-plan>`
   - Scale: single-unit
   - Completion promise: TASK COMPLETE
 - [x] Phase 3.5: Simplify — 已完成最小实现整理，未引入额外抽象
 - [x] Phase 3.7: Browser Verify — skipped（无用户可见 UI）
-- [x] Phase 4: Verify and Finish — `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `240 passed in 32.12s`
+- [x] Phase 4: Verify and Finish — `python -m pytest workflow_controller/tests -q` -> `240 passed in 32.12s`
 - **目标：** 新增 Acceptance Obligation Ledger，让人工反馈/验收失败问题以稳定 AO id 贯穿 Requirements、Unit Plan、Verifier evidence 和 Final Acceptance，避免多条问题被压缩成单个 closure unit。
 - **状态：** complete
 
@@ -388,7 +389,7 @@
 - [x] Requirements / Unit Plan revision 继续把完整 gate 正文传给 drafter，但 AO Ledger 只消费 Plannotator feedback 或 structured annotations。
 - [x] Plannotator 纯文本 `# File Feedback` 输出按反馈章节拆成独立 AO。
 - [x] Requirements / Unit Plan AO id 识别兼容 `AO-01` / `AO-1` 并规范化到 `AO-001`。
-- [x] 已确认 `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.4.1` 是受污染现场 state；本阶段代码修复不静默改写历史 state。
+- [x] 已确认 `<target-project>/.rrc-controller-v1.4.1` 是受污染现场 state；本阶段代码修复不静默改写历史 state。
 - [x] 定向测试通过：`4 passed in 1.59s`。
 - [x] AO / Human gate 回归通过：`59 passed in 16.51s`。
 - [x] 全量 `workflow_controller/tests` 通过：`347 passed in 45.63s`。
@@ -407,6 +408,16 @@
 - [x] 全量 `workflow_controller/tests` 通过：`354 passed in 51.27s`。
 - **状态：** complete
 
+### 阶段 44：GitHub 发布脱敏与远程同步
+- [x] 移除已跟踪 `docs/superpowers/` 文档，并将 `docs/superpowers/` 写入 `.gitignore`。
+- [x] 全文移除本机 venv 激活命令，标准测试命令统一为 `python -m pytest workflow_controller/tests -q` 或对应定向 pytest 命令。
+- [x] 清理公开文档和维护历史中的本机绝对路径，保留通用占位如 `<target-project>`。
+- [x] 更新 `AGENTS.md` 和 `workflow_controller/agent_guides.py`，避免后续生成 guide 时携带本机路径。
+- [x] 发布脱敏扫描通过：无本机绝对路径、私有环境标识或本机 venv 激活命令残留；tracked 文件中无 `docs/superpowers/`。
+- [x] 打包测试通过：`1 passed in 0.49s`。
+- [x] 全量 `workflow_controller/tests` 通过：`354 passed in 48.50s`。
+- **状态：** complete
+
 ## 关键问题
 1. 多实例同时运行是否要在控制器层面增加显式实例隔离或锁文件策略，仍需结合真实运行方式验证。
 2. 是否需要为新工作区补充独立的打包配置、入口脚本或 CI，后续按开发需要决定。
@@ -416,7 +427,7 @@
 | 决策 | 理由 |
 |------|------|
 | 后续开发目录使用 `~/works/ai-works/worktrees/workflow-controller` | 和现有 `ai-works` worktree 管理方式一致，便于长期开发 |
-| 使用孤儿分支 `workflow-controller` | 当前项目来自 Hermes 子目录，不适合混入现有业务分支历史 |
+| 使用孤儿分支 `workflow-controller` | 当前项目来自历史工作目录，不适合混入现有业务分支历史 |
 | 保留包目录 `workflow_controller/` | 现有测试以该包路径运行，复制后无需改导入结构 |
 | 默认紧凑输出，`--verbose` 查看原始日志 | 常规运行只看进展，排错时仍能看到完整细节 |
 | 终端状态使用中文 | 用户明确要求展示状态中文化 |
@@ -430,5 +441,5 @@
 
 ## 备注
 - 进入新工作区：`cd ~/works/ai-works/worktrees/workflow-controller`
-- 测试命令：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q`
+- 测试命令：`python -m pytest workflow_controller/tests -q`
 - 当前初始功能提交：`fd27a54 Add workflow controller project`

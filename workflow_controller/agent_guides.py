@@ -147,7 +147,7 @@ docs/
 对本 controller 项目，标准全量验证命令是：
 
 ```bash
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q
+python -m pytest workflow_controller/tests -q
 ```
 
 ## 安全规则

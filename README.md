@@ -52,7 +52,6 @@ python -m workflow_controller.cli --help
 The project test environment used during development is:
 
 ```bash
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 python -m pytest workflow_controller/tests -q
 ```
 

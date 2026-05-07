@@ -25,7 +25,7 @@
 | 将代码放在根目录下的 `workflow_controller/` | 保持测试路径和 Python 包结构稳定 |
 | 新增 `.gitignore` 忽略 Python 缓存和 pytest 缓存 | 避免生成文件进入提交 |
 | 计划文件放在 worktree 根目录 | 后续进入目录即可看到任务上下文 |
-| 测试复用 Hermes venv | 当前项目来自 Hermes 环境，依赖已可用 |
+| 测试复用项目虚拟环境 | 当前项目已有可复用测试环境 |
 | 防循环逻辑放在 controller 状态机 | prompt 只能提示 agent，不能作为可靠安全边界 |
 | verifier 结果是验证事实源 | agent 的 done summary 只能代表 builder 阶段结束，不能代表 controller 验证通过 |
 | 默认第二次相同失败即阻断 | 第一次失败给 Builder 返工机会；第二次 unit/stage/fingerprint 相同说明没有产生有效新策略，应停下来暴露具体失败 |
@@ -171,7 +171,7 @@
 
 ## 2026-05-06 Requirements revision AO 污染
 
-- V1.4.1 现场 state `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.4.1` 中 110 个 `acceptanceObligations` 全部来自 `requirements:revision-1`，其中 AO-001 到 AO-012 是审批摘要和 controller 文案，AO-013 起包含旧错误需求正文，说明 AO Ledger 已被完整 requirements gate 污染。
+- V1.4.1 现场 state `<target-project>/.rrc-controller-v1.4.1` 中 110 个 `acceptanceObligations` 全部来自 `requirements:revision-1`，其中 AO-001 到 AO-012 是审批摘要和 controller 文案，AO-013 起包含旧错误需求正文，说明 AO Ledger 已被完整 requirements gate 污染。
 - 根因不是 Requirements drafter 单纯没映射 AO，而是 `_revise_requirements_gate()` 把 `revision_feedback` 同时用于两件不同的事：给 drafter 的完整上下文，以及给 AO Ledger 的“真实人工反馈”。后者不应包含完整 gate 正文。
 - 修复边界：完整 gate 正文继续进入 revision prompt，帮助 drafter 看旧草案；AO Ledger 只消费 Plannotator 实际反馈或 structured annotations。controller-validation-only 自动打回继续不生成新 AO。
 - Plannotator 没有 structured annotations 时，会输出 `# File Feedback` 和 `## 1. General feedback...` 章节；ledger 需要按这些章节拆分，而不是把整段当成一条，也不能回退去拆 gate 正文。
@@ -183,11 +183,11 @@
 
 ## 2026-05-06 Unit Plan 设计/架构 traceability ref 规范化
 
-- V1.5 现场 state `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.5` 的 Unit Plan 并没有缺少 `product_design_refs` / `technical_architecture_refs`；人工表格和 Controller State Patch JSON 都已包含对应引用。
+- V1.5 现场 state `<target-project>/.rrc-controller-v1.5` 的 Unit Plan 并没有缺少 `product_design_refs` / `technical_architecture_refs`；人工表格和 Controller State Patch JSON 都已包含对应引用。
 - 根因是 validator 把 Requirements 中的 Markdown heading ref 当原始字符串比较：`` `## 7. 产品设计概要` / `PDR-01 失败诊断卡片` `` 被解析成含残留反引号的字符串，而 Unit Plan 写成 `## 7. 产品设计概要 / PDR-01 失败诊断卡片`，语义等价但字符串不相等。
 - 中文顿号分隔的架构引用会进一步放大误判：`` `## 8. 架构概要` / `TAR-01...`、`TAR-02...` `` 与 Unit Plan 中两个完整 heading path 引用无法互相 subset。
 - 修复边界：优先抽取并匹配稳定 trace id（`PDR-*`、`TAR-*`、`PD-*`、`TA-*`），没有稳定 id 时才使用规范化全文；这样既兼容现场 Markdown heading 写法，又不会让任意 prose 通过 traceability gate。
-- 已确认源码修复后的 validator 可直接通过现场 V1.5 `requirements-and-acceptance.md` 与 `unit-plan.md` 校验；系统安装副本 `/usr/lib/waygate` 仍需有 sudo 权限才能刷新。为让现场命令立即使用修复版，已创建 `/home/lichangkun/.local/bin/waygate` wrapper 并优先加载源码工作区。
+- 已确认源码修复后的 validator 可直接通过现场 V1.5 `requirements-and-acceptance.md` 与 `unit-plan.md` 校验；系统安装副本 `/usr/lib/waygate` 仍需有 sudo 权限才能刷新。为让现场命令立即使用修复版，已创建 `<user-bin>/waygate` wrapper 并优先加载源码工作区。
 - V1.5 Journey contract 同样存在 Markdown id 规范化问题：Requirements Journey 表生成的 `journey_id` 可能带反引号（如 `` `J-01` ``），Unit Plan JSON 中的 `covers_journeys` 通常是不带反引号的 `J-01`。Journey gate 必须在 contract 和 test case mapping 两侧统一规范化 `J-*`。
 - 修复 Journey id 规范化后，现场 V1.5 gate 继续前进到真实 Unit Plan 质量缺口：部分 Journey test case 的 `command` 没有逐条列入 `verification_commands`。这应由 Unit Plan revision 补齐精确命令，而不是放宽为任意 regex 推断。
 
@@ -198,7 +198,7 @@
 - 修复边界：Codex 不自动创建新 pane，只发现已有 pane；优先选择 `pane_current_path` 等于目标 workspace 的 Codex pane，只有一个 Codex pane 时可回退使用，多个候选且无 workspace match 时保持阻断，避免错投。
 - discovery 只在 `TMUX` 环境存在时启用；非 tmux 环境仍给出需要 `--tmux-target` 或可发现 Codex pane 的明确错误。
 - 自动发现不能把当前 controller pane 当作目标 agent pane。现场 smoke 发现 controller 进程参数里有 `--runner tmux-codex`，如果继续用宽松 substring 检测，会把当前 pane 误判成 Codex；因此 discovery 使用 `TMUX_PANE` 跳过当前 pane，并将 agent 文本识别改为 token 级匹配，排除 `tmux-codex` / `tmux-claude` runner 名称。
-- 当前 `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.6/session.json` 已因手动 `--tmux-target 7.1` 继续推进；本修复面向后续不手填 target 的同类命令。
+- 当前 `<target-project>/.rrc-controller-v1.6/session.json` 已因手动 `--tmux-target 7.1` 继续推进；本修复面向后续不手填 target 的同类命令。
 
 ## 2026-05-07 GitHub 发布文档整理
 
@@ -208,6 +208,12 @@
 - `.rrc-controller-*` 是本地 controller state，可能包含 prompt、artifact、路径和项目上下文；发布前必须由 `.gitignore` 忽略，不能作为 GitHub 内容提交。
 - Debian 包内文档应与 GitHub 文档一致，至少包含双语 README/USAGE/ROADMAP/CHANGELOG/LICENSE 和公开 docs，避免安装用户看到过时中文单语文档。
 - 本轮选择 MIT License 作为默认宽松开源许可；如果后续需要更严格的专利授权或贡献协议，可切换到 Apache-2.0 并更新 LICENSE/README。
+
+## 2026-05-07 GitHub 发布脱敏
+
+- `docs/superpowers/` 是本地规划/技能产物，不应作为 Waygate 公共项目文档发布；应从索引中移除并写入 `.gitignore`。
+- 公开仓库中不应出现本机 venv 激活命令、用户目录、工作区绝对路径或私有目标项目路径；文档示例统一使用通用 `python -m pytest ...` 或 `<target-project>` 这类占位。
+- `AGENTS.md` 和 `agent_guides.py` 是会传播到目标项目的模板，必须避免写入维护者本机路径，否则 `waygate init` 会把本地环境泄漏到新仓库。
 
 ## 2026-05-04 V0.4+ 路线图整合发现
 
@@ -252,9 +258,9 @@
 - 新工作区：`~/works/ai-works/worktrees/workflow-controller`
 - 分支：`workflow-controller`
 - 初始提交：`fd27a54 Add workflow controller project`
-- 测试命令：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q`
-- 实际运行目录：`/home/lichangkun/.hermes/hermes-agent/workflow_controller`
-- V2.2 当前 state dir：`/home/lichangkun/works/2026Q2/courses/.rrc-controller-v2-2`
+- 测试命令：`python -m pytest workflow_controller/tests -q`
+- 实际运行目录：`<local-runtime-copy>`
+- V2.2 当前 state dir：`<target-project>/.rrc-controller-v2-2`
 
 ## 视觉/浏览器发现
 - 本任务未使用浏览器或图片检查。

@@ -222,7 +222,6 @@ export WAYGATE_AUTO_CLAUDE_COMMAND='claude --permission-mode dontAsk --model son
 运行全量测试：
 
 ```bash
-source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate
 python -m pytest workflow_controller/tests -q
 ```
 
