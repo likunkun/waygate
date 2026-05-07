@@ -105,7 +105,8 @@ def validate_and_enrich_journey_unit_plan(
             enriched_journeys.append(enriched)
             continue
 
-        journey_id = str(journey.get('journey_id') or '').strip()
+        journey_id = _normalize_journey_id(journey.get('journey_id'))
+        enriched['journey_id'] = journey_id
         mapped = mappings.get(journey_id, [])
         if not mapped:
             issues.append(f'active journey {journey_id or "unknown"} has no mapped test case')
@@ -279,7 +280,7 @@ def extract_requirement_journeys(requirements_body: str) -> list[dict[str, Any]]
     rows = _journey_table_rows(requirements_body)
     journeys: list[dict[str, Any]] = []
     for row in rows:
-        journey_id = _first_value(row, *JOURNEY_VALUE_ID_HEADERS)
+        journey_id = _normalize_journey_id(_first_value(row, *JOURNEY_VALUE_ID_HEADERS))
         title = _first_value(row, *JOURNEY_TITLE_HEADERS) or journey_id
         status = (_first_value(row, *JOURNEY_STATUS_HEADERS) or 'active').lower()
         steps = _split_steps(_first_value(row, *JOURNEY_STEPS_HEADERS) or '')
@@ -513,12 +514,22 @@ def _journey_ids_from_case(case: dict[str, Any]) -> list[str]:
         or case.get('journeyRefs')
     )
     if isinstance(raw, list):
-        return [str(item).strip() for item in raw if str(item).strip()]
+        return [_normalize_journey_id(item) for item in raw if _normalize_journey_id(item)]
     if raw is None:
         return []
     text = str(raw)
     matched = _ids_from_text(text, r'(?<![A-Za-z0-9_-])J-[A-Za-z0-9_-]+')
-    return matched or ([text.strip()] if text.strip() else [])
+    return [_normalize_journey_id(item) for item in matched] or (
+        [_normalize_journey_id(text)] if _normalize_journey_id(text) else []
+    )
+
+
+def _normalize_journey_id(value: Any) -> str:
+    text = str(value or '').strip().strip('`*_')
+    matched = _ids_from_text(text, r'(?<![A-Za-z0-9_-])J-[A-Za-z0-9_-]+')
+    if len(matched) == 1:
+        return matched[0]
+    return text
 
 
 def _journey_mapping_issues(journey: dict[str, Any], mapping: dict[str, Any]) -> list[str]:

@@ -232,6 +232,9 @@ def _feedback_items(feedback_text: str, *, annotations: list[Any] | None) -> lis
     annotation_items = _items_from_annotations(annotations)
     if annotation_items:
         return annotation_items
+    plannotator_items = _items_from_plannotator_file_feedback(feedback_text)
+    if plannotator_items:
+        return plannotator_items
     list_items = _items_from_list_text(feedback_text)
     if list_items:
         return [{'title': item, 'description': item} for item in list_items]
@@ -239,6 +242,45 @@ def _feedback_items(feedback_text: str, *, annotations: list[Any] | None) -> lis
     if not stripped:
         return []
     return [{'title': _first_line(stripped), 'description': stripped}]
+
+
+def _items_from_plannotator_file_feedback(text: str) -> list[dict[str, str]]:
+    if not _looks_like_plannotator_file_feedback(text):
+        return []
+    headings = list(re.finditer(r'(?m)^##\s+\d+[.)]?\s+.+$', text))
+    if not headings:
+        return []
+    items: list[dict[str, str]] = []
+    for index, heading in enumerate(headings):
+        start = heading.end()
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        body = text[start:end]
+        description = _clean_plannotator_feedback_body(body)
+        title = _first_line(description)
+        if title:
+            items.append({'title': title, 'description': description})
+    return items
+
+
+def _looks_like_plannotator_file_feedback(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        '# file feedback' in lowered
+        or "i've reviewed this file" in lowered
+        or 'pieces of feedback' in lowered
+    )
+
+
+def _clean_plannotator_feedback_body(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        stripped = re.sub(r'^\s*>\s?', '', stripped).strip()
+        if stripped:
+            lines.append(stripped)
+    return '\n'.join(lines).strip()
 
 
 def _items_from_annotations(annotations: list[Any] | None) -> list[dict[str, str]]:
@@ -320,4 +362,12 @@ def _string_items(value: Any) -> list[str]:
 
 
 def _obligation_ids_in_text(text: str) -> set[str]:
-    return {match.group(0).upper() for match in re.finditer(r'\bAO-\d{3,}\b', text, flags=re.IGNORECASE)}
+    return {_normalize_obligation_id(match.group(0)) for match in re.finditer(r'\bAO-\d+\b', text, flags=re.IGNORECASE)}
+
+
+def _normalize_obligation_id(value: str) -> str:
+    match = re.fullmatch(r'AO-(\d+)', str(value or '').strip(), flags=re.IGNORECASE)
+    if not match:
+        return str(value or '').strip().upper()
+    digits = match.group(1)
+    return f'AO-{int(digits):0{max(3, len(digits))}d}'

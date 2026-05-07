@@ -64,6 +64,36 @@ def test_numbered_feedback_becomes_distinct_acceptance_obligations() -> None:
     ]
 
 
+def test_plannotator_plain_file_feedback_becomes_distinct_acceptance_obligations() -> None:
+    state: dict = {}
+
+    append_acceptance_obligations(
+        state,
+        source='requirements_feedback',
+        source_ref='requirements:revision-1',
+        feedback_text='''
+# File Feedback
+I've reviewed this file and have 2 pieces of feedback:
+
+## 1. General feedback about the file
+> 这个需求就是瞎扯淡
+
+## 2. General feedback about the file
+> 这才是我要的需求：
+> - 默认只展示 changed / added / removed。
+> - 增加一个轻量开关：显示相同项，默认关闭。
+''',
+    )
+
+    obligations = state['acceptanceObligations']
+    assert [item['id'] for item in obligations] == ['AO-001', 'AO-002']
+    assert [item['title'] for item in obligations] == [
+        '这个需求就是瞎扯淡',
+        '这才是我要的需求：',
+    ]
+    assert '默认只展示 changed / added / removed。' in obligations[1]['description']
+
+
 def test_acceptance_obligation_markdown_preserves_original_items() -> None:
     state = {
         'acceptanceObligations': [
@@ -221,6 +251,42 @@ def test_unit_plan_approval_passes_when_all_must_obligations_are_covered(tmp_pat
     validate_unit_plan_acceptance_obligation_coverage(gate, state)
 
 
+def test_unit_plan_approval_accepts_non_padded_ao_ids(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AC-1 covers AO-01 | TC-1 | integration | pytest tests/test_a.py -q | AO-01 works |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+        ],
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-1',
+                        'acceptance_criterion': 'AC-1',
+                        'covers_obligations': ['AO-01'],
+                        'layer': 'integration',
+                        'command': 'pytest tests/test_a.py -q',
+                        'expected': 'AO-01 works',
+                    }
+                ],
+                'verification_commands': ['pytest tests/test_a.py -q'],
+            }
+        ],
+    }
+
+    validate_unit_plan_acceptance_obligation_coverage(gate, state)
+
+
 def test_unit_plan_test_case_matrix_with_design_columns_requires_real_test_evidence(tmp_path: Path) -> None:
     gate = tmp_path / 'unit-plan.md'
     gate.write_text(
@@ -274,6 +340,27 @@ def test_requirements_approval_blocks_unmapped_must_obligation(tmp_path: Path) -
 
     with pytest.raises(ValueError, match='AO-002'):
         validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_approval_accepts_non_padded_ao_ids(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: integration]: 六步 UX 清楚展示。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-01 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
+        ],
+    }
+
+    validate_requirements_acceptance_quality(gate, state)
 
 
 def test_requirements_approval_requires_verification_layer_for_each_ac(tmp_path: Path) -> None:
@@ -337,6 +424,32 @@ def test_requirements_approval_accepts_mapped_and_explicitly_deferred_obligation
         'acceptanceObligations': [
             {'id': 'AO-001', 'title': '六步 UX 不清楚', 'priority': 'must', 'status': 'open'},
             {'id': 'AO-002', 'title': '15 个材料没有覆盖', 'priority': 'must', 'status': 'open'},
+        ],
+    }
+
+    validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_approval_accepts_out_of_scope_with_blank_ac_and_reason(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: manual]: 当前目标不修改旧 stream handler。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-069 |  | out_of_scope | manual | `sdk/api/handlers` 属于旧 stream 目标。 |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'acceptanceObligations': [
+            {
+                'id': 'AO-069',
+                'title': '`sdk/api/handlers` 属于旧 stream 目标。',
+                'priority': 'must',
+                'status': 'open',
+            },
         ],
     }
 
@@ -458,6 +571,48 @@ def test_unit_plan_approval_accepts_test_case_design_architecture_refs(tmp_path:
                         'layer': 'integration',
                         'command': 'pytest tests/test_delivery.py -q',
                         'expected': 'AO-001 works',
+                    }
+                ],
+            }
+        ]
+    }
+
+    validate_unit_plan_design_architecture_traceability(requirements, unit_plan, state)
+
+
+def test_unit_plan_approval_accepts_markdown_heading_trace_refs_from_requirements(tmp_path: Path) -> None:
+    requirements = tmp_path / 'requirements-and-acceptance.md'
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: functional]: 上游 HTTP 错误分类。\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| `AC-1` | `## 7. 产品设计概要` / `PDR-01 失败诊断卡片` | '
+        '`## 8. 架构概要` / `TAR-01 诊断分类器模块边界`、`TAR-02 日志输入到诊断输出数据流` | '
+        '覆盖上游 HTTP 错误诊断。 |\n',
+        encoding='utf-8',
+    )
+    unit_plan = tmp_path / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n', encoding='utf-8')
+    state = {
+        'units': [
+            {
+                'id': 'unit-v1-5-failure-diagnosis',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-FD-001',
+                        'acceptance_criterion': 'AC-1',
+                        'product_design_refs': ['## 7. 产品设计概要 / PDR-01 失败诊断卡片'],
+                        'technical_architecture_refs': [
+                            '## 8. 架构概要 / TAR-01 诊断分类器模块边界',
+                            '## 8. 架构概要 / TAR-02 日志输入到诊断输出数据流',
+                        ],
+                        'layer': 'functional',
+                        'command': 'go test ./internal/usagereport/requestlog -run TestDiagnoseFailureClassifiesFixtures -count=1',
+                        'expected': 'diagnosis.code=upstream_http_error',
                     }
                 ],
             }

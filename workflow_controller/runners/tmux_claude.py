@@ -23,6 +23,7 @@ DEFAULT_TMUX_IDLE_MAX_NUDGES = 3
 DEFAULT_TMUX_CLAUDE_SUBMIT_KEY = 'C-m'
 DEFAULT_TMUX_CODEX_SUBMIT_KEY = 'Enter'
 DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS = 1.0
+DEFAULT_TMUX_SUBMIT_RETRY_DELAY_SECONDS = 0.2
 DEFAULT_TMUX_POST_DONE_IDLE_POLL_SECONDS = 0.5
 
 
@@ -60,6 +61,9 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     events_path = run_dir / 'events.log'
     runner_prompt_path = run_dir / 'prompt.md'
     dispatch_prompt_path = run_dir / 'dispatch.md'
+    _append_event(events_path, {'event': 'dispatch_started', 'backend': backend})
+    _write_pending_done_file(done_path, run_id)
+    _append_event(events_path, {'event': 'done_file_precreated', 'status': 'pending'})
     runner_prompt_path.write_text(
         _render_tmux_prompt(
             original_prompt=request.prompt_path.read_text(encoding='utf-8'),
@@ -104,7 +108,6 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
     last_returncode = 0
-    _append_event(events_path, {'event': 'dispatch_started', 'backend': backend})
     for command in commands:
         completed = subprocess.run(
             command,
@@ -151,17 +154,17 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
             })
             time.sleep(delay_seconds)
 
-    if backend == 'tmux-codex':
-        _retry_codex_submit_if_prompt_still_pending(
-            tmux_command=tmux_command,
-            tmux_target=request.tmux_target,
-            workspace_dir=request.workspace_dir,
-            env=env,
-            run_id=run_id,
-            submit_key=submit_key,
-            done_path=done_path,
-            events_path=events_path,
-        )
+    _retry_submit_if_prompt_still_pending(
+        backend=backend,
+        tmux_command=tmux_command,
+        tmux_target=request.tmux_target,
+        workspace_dir=request.workspace_dir,
+        env=env,
+        run_id=run_id,
+        submit_key=submit_key,
+        done_path=done_path,
+        events_path=events_path,
+    )
 
     deadline = time.monotonic() + request.timeout_seconds
     next_idle_check = time.monotonic() + _tmux_idle_grace_seconds()
@@ -171,6 +174,7 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     nudge_count = 0
     last_pane_content: str | None = None
     last_pane_change_time = time.monotonic()
+    pending_seen = False
     while time.monotonic() < deadline:
         if done_path.exists():
             payload = _read_done_payload(done_path)
@@ -224,43 +228,48 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
                     runner_metadata=runner_metadata,
                 )
             status = str(payload.get('status') or 'done')
-            _append_event(events_path, {'event': 'done_signal_seen', 'status': status})
-            if backend == 'tmux-codex' and status == 'done':
-                idle_result = _wait_for_tmux_agent_idle_after_done(
-                    tmux_command=tmux_command,
-                    tmux_target=request.tmux_target,
-                    workspace_dir=request.workspace_dir,
-                    env=env,
-                    events_path=events_path,
-                    deadline=deadline,
-                )
-                if idle_result is not None:
-                    return RunnerResult(
-                        backend=backend,
-                        status=idle_result['status'],
-                        command=dispatch_commands[-1],
-                        returncode=idle_result['returncode'],
-                        stdout=''.join(stdout_parts),
-                        stderr=''.join(stderr_parts) + idle_result['stderr'],
-                        run_dir=run_dir,
-                        prompt_path=runner_prompt_path,
-                        done_path=done_path,
-                        done_payload=payload,
-                        runner_metadata=runner_metadata,
+            if status == 'pending':
+                if not pending_seen:
+                    _append_event(events_path, {'event': 'done_signal_pending'})
+                    pending_seen = True
+            else:
+                _append_event(events_path, {'event': 'done_signal_seen', 'status': status})
+                if backend == 'tmux-codex' and status == 'done':
+                    idle_result = _wait_for_tmux_agent_idle_after_done(
+                        tmux_command=tmux_command,
+                        tmux_target=request.tmux_target,
+                        workspace_dir=request.workspace_dir,
+                        env=env,
+                        events_path=events_path,
+                        deadline=deadline,
                     )
-            return RunnerResult(
-                backend=backend,
-                status=status,
-                command=dispatch_commands[-1],
-                returncode=0 if status == 'done' else 1,
-                stdout=''.join(stdout_parts),
-                stderr=''.join(stderr_parts),
-                run_dir=run_dir,
-                prompt_path=runner_prompt_path,
-                done_path=done_path,
-                done_payload=payload,
-                runner_metadata=runner_metadata,
-            )
+                    if idle_result is not None:
+                        return RunnerResult(
+                            backend=backend,
+                            status=idle_result['status'],
+                            command=dispatch_commands[-1],
+                            returncode=idle_result['returncode'],
+                            stdout=''.join(stdout_parts),
+                            stderr=''.join(stderr_parts) + idle_result['stderr'],
+                            run_dir=run_dir,
+                            prompt_path=runner_prompt_path,
+                            done_path=done_path,
+                            done_payload=payload,
+                            runner_metadata=runner_metadata,
+                        )
+                return RunnerResult(
+                    backend=backend,
+                    status=status,
+                    command=dispatch_commands[-1],
+                    returncode=0 if status == 'done' else 1,
+                    stdout=''.join(stdout_parts),
+                    stderr=''.join(stderr_parts),
+                    run_dir=run_dir,
+                    prompt_path=runner_prompt_path,
+                    done_path=done_path,
+                    done_payload=payload,
+                    runner_metadata=runner_metadata,
+                )
         now = time.monotonic()
         if idle_poll_seconds > 0 and now >= next_idle_check:
             pane_tail = _capture_tmux_pane(
@@ -420,6 +429,15 @@ def _tmux_codex_submit_retry_delay_seconds() -> float:
     return _env_float('RRC_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS', DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS)
 
 
+def _tmux_submit_retry_delay_seconds(backend: str) -> float:
+    if backend == 'tmux-codex':
+        return _tmux_codex_submit_retry_delay_seconds()
+    backend_env = 'RRC_TMUX_CLAUDE_SUBMIT_RETRY_DELAY_SECONDS' if backend == 'tmux-claude' else ''
+    if backend_env and os.environ.get(backend_env) is not None:
+        return _env_float(backend_env, DEFAULT_TMUX_SUBMIT_RETRY_DELAY_SECONDS)
+    return _env_float('RRC_TMUX_SUBMIT_RETRY_DELAY_SECONDS', DEFAULT_TMUX_SUBMIT_RETRY_DELAY_SECONDS)
+
+
 def _tmux_post_done_idle_poll_seconds() -> float:
     return _env_float('RRC_TMUX_POST_DONE_IDLE_POLL_SECONDS', DEFAULT_TMUX_POST_DONE_IDLE_POLL_SECONDS)
 
@@ -478,6 +496,20 @@ def _new_run_dir(artifact_dir: Path, unit_id: str) -> Path:
     return artifact_dir / 'runs' / f'{unit_id}-{timestamp}'
 
 
+def _write_pending_done_file(path: Path, run_id: str) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                'status': 'pending',
+                'summary': 'waiting for tmux agent completion',
+                'run_id': run_id,
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+
+
 def _capture_tmux_pane(
     *,
     tmux_command: list[str],
@@ -503,8 +535,9 @@ def _capture_tmux_pane(
     return completed.stdout.strip()
 
 
-def _retry_codex_submit_if_prompt_still_pending(
+def _retry_submit_if_prompt_still_pending(
     *,
+    backend: str,
     tmux_command: list[str],
     tmux_target: str,
     workspace_dir: Path,
@@ -514,13 +547,16 @@ def _retry_codex_submit_if_prompt_still_pending(
     done_path: Path,
     events_path: Path,
 ) -> None:
-    if done_path.exists():
-        _append_event(events_path, {'event': 'tmux_codex_submit_retry_skipped', 'reason': 'done_file_exists'})
+    skipped_event = _tmux_submit_retry_event_name(backend, 'skipped')
+    delay_event = _tmux_submit_retry_event_name(backend, 'delay')
+    retry_event = _tmux_submit_retry_event_name(backend, '')
+    if _done_file_has_non_pending_signal(done_path):
+        _append_event(events_path, {'event': skipped_event, 'reason': 'done_file_exists'})
         return
-    delay_seconds = _tmux_codex_submit_retry_delay_seconds()
+    delay_seconds = _tmux_submit_retry_delay_seconds(backend)
     if delay_seconds > 0:
         _append_event(events_path, {
-            'event': 'tmux_codex_submit_retry_delay',
+            'event': delay_event,
             'seconds': delay_seconds,
         })
         time.sleep(delay_seconds)
@@ -530,10 +566,10 @@ def _retry_codex_submit_if_prompt_still_pending(
         workspace_dir=workspace_dir,
         env=env,
     )
-    retry_reason = _codex_submit_retry_reason(pane_tail, run_id)
+    retry_reason = _submit_retry_reason(pane_tail, run_id, backend=backend)
     if retry_reason is None:
         _append_event(events_path, {
-            'event': 'tmux_codex_submit_retry_skipped',
+            'event': skipped_event,
             'reason': 'agent_already_working',
         })
         return
@@ -546,13 +582,24 @@ def _retry_codex_submit_if_prompt_still_pending(
         env=env,
     )
     _append_event(events_path, {
-        'event': 'tmux_codex_submit_retry',
+        'event': retry_event,
         'reason': retry_reason,
         'returncode': completed.returncode,
     })
 
 
 def _codex_submit_retry_reason(pane_tail: str, run_id: str) -> str | None:
+    return _submit_retry_reason(pane_tail, run_id, backend='tmux-codex')
+
+
+def _done_file_has_non_pending_signal(path: Path) -> bool:
+    if not path.exists():
+        return False
+    payload = _read_done_payload(path)
+    return str(payload.get('status') or 'done') != 'pending'
+
+
+def _submit_retry_reason(pane_tail: str, run_id: str, *, backend: str) -> str | None:
     if _tmux_pane_looks_busy(pane_tail):
         return None
     if run_id in pane_tail and 'workflow-controller dispatch.' in pane_tail:
@@ -561,7 +608,17 @@ def _codex_submit_retry_reason(pane_tail: str, run_id: str) -> str | None:
     # RUN_ID even though the dispatch is still sitting in the input box.
     if 'Pasted Content' in pane_tail:
         return 'pasted_content_still_in_input'
+    if backend != 'tmux-codex':
+        return None
     return 'agent_not_working_after_submit'
+
+
+def _tmux_submit_retry_event_name(backend: str, suffix: str) -> str:
+    if backend == 'tmux-codex':
+        base = 'tmux_codex_submit_retry'
+    else:
+        base = 'tmux_submit_retry'
+    return f'{base}_{suffix}' if suffix else base
 
 
 def _wait_for_tmux_agent_idle_after_done(

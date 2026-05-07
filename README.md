@@ -719,7 +719,7 @@ waygate go V1.0
 waygate go V1.0 --tmux-target 1.2
 ```
 
-`tmux-codex` 使用 Codex TUI 的 Enter 提交语义。Codex 写出 `DONE_FILE` 后，controller 会先确认目标 pane 已离开 `Working` 状态，再推进下一步；这样可以避免上一轮 agent 尚未完全退出时，下一轮 prompt 被粘到 Codex 的排队输入框里，看起来像“回车没有发出去”。
+自动创建 Claude pane 时，Waygate 默认执行 `claude --permission-mode bypassPermissions`，避免 worker 在写文件或运行命令时停在交互确认；可用 `WAYGATE_AUTO_CLAUDE_PERMISSION_MODE` 或 `WAYGATE_AUTO_CLAUDE_COMMAND` 覆盖。tmux runner 还会预创建 pending `DONE_FILE` 并在 dispatch prompt 仍停在输入框时补发一次提交键，这只是 TUI 竞态兜底。`tmux-codex` 仍使用 Codex TUI 的 Enter 提交语义；Codex 写出 `DONE_FILE` 后，controller 会先确认目标 pane 已离开 `Working` 状态，再推进下一步，避免下一轮 prompt 被粘到 Codex 的排队输入框里。
 
 ## Agent 角色
 

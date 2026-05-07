@@ -511,6 +511,20 @@ class RalphRefinerController:
         feedback, _ = self._revision_feedback_and_annotations_for_gate(gate, gate_path)
         return feedback
 
+    def _acceptance_obligation_feedback_and_annotations_for_gate(
+        self,
+        gate: str,
+        gate_path: Path,
+    ) -> tuple[str, list[Any] | None]:
+        gate_content = gate_path.read_text(encoding='utf-8')
+        plannotator_feedback, plannotator_annotations, _ = _read_plannotator_submitted_feedback(
+            self.state_dir,
+            gate,
+            gate_path,
+            gate_content,
+        )
+        return (plannotator_feedback or '').strip(), plannotator_annotations
+
     def _revision_feedback_and_annotations_for_gate(
         self,
         gate: str,
@@ -904,13 +918,18 @@ class RalphRefinerController:
         revision_count = int(state.get('requirementsRevisionCount') or 0)
         revision_feedback = state['requirementsRevisionFeedback']
         if not controller_validation_only:
-            self._append_acceptance_obligations_from_feedback(
-                state,
-                source='requirements_feedback',
-                source_ref=f"requirements:revision-{revision_count}",
-                feedback_text=revision_feedback,
-                annotations=requirements_annotations,
+            obligation_feedback, obligation_annotations = self._acceptance_obligation_feedback_and_annotations_for_gate(
+                'requirements',
+                gate_path,
             )
+            if obligation_feedback or obligation_annotations:
+                self._append_acceptance_obligations_from_feedback(
+                    state,
+                    source='requirements_feedback',
+                    source_ref=f"requirements:revision-{revision_count}",
+                    feedback_text=obligation_feedback,
+                    annotations=obligation_annotations,
+                )
         state['requirementsAccepted'] = False
         state['unitPlanAccepted'] = False
         state.pop('requirementsAcceptedHash', None)
@@ -989,13 +1008,18 @@ class RalphRefinerController:
         )
         state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
         if not controller_validation_only:
-            self._append_acceptance_obligations_from_feedback(
-                state,
-                source='unit_plan_feedback',
-                source_ref=f"unit-plan:revision-{state['unitPlanRevisionCount']}",
-                feedback_text=state['unitPlanRevisionFeedback'],
-                annotations=unit_plan_annotations,
+            obligation_feedback, obligation_annotations = self._acceptance_obligation_feedback_and_annotations_for_gate(
+                'unit-plan',
+                gate_path,
             )
+            if obligation_feedback or obligation_annotations:
+                self._append_acceptance_obligations_from_feedback(
+                    state,
+                    source='unit_plan_feedback',
+                    source_ref=f"unit-plan:revision-{state['unitPlanRevisionCount']}",
+                    feedback_text=obligation_feedback,
+                    annotations=obligation_annotations,
+                )
         state['unitPlanAccepted'] = False
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
@@ -1189,7 +1213,25 @@ class RalphRefinerController:
             )
 
         if agent_runner == 'tmux-codex':
-            raise ValueError('--runner=tmux-codex requires --tmux-target pointing at an existing Codex pane')
+            inspection = _discover_tmux_agent_target(
+                'tmux-codex',
+                workspace_dir,
+                tmux_command=_tmux_command_for_controller(self.agent_command),
+            )
+            if inspection:
+                tmux_target = str(inspection.get('target') or '').strip()
+                self.agent_runner = 'tmux-codex'
+                self.tmux_target = tmux_target
+                return 'tmux-codex', tmux_target, _tmux_target_resolution(
+                    target=tmux_target,
+                    runner='tmux-codex',
+                    inspection=inspection,
+                    source='auto-detected',
+                )
+            raise ValueError(
+                '--runner=tmux-codex requires --tmux-target pointing at an existing Codex pane '
+                'or a discoverable Codex pane in the current tmux session'
+            )
 
         if agent_runner == 'tmux-claude' or agent_runner is None:
             if not allow_auto_create and agent_runner is None:
@@ -1203,6 +1245,7 @@ class RalphRefinerController:
                 'detectedBackend': 'tmux-claude',
                 'detectedSource': 'auto-created',
                 'source': 'auto-created',
+                'paneCommand': shlex.join(_auto_claude_pane_command()),
                 'workspacePath': str(workspace_dir),
             }
 
@@ -3736,6 +3779,67 @@ def _detect_tmux_target_backend(
     return _inspect_tmux_target(tmux_target, workspace_dir, tmux_command=tmux_command).get('detectedBackend')
 
 
+def _discover_tmux_agent_target(
+    desired_backend: str,
+    workspace_dir: Path,
+    *,
+    tmux_command: list[str] | None = None,
+) -> dict[str, Any] | None:
+    if not os.environ.get('TMUX'):
+        return None
+    tmux_targets = _tmux_list_pane_targets(workspace_dir, tmux_command=tmux_command)
+    current_pane = _current_tmux_pane_from_environment(tmux_targets)
+    inspections: list[dict[str, Any]] = []
+    for tmux_target in tmux_targets:
+        if current_pane and tmux_target == current_pane:
+            continue
+        inspection = _inspect_tmux_target(tmux_target, workspace_dir, tmux_command=tmux_command)
+        if inspection.get('detectedBackend') != desired_backend:
+            continue
+        inspections.append(inspection)
+        if _tmux_pane_path_matches_workspace(inspection.get('paneCurrentPath'), workspace_dir):
+            return inspection
+    if len(inspections) == 1:
+        return inspections[0]
+    return None
+
+
+def _current_tmux_pane_from_environment(tmux_targets: list[str]) -> str:
+    current_pane = os.environ.get('TMUX_PANE', '').strip()
+    if current_pane and current_pane in set(tmux_targets):
+        return current_pane
+    return ''
+
+
+def _tmux_list_pane_targets(
+    workspace_dir: Path,
+    *,
+    tmux_command: list[str] | None = None,
+) -> list[str]:
+    completed = _run_tmux_probe(
+        [*(tmux_command or ['tmux']), 'list-panes', '-F', '#{pane_id}'],
+        workspace_dir,
+    )
+    if not completed or completed.returncode != 0:
+        return []
+    targets: list[str] = []
+    for line in completed.stdout.splitlines():
+        target = line.strip()
+        if target:
+            targets.append(target)
+    return targets
+
+
+def _tmux_pane_path_matches_workspace(raw_path: Any, workspace_dir: Path) -> bool:
+    text = str(raw_path or '').strip()
+    if not text:
+        return False
+    try:
+        return Path(text).expanduser().resolve() == workspace_dir.expanduser().resolve()
+    except OSError:
+        return Path(text).expanduser() == workspace_dir.expanduser()
+
+
 def _inspect_tmux_target(
     tmux_target: str,
     workspace_dir: Path,
@@ -4033,13 +4137,17 @@ def _tmux_command_for_controller(agent_command: str | None) -> list[str]:
 
 def _detect_agent_from_text(text: str) -> str | None:
     lowered = text.lower()
-    codex_seen = 'codex' in lowered
-    claude_seen = 'claude' in lowered
+    codex_seen = _has_agent_name_token(lowered, 'codex')
+    claude_seen = _has_agent_name_token(lowered, 'claude')
     if codex_seen and not claude_seen:
         return 'codex'
     if claude_seen and not codex_seen:
         return 'claude'
     return None
+
+
+def _has_agent_name_token(text: str, agent_name: str) -> bool:
+    return bool(re.search(rf'(?<!tmux-)\b{re.escape(agent_name)}\b', text))
 
 
 def _create_tmux_claude_pane(workspace_dir: Path) -> str:
@@ -4048,6 +4156,7 @@ def _create_tmux_claude_pane(workspace_dir: Path) -> str:
             'No --tmux-target was provided and Waygate is not running inside a tmux session. '
             'Pass --tmux-target pointing at an existing Codex or Claude pane, or run the controller inside tmux.'
         )
+    claude_command = _auto_claude_pane_command()
     command = [
         'tmux',
         'split-window',
@@ -4057,7 +4166,7 @@ def _create_tmux_claude_pane(workspace_dir: Path) -> str:
         '#{pane_id}',
         '-c',
         str(workspace_dir),
-        'claude',
+        *claude_command,
     ]
     try:
         completed = subprocess.run(
@@ -4077,6 +4186,17 @@ def _create_tmux_claude_pane(workspace_dir: Path) -> str:
     if not pane_id:
         raise RuntimeError('Failed to create Claude tmux pane: tmux did not return a pane id')
     return pane_id
+
+
+def _auto_claude_pane_command() -> list[str]:
+    raw_command = os.environ.get('WAYGATE_AUTO_CLAUDE_COMMAND')
+    if raw_command and raw_command.strip():
+        return shlex.split(raw_command)
+    permission_mode = os.environ.get('WAYGATE_AUTO_CLAUDE_PERMISSION_MODE', 'bypassPermissions').strip()
+    command = ['claude']
+    if permission_mode:
+        command.extend(['--permission-mode', permission_mode])
+    return command
 
 
 def _last_nonempty_line(text: str) -> str:

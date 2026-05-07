@@ -625,7 +625,15 @@ def _requirements_ac_ids_in_text(text: str) -> set[str]:
 
 
 def _requirements_ao_ids_in_text(text: str) -> set[str]:
-    return {match.group(0).upper() for match in re.finditer(r'\bAO-\d+\b', text, re.IGNORECASE)}
+    return {_normalize_requirements_ao_id(match.group(0)) for match in re.finditer(r'\bAO-\d+\b', text, re.IGNORECASE)}
+
+
+def _normalize_requirements_ao_id(value: str) -> str:
+    match = re.fullmatch(r'AO-(\d+)', str(value or '').strip(), flags=re.IGNORECASE)
+    if not match:
+        return str(value or '').strip().upper()
+    digits = match.group(1)
+    return f'AO-{int(digits):0{max(3, len(digits))}d}'
 
 
 def _requirements_verification_layer_from_line(line: str) -> str | None:
@@ -721,18 +729,75 @@ def _requirements_resolution_reason_is_meaningful(text: str) -> bool:
         return False
     if _requirements_ao_ids_in_text(stripped) or _requirements_ac_ids_in_text(stripped):
         return False
-    if _normalize_requirements_verification_layer(stripped):
+    if _requirements_resolution_reason_is_layer_only(stripped):
         return False
     return True
+
+
+def _requirements_resolution_reason_is_layer_only(text: str) -> bool:
+    normalized = re.sub(r'[\s`*_，。:：;；]+', ' ', str(text).strip().lower()).strip()
+    if not normalized:
+        return False
+    layer_aliases = {
+        'unit',
+        'unit test',
+        'unit tests',
+        '单元',
+        '单元测试',
+        'functional',
+        'api',
+        'api test',
+        'api tests',
+        '功能',
+        '功能测试',
+        '接口',
+        '接口测试',
+        'integration',
+        'integration test',
+        'integration tests',
+        '集成',
+        '集成测试',
+        'e2e',
+        'end-to-end',
+        'end to end',
+        'playwright',
+        'browser',
+        '端到端',
+        '浏览器',
+        'manual',
+        'manual acceptance',
+        'uat',
+        '人工',
+        '人工验收',
+        '手工',
+    }
+    return normalized in layer_aliases
 
 
 def _requirements_trace_refs_from_cell(value: str) -> set[str]:
     refs: set[str] = set()
     for part in re.split(r'(?:<br\s*/?>|[,，;；、])', str(value), flags=re.IGNORECASE):
-        ref = part.strip().strip('`*_')
-        if _requirements_trace_ref_is_meaningful(ref):
-            refs.add(ref)
+        ref = _normalize_requirements_trace_ref(part)
+        if not _requirements_trace_ref_is_meaningful(ref):
+            continue
+        stable_ids = _requirements_trace_ref_ids(ref)
+        refs.update(stable_ids or {ref})
     return refs
+
+
+def _normalize_requirements_trace_ref(value: str) -> str:
+    ref = str(value or '').strip().strip('`*_')
+    ref = ref.replace('`', '')
+    ref = re.sub(r'\s*/\s*', ' / ', ref)
+    ref = re.sub(r'\s+', ' ', ref).strip()
+    return ref
+
+
+def _requirements_trace_ref_ids(value: str) -> set[str]:
+    return {
+        match.group(0).upper()
+        for match in re.finditer(r'\b(?:PD|PDR|TA|TAR)(?:-[A-Za-z0-9_.]+)+\b', value, re.IGNORECASE)
+    }
 
 
 def _trace_refs_from_case(case: dict[str, Any], *keys: str) -> set[str]:

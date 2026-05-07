@@ -65,6 +65,8 @@ waygate go V1.0 --tmux-target 1.2
 
 未显式传 `--workspace-dir` 时，controller 会使用目标 pane 的当前目录作为 workspace，并把默认 state-dir 放在该目录下。
 
+自动创建 Claude pane 时默认使用 `claude --permission-mode bypassPermissions`，避免 worker 在写文件或运行命令时停在交互确认。需要更保守或自定义启动方式时，可设置 `WAYGATE_AUTO_CLAUDE_PERMISSION_MODE=acceptEdits`，或用 `WAYGATE_AUTO_CLAUDE_COMMAND='claude --permission-mode dontAsk --model sonnet'` 覆盖完整命令。tmux runner 仍会预创建 pending `DONE_FILE`，并在 dispatch prompt 停在输入框时补发一次提交键，作为 TUI 竞态兜底。
+
 完全展开的 `start` 写法仍然兼容：
 
 ```bash

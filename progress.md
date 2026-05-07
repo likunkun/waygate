@@ -1,6 +1,100 @@
 # 进度日志
 
+## 会话：2026-05-07
+
+### V1.6 tmux-codex runner 自动发现修复
+- **状态：** complete
+- 现场命令 `waygate go V1.6 --auto-approve --runner tmux-codex` 失败：`--runner=tmux-codex requires --tmux-target pointing at an existing Codex pane`。
+- 根因：显式指定 `--runner tmux-codex` 且未指定 `--tmux-target` 时，controller 直接报错；只有默认/Claude 路径具备 tmux 自发现或自动创建行为，Codex 路径没有扫描当前 tmux session 中已有 Codex pane。
+- 修复：`tmux-codex` 显式 runner 无 target 时会扫描当前 tmux session 的 panes，识别 Codex backend，优先选择 `pane_current_path` 等于目标 workspace 的 pane；若只有一个 Codex pane 也可使用；多个不匹配时继续阻断，避免派发到错误窗口。
+- 现场烟测进一步暴露错投风险：controller pane 的进程参数可能包含 `--runner tmux-codex`，旧的宽松 substring 检测会把 controller pane 误识别为 Codex。已修复为跳过 `TMUX_PANE` 指向的当前 controller pane，并用 token 级匹配识别 `codex` / `claude`，不再把 `tmux-codex` / `tmux-claude` runner 参数当作 agent 信号。
+- 不自动创建 Codex pane；未发现可用 pane 时仍要求用户显式传 `--tmux-target`。
+- 已按 TDD 增加回归测试：
+  - `test_init_with_explicit_tmux_codex_runner_auto_discovers_codex_pane`
+  - `test_init_with_explicit_tmux_codex_runner_skips_current_controller_pane`
+  - `test_rrc_go_with_tmux_codex_runner_auto_discovers_codex_pane`
+  - `test_rrc_go_with_tmux_target_ignores_waygate_runner_argument_in_process_tree`
+- 已验证 RED：新增测试在修复前分别失败于 `--runner=tmux-codex requires --tmux-target pointing at an existing Codex pane`、错误选择当前 controller pane `%24`、以及把 `--runner tmux-codex` 参数误判成 Codex process-tree。
+- 已验证 GREEN：
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py::test_init_with_explicit_tmux_codex_runner_auto_discovers_codex_pane workflow_controller/tests/test_rrc_controller.py::test_init_with_explicit_tmux_codex_runner_skips_current_controller_pane workflow_controller/tests/test_rrc_controller.py::test_rrc_go_with_tmux_codex_runner_auto_discovers_codex_pane workflow_controller/tests/test_rrc_controller.py::test_rrc_go_with_tmux_target_ignores_waygate_runner_argument_in_process_tree workflow_controller/tests/test_rrc_controller.py::test_rrc_go_with_tmux_target_detects_codex_from_process_tree workflow_controller/tests/test_rrc_controller.py::test_init_with_tmux_target_detects_codex_agent_and_selects_tmux_codex workflow_controller/tests/test_rrc_controller.py::test_rrc_go_with_tmux_target_detects_codex_pane workflow_controller/tests/test_rrc_controller.py::test_init_without_tmux_target_inside_tmux_creates_claude_pane workflow_controller/tests/test_rrc_controller.py::test_rrc_go_inside_tmux_auto_creates_claude_pane -q` -> `9 passed in 2.84s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `354 passed in 48.67s`
+- 已按用户要求重新打包安装包：`bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.3_all.deb`。
+- 已验证安装包：
+  - `dpkg-deb --info dist/waygate_0.5.3_all.deb` -> `Package: waygate`、`Version: 0.5.3`、`Architecture: all`、`Depends: python3`
+  - `dpkg-deb --contents dist/waygate_0.5.3_all.deb` -> 包含 `/usr/bin/waygate` 和 `/usr/lib/waygate/workflow_controller/rrc_controller.py`
+  - 从 deb 解包后的 `rrc_controller.py` 包含 `_discover_tmux_agent_target`、`_current_tmux_pane_from_environment`、`_has_agent_name_token` 和 `discoverable Codex pane` 错误提示
+  - `PYTHONPATH=/tmp/waygate-deb-check/usr/lib/waygate python3 -m workflow_controller.cli --help` -> 正常输出 `usage: waygate ...`
+
 ## 会话：2026-05-06
+
+### V1.5 Unit Plan 设计/架构 traceability 误判修复
+- **状态：** complete
+- 现场 `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.5` 的 Unit Plan 自动打回报错：`unit plan design/architecture traceability is incomplete`，覆盖 `TC-FD-001` 到 `TC-FD-010`。
+- 复现确认：Requirements 的 Design/Architecture Traceability Matrix 使用 `` `## 7...` / `PDR-01...` ``、`` `## 8...` / `TAR-01...`、`TAR-02...` `` 这类 Markdown heading ref；Unit Plan JSON `test_cases[]` 已包含等价的 `product_design_refs` / `technical_architecture_refs`，但 validator 以原始字符串精确匹配，导致语义等价引用被误判缺失。
+- 已按 TDD 增加回归测试 `test_unit_plan_approval_accepts_markdown_heading_trace_refs_from_requirements`。
+- 已验证 RED：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_unit_plan_approval_accepts_markdown_heading_trace_refs_from_requirements -q` -> 失败于 `unit plan design/architecture traceability is incomplete`。
+- 修复：trace ref parser 对 `PDR-*`、`TAR-*`、`PD-*`、`TA-*` 稳定 id 做 canonical matching；没有稳定 id 时继续使用规范化全文，避免放宽到任意 prose。
+- 已验证 GREEN：
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_unit_plan_approval_accepts_markdown_heading_trace_refs_from_requirements -q` -> `1 passed in 0.03s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `20 passed in 0.06s`
+  - 源码 validator 对现场 V1.5 `requirements-and-acceptance.md` + `unit-plan.md` 的 Controller State Patch 验证通过。
+- 已验证全量测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `349 passed in 47.43s`
+- 安装副本 `/usr/lib/waygate` 需要 sudo 权限刷新；当前非交互 sudo 失败：`sudo: a password is required`。已新增用户级 wrapper `/home/lichangkun/.local/bin/waygate`，通过 `PYTHONPATH=/home/lichangkun/works/ai-works/worktrees/workflow-controller` 加载修复后的源码；当前 PATH 中它优先于 `/usr/bin/waygate`。
+- 使用修复版 `waygate` 对 V1.5 state 运行后，traceability 报错消失，继续暴露 Journey contract id 规范化问题：contract 中 journey id 是 `` `J-01` ``，Unit Plan JSON 映射是 `J-01`。
+- 已按 TDD 增加回归测试 `test_unit_plan_approval_accepts_backticked_journey_contract_ids`；RED 先失败于 `unitPlanAccepted is False`。
+- 修复：Journey contract 读取、Requirements Journey 抽取和 Unit Plan test case mapping 统一规范化 `J-*` id，并在 enriched contract 中写回去掉反引号的 id。
+- 已验证 Journey GREEN：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py::test_unit_plan_approval_accepts_covers_journeys_mapping workflow_controller/tests/test_rrc_controller.py::test_unit_plan_approval_accepts_journey_refs_mapping workflow_controller/tests/test_rrc_controller.py::test_unit_plan_approval_accepts_backticked_journey_contract_ids -q` -> `3 passed in 0.08s`
+- 现场 V1.5 现在进入下一条更具体的 Unit Plan gate 错误：`TC-FD-001`、`TC-FD-006`、`TC-FD-007` 的 command 必须逐条出现在 `verification_commands`；这不是 parser 误判，而是待修订 Unit Plan 质量问题。
+- 已验证全量测试：`source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `350 passed in 48.44s`
+- 已按用户要求打包安装包：`bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.3_all.deb`。
+- 已验证安装包：
+  - `dpkg-deb --info dist/waygate_0.5.3_all.deb` -> `Package: waygate`、`Version: 0.5.3`、`Architecture: all`、`Depends: python3`
+  - `dpkg-deb --contents dist/waygate_0.5.3_all.deb` -> 包含 `/usr/bin/waygate` 和 `/usr/lib/waygate/workflow_controller/...`
+  - 从 deb 解包后的 `validators/__init__.py` 包含 `_normalize_requirements_trace_ref` / `_requirements_trace_ref_ids`
+  - 从 deb 解包后的 `journeys.py` 包含 `_normalize_journey_id`
+  - `PYTHONPATH=/tmp/waygate-deb-check/usr/lib/waygate python3 -m workflow_controller.cli --help` -> 正常输出 `usage: waygate ...`
+
+### Requirements 反馈污染 AO Ledger 修复
+- **状态：** complete
+- 现场 V1.4.1 Requirements 自动打回后阻塞，错误里出现 `AO-001 待人工确认 Requirements...`、`AO-002 请求目标...` 等伪 AO。
+- 根因：requirements revision 生成 prompt 需要携带完整 gate 正文，但 controller 同时把这份完整 gate 正文送入 Acceptance Obligation Ledger；ledger 的列表解析器把审批摘要、需求正文、旧草案和 controller 文案里的每个列表项都拆成 active must AO。
+- 修复后，Requirements / Unit Plan revision 的 AO 只来自 Plannotator 实际反馈或 annotations；完整 gate 正文仍作为 drafter 修订上下文，但不再进入 AO 拆分。
+- Plannotator 纯文本 `# File Feedback` / `## 1. General feedback...` 输出现在会按反馈章节拆成独立 AO。
+- Requirements / Unit Plan AO 识别现在兼容 `AO-01` / `AO-1` 这类非三位编号，并规范化为 `AO-001`，降低 agent 输出格式抖动导致的误阻塞。
+- Requirements traceability 对 `out_of_scope` / `deferred` / `rejected` 行的 reason 判定已修复：像 `` `sdk/api/handlers` 属于旧 stream 目标。`` 这类包含 `api` 的完整原因不再被误当成单纯 verification layer。
+- 现场 `.rrc-controller-v1.4.1` 已完成 live recovery：备份 `session.json.before-ao-clean-20260506T050656Z` 后，将 110 条 `sourceRef=requirements:revision-1` 的污染 AO 标为 `duplicate` 并刷新 AO artifacts；Requirements 已通过。
+- 清理 AO 后，污染前提下生成的 Unit Plan 又因 Journey 映射错误被 gate 拦截；已用清理后的 state 触发 Unit Plan revise，修正 Journey 映射并补齐 J-05 test case commands 到 `verification_commands`。当前 state 停在 `WAITING_UNIT_PLAN_APPROVAL`，`requirementsAccepted=true`，`unitPlanAccepted=false`，`blockedReason=null`，等待人工审阅 Unit Plan。
+- 当前证据与恢复目录：`/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.4.1`。先只读该 state 复现；确认 Requirements 已过但 Unit Plan 被污染 AO 阻塞后，按 live recovery 路径修改了该 controller state。
+- 已验证 RED：
+  - `python -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_plannotator_plain_file_feedback_becomes_distinct_acceptance_obligations workflow_controller/tests/test_acceptance_obligations.py::test_requirements_approval_accepts_non_padded_ao_ids workflow_controller/tests/test_rrc_human_gates.py::test_revise_requirements_gate_uses_only_plannotator_feedback_for_obligations -q` 先失败于纯文本反馈只生成 1 条 AO、Requirements `AO-01` 不识别、以及 gate 正文被拆成 AO。
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_requirements_approval_accepts_out_of_scope_with_blank_ac_and_reason -q` 先失败于 `AO-069` 的 `out_of_scope` 行仍被判定未映射。
+- 已验证 GREEN：
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_requirements_approval_accepts_out_of_scope_with_blank_ac_and_reason -q` -> `1 passed in 0.05s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `60 passed in 17.04s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_unit_plan_approval_accepts_non_padded_ao_ids workflow_controller/tests/test_acceptance_obligations.py::test_plannotator_plain_file_feedback_becomes_distinct_acceptance_obligations workflow_controller/tests/test_acceptance_obligations.py::test_requirements_approval_accepts_non_padded_ao_ids workflow_controller/tests/test_rrc_human_gates.py::test_revise_requirements_gate_uses_only_plannotator_feedback_for_obligations -q` -> `4 passed in 1.59s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `59 passed in 16.51s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `347 passed in 45.63s`
+
+### auto Claude pane 权限模式与 tmux 派发兜底修复
+- **状态：** complete
+- 现场复现 1：首次运行自动创建 tmux pane 后，dispatch prompt 已粘贴到 Claude/Codex 输入框，但没有被提交，后续只能靠 idle nudge 才驱动起来。
+- 现场复现 2：自动启动的 Claude Code 写 `DONE_FILE` 时触发 `Create file .../done.json` 确认，停在 “Do you want to create done.json?”，说明根因是自动创建 pane 使用默认交互权限模式。
+- 自动创建 Claude pane 现在默认启动 `claude --permission-mode bypassPermissions`，避免 worker 在写文件或运行命令时停在确认框。
+- 支持 `WAYGATE_AUTO_CLAUDE_PERMISSION_MODE` 覆盖权限模式，也支持 `WAYGATE_AUTO_CLAUDE_COMMAND` 覆盖完整启动命令。
+- runner 仍在每个 tmux run 目录中预创建同 `RUN_ID` 的 pending `done.json`，作为完成信号文件的兜底，不再把它当作主修复。
+- tmux 等待循环会忽略 `status=pending`，只在 `done` / `blocked` / invalid / wrong run 等非 pending 信号时结束。
+- tmux 派发后会捕获 pane；如果 dispatch prompt 和 `RUN_ID` 仍停在输入框，自动补发一次提交键。Codex 保留原有事件名与 `agent_not_working_after_submit` 兼容路径；Claude 只在确认 prompt 仍在输入框或 collapsed pasted content 时补交。
+- README / USAGE 已补充 auto Claude 权限模式、环境变量覆盖、pending `DONE_FILE` 和派发后补交说明。
+- 已验证 RED：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_init_without_tmux_target_inside_tmux_creates_claude_pane workflow_controller/tests/test_rrc_controller.py::test_rrc_go_inside_tmux_auto_creates_claude_pane -q` 先失败于 auto pane 仍启动裸 `claude`。
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_claude_retries_submit_when_prompt_remains_in_input -q` 先失败于 `result.status == 'timeout'`。
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_runner_precreates_done_file_before_dispatch -q` 先失败于 `result.status == 'failed'`。
+- 已验证 GREEN：
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_controller.py::test_init_without_tmux_target_inside_tmux_creates_claude_pane workflow_controller/tests/test_rrc_controller.py::test_auto_created_claude_pane_permission_mode_can_be_overridden workflow_controller/tests/test_rrc_controller.py::test_auto_created_claude_pane_command_can_be_overridden workflow_controller/tests/test_rrc_controller.py::test_init_without_workspace_uses_current_directory_for_auto_claude_pane workflow_controller/tests/test_rrc_controller.py::test_rrc_go_inside_tmux_auto_creates_claude_pane -q` -> `5 passed in 1.01s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_runner_precreates_done_file_before_dispatch workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_claude_retries_submit_when_prompt_remains_in_input workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_claude_runner_fails_fast_when_pane_returns_idle_after_dispatch -q` -> `3 passed in 1.98s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `31 passed in 12.65s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `18 passed in 3.71s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `343 passed in 47.44s`
 
 ### V0.5.3 Waygate 安装化与现场降噪
 - **状态：** complete

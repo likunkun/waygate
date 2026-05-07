@@ -58,6 +58,7 @@ def _make_fake_tmux(
     pane_pid: str = '',
     pane_output: str = '',
     split_pane_id: str = '%42',
+    list_panes_output: str = '',
 ) -> Path:
     tmux_log = tmp_path / 'tmux.log'
     fake_tmux = tmp_path / 'tmux'
@@ -84,6 +85,8 @@ elif args[:1] == ["capture-pane"]:
     print({pane_output!r})
 elif args[:1] == ["split-window"]:
     print({split_pane_id!r})
+elif args[:1] == ["list-panes"]:
+    print({list_panes_output!r})
 """,
         encoding='utf-8',
     )
@@ -355,6 +358,71 @@ def test_init_with_unknown_tmux_target_and_no_explicit_runner_defaults_to_tmux_c
     assert state['tmuxTarget'] == '1.2'
 
 
+def test_init_with_explicit_tmux_codex_runner_auto_discovers_codex_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(
+        tmp_path,
+        pane_command='codex',
+        pane_title='Codex CLI',
+        pane_current_path=str(workspace),
+        list_panes_output='%12',
+    )
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+    monkeypatch.setenv('TMUX_PANE', '%24')
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner='tmux-codex',
+        tmux_target=None,
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTarget'] == '%12'
+    assert state['tmuxTargetResolution']['source'] == 'auto-detected'
+    assert state['tmuxTargetResolution']['detectedBackend'] == 'tmux-codex'
+
+
+def test_init_with_explicit_tmux_codex_runner_skips_current_controller_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(
+        tmp_path,
+        pane_command='codex',
+        pane_title='Codex CLI',
+        pane_current_path=str(workspace),
+        list_panes_output='%24\n%43',
+    )
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+    monkeypatch.setenv('TMUX_PANE', '%24')
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner='tmux-codex',
+        tmux_target=None,
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTarget'] == '%43'
+    assert state['tmuxTargetResolution']['source'] == 'auto-detected'
+
+
 def test_init_without_tmux_target_inside_tmux_creates_claude_pane(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -382,7 +450,104 @@ def test_init_without_tmux_target_inside_tmux_creates_claude_pane(
         for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
     ]
     split_call = next(args for args in tmux_calls if args[:1] == ['split-window'])
-    assert split_call == ['split-window', '-h', '-P', '-F', '#{pane_id}', '-c', str(workspace), 'claude']
+    assert split_call == [
+        'split-window',
+        '-h',
+        '-P',
+        '-F',
+        '#{pane_id}',
+        '-c',
+        str(workspace),
+        'claude',
+        '--permission-mode',
+        'bypassPermissions',
+    ]
+
+
+def test_auto_created_claude_pane_permission_mode_can_be_overridden(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, split_pane_id='%98')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+    monkeypatch.setenv('WAYGATE_AUTO_CLAUDE_PERMISSION_MODE', 'acceptEdits')
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target=None,
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTarget'] == '%98'
+    tmux_calls = [
+        json.loads(line)
+        for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
+    ]
+    split_call = next(args for args in tmux_calls if args[:1] == ['split-window'])
+    assert split_call == [
+        'split-window',
+        '-h',
+        '-P',
+        '-F',
+        '#{pane_id}',
+        '-c',
+        str(workspace),
+        'claude',
+        '--permission-mode',
+        'acceptEdits',
+    ]
+
+
+def test_auto_created_claude_pane_command_can_be_overridden(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, split_pane_id='%97')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+    monkeypatch.setenv('WAYGATE_AUTO_CLAUDE_COMMAND', 'claude --permission-mode dontAsk --model sonnet')
+    controller = RalphRefinerController(
+        state_dir=tmp_path / 'state',
+        workspace_dir=workspace,
+        target='V1.0',
+        agent_runner=None,
+        tmux_target=None,
+        agent_guides_enabled=False,
+    )
+
+    state = controller.init_state(force=True)
+
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTarget'] == '%97'
+    tmux_calls = [
+        json.loads(line)
+        for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
+    ]
+    split_call = next(args for args in tmux_calls if args[:1] == ['split-window'])
+    assert split_call == [
+        'split-window',
+        '-h',
+        '-P',
+        '-F',
+        '#{pane_id}',
+        '-c',
+        str(workspace),
+        'claude',
+        '--permission-mode',
+        'dontAsk',
+        '--model',
+        'sonnet',
+    ]
 
 
 def test_init_without_workspace_uses_current_directory_for_auto_claude_pane(
@@ -413,7 +578,7 @@ def test_init_without_workspace_uses_current_directory_for_auto_claude_pane(
         for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
     ]
     split_call = next(args for args in tmux_calls if args[:1] == ['split-window'])
-    assert split_call[-2:] == [str(workspace), 'claude']
+    assert split_call[-4:] == [str(workspace), 'claude', '--permission-mode', 'bypassPermissions']
 
 
 def test_init_without_tmux_target_outside_tmux_blocks_with_actionable_error(
@@ -2108,11 +2273,23 @@ def test_rrc_go_inside_tmux_auto_creates_claude_pane(
     assert 'runner=tmux-claude' in result.stdout
     assert 'submitKey=C-m' in result.stdout
     assert 'source=auto-created' in result.stdout
+    assert 'command=claude --permission-mode bypassPermissions' in result.stdout
     tmux_calls = [
         json.loads(line)
         for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
     ]
-    assert ['split-window', '-h', '-P', '-F', '#{pane_id}', '-c', str(workspace), 'claude'] in tmux_calls
+    assert [
+        'split-window',
+        '-h',
+        '-P',
+        '-F',
+        '#{pane_id}',
+        '-c',
+        str(workspace),
+        'claude',
+        '--permission-mode',
+        'bypassPermissions',
+    ] in tmux_calls
 
 
 def test_rrc_go_with_tmux_target_detects_codex_pane(
@@ -2155,6 +2332,43 @@ def test_rrc_go_with_tmux_target_detects_codex_pane(
     assert 'submitDelay=2.0s' in result.stdout
 
 
+def test_rrc_go_with_tmux_codex_runner_auto_discovers_codex_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(
+        tmp_path,
+        pane_command='codex',
+        pane_title='Codex CLI',
+        pane_current_path=str(workspace),
+        list_panes_output='%12',
+    )
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--runner',
+        'tmux-codex',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((workspace / '.rrc-controller-v1.0' / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentRunner'] == 'tmux-codex'
+    assert state['tmuxTarget'] == '%12'
+    assert '[tmux] target=%12' in result.stdout
+    assert 'runner=tmux-codex' in result.stdout
+    assert 'detected=tmux-codex' in result.stdout
+    assert 'source=auto-detected' in result.stdout
+
+
 def test_rrc_go_with_tmux_target_detects_codex_from_process_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2195,6 +2409,46 @@ def test_rrc_go_with_tmux_target_detects_codex_from_process_tree(
     assert 'command=node' in result.stdout
     assert 'detected=tmux-codex' in result.stdout
     assert 'detectedSource=process-tree' in result.stdout
+
+
+def test_rrc_go_with_tmux_target_ignores_waygate_runner_argument_in_process_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(
+        tmp_path,
+        pane_command='python3',
+        pane_title='Controller',
+        pane_current_path=str(workspace),
+        pane_pid='12345',
+    )
+    _make_fake_ps(
+        tmp_path,
+        '12345 1 12345 zsh -zsh\n'
+        '12346 12345 12345 python3 python3 -m workflow_controller.cli go V1.0 --runner tmux-codex',
+    )
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.delenv('TMUX', raising=False)
+
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--tmux-target',
+        '1.2',
+        '--runner',
+        'tmux-claude',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((workspace / '.rrc-controller-v1.0' / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTargetResolution']['detectedBackend'] is None
 
 
 def test_rrc_go_with_tmux_target_uses_target_pane_directory_as_workspace(
@@ -5320,6 +5574,111 @@ def test_unit_plan_approval_accepts_covers_journeys_mapping(tmp_path: Path) -> N
     assert state['unitPlanAccepted'] is True
     contract = json.loads(journey_path.read_text(encoding='utf-8'))
     journey = contract['journeys'][0]
+    assert journey['test_cases'] == ['TC-AC1-E2E']
+
+
+def test_unit_plan_approval_accepts_backticked_journey_contract_ids(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'journeyContractPath': str(state_dir / 'artifacts' / 'journeys' / 'journeys.json'),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    journey_path = state_dir / 'artifacts' / 'journeys' / 'journeys.json'
+    journey_path.parent.mkdir(parents=True, exist_ok=True)
+    journey_path.write_text(
+        json.dumps(
+            {
+                'version': 1,
+                'journeys': [
+                    {
+                        'journey_id': '`J-001`',
+                        'title': 'Delivery happy path',
+                        'status': 'active',
+                        'steps': ['Start request', 'complete delivery'],
+                        'linked_acceptance_criteria': ['AC-1'],
+                        'linked_units': [],
+                        'verification_layer': 'e2e',
+                        'verification_command': None,
+                        'test_cases': [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+    from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+
+    gate_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(
+        gate_path,
+        """# Unit Plan Confirmation
+
+## Controller State Patch
+
+```json
+{
+  "currentUnitId": "unit-01",
+  "objectiveCoverage": [
+    {"objective": "Delivery objective", "units": ["unit-01"], "status": "partial"}
+  ],
+  "units": [
+    {
+      "id": "unit-01",
+      "name": "Delivery unit",
+      "passes": false,
+      "workflow_validation_level": "closure",
+      "test_cases": [
+        {
+          "id": "TC-AC1-E2E",
+          "covers_journeys": ["J-001"],
+          "acceptance_criterion": "AC-1",
+          "layer": "e2e",
+          "fixture": "tests/fixtures/delivery.json",
+          "command": "pytest tests/e2e/test_delivery.py -q",
+          "expected": "delivery confirmation is visible",
+          "golden_path": true
+        }
+      ],
+      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+    }
+  ]
+}
+```
+""",
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['unitPlanAccepted'] is True
+    contract = json.loads(journey_path.read_text(encoding='utf-8'))
+    journey = contract['journeys'][0]
+    assert journey['journey_id'] == 'J-001'
     assert journey['test_cases'] == ['TC-AC1-E2E']
 
 

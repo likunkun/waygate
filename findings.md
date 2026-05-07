@@ -159,6 +159,47 @@
 - compact 重复状态卡的根因不是状态机重复推进，而是非渲染字段变化导致旧 key 去重失效；V0.5.3 改为再按最终渲染文本去重，保留 unit 切换和 `force=True` 的显式输出。
 - `relative-artifacts/` 泄漏来自测试对相对 artifact dir 的当前工作目录假设；测试应 `chdir(tmp_path)` 后断言 runner 仍使用绝对 prompt/artifact 路径，避免污染 repo root。
 
+## 2026-05-06 auto Claude pane 权限模式与 tmux 派发兜底
+
+- 现场“第一次运行创建了 tmux pane、prompt 也传过去但没有回车，最后靠 idle 机制驱动起来”与 2026-05-05 的 Codex `DONE_FILE`/`Working` 竞态不同：这次发生在首次 dispatch 提交路径，prompt 仍停留在输入框。
+- 现有补交机制只覆盖 `tmux-codex`；自动创建 Claude pane 走 `tmux-claude`，缺少“提交后确认 dispatch 是否仍在输入框”的保护。
+- 新增通用 tmux submit retry：派发后捕获 pane，若看到 `workflow-controller dispatch.` 和当前 `RUN_ID`，或 TUI 折叠为 `Pasted Content`，则补发一次提交键。Claude 不使用 Codex 的 `agent_not_working_after_submit` 泛化分支，避免普通 idle pane 被误回车。
+- 现场 Claude Code 停在 `Create file .../done.json` 确认，根因不是 `done.json` 单点，而是自动创建 pane 使用裸 `claude` 默认交互权限模式；后续任意写文件或命令都可能继续弹确认。
+- 主修复应在 auto pane 启动命令：默认使用 `claude --permission-mode bypassPermissions`，并允许用 `WAYGATE_AUTO_CLAUDE_PERMISSION_MODE` 或 `WAYGATE_AUTO_CLAUDE_COMMAND` 覆盖。
+- runner 层预创建同 `RUN_ID` 的 pending `done.json` 只作为防御性兜底：agent 后续更新已有完成信号文件，controller 等待循环忽略 pending，仍校验 wrong run、invalid JSON 和 post-done Codex Working 状态。
+- 事件契约保持 `dispatch_started` 为第一条；新增 `done_file_precreated` 和 `done_signal_pending` 便于诊断 pending sentinel 行为。
+
+## 2026-05-06 Requirements revision AO 污染
+
+- V1.4.1 现场 state `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.4.1` 中 110 个 `acceptanceObligations` 全部来自 `requirements:revision-1`，其中 AO-001 到 AO-012 是审批摘要和 controller 文案，AO-013 起包含旧错误需求正文，说明 AO Ledger 已被完整 requirements gate 污染。
+- 根因不是 Requirements drafter 单纯没映射 AO，而是 `_revise_requirements_gate()` 把 `revision_feedback` 同时用于两件不同的事：给 drafter 的完整上下文，以及给 AO Ledger 的“真实人工反馈”。后者不应包含完整 gate 正文。
+- 修复边界：完整 gate 正文继续进入 revision prompt，帮助 drafter 看旧草案；AO Ledger 只消费 Plannotator 实际反馈或 structured annotations。controller-validation-only 自动打回继续不生成新 AO。
+- Plannotator 没有 structured annotations 时，会输出 `# File Feedback` 和 `## 1. General feedback...` 章节；ledger 需要按这些章节拆分，而不是把整段当成一条，也不能回退去拆 gate 正文。
+- Requirements traceability 需要兼容 `AO-01` / `AO-1`，规范化为 `AO-001`；否则 agent 明明语义上映射了 AO，也会因为编号宽度不一致被误判缺失。
+- Requirements resolution reason 不能用宽松 verification layer 识别来否定完整原因；`` `sdk/api/handlers` 属于旧 stream 目标。`` 包含 `api` 路径词但不是单纯的 `api` layer，因此 `AO-069 |  | out_of_scope | manual | <reason>` 应算已显式处理。
+- 现有已污染 state 不应被代码修复静默改写；需要单独按当前目标决定是清理 `.rrc-controller-v1.4.1` 的 AO ledger，还是重建该 target state 后重新跑 requirements。
+- 本次为恢复 7 号窗口，已选择清理 live AO ledger：备份 `session.json.before-ao-clean-20260506T050656Z`，将 110 条 `sourceRef=requirements:revision-1` 污染 AO 标为 `duplicate`，保留 approved Requirements gate 作为事实源；恢复后不再被 Requirements gate invalid 阻塞。
+- 污染 AO 前提下生成的 Unit Plan 会进一步产生错误 Journey 映射；清理 AO 后必须重新 revise Unit Plan，不能沿用“覆盖 AO-001..AO-110”的污染版计划。现场已修订到 `WAITING_UNIT_PLAN_APPROVAL` 且 `blockedReason=null`，下一步只能由人审阅/确认 Unit Plan。
+
+## 2026-05-06 Unit Plan 设计/架构 traceability ref 规范化
+
+- V1.5 现场 state `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.5` 的 Unit Plan 并没有缺少 `product_design_refs` / `technical_architecture_refs`；人工表格和 Controller State Patch JSON 都已包含对应引用。
+- 根因是 validator 把 Requirements 中的 Markdown heading ref 当原始字符串比较：`` `## 7. 产品设计概要` / `PDR-01 失败诊断卡片` `` 被解析成含残留反引号的字符串，而 Unit Plan 写成 `## 7. 产品设计概要 / PDR-01 失败诊断卡片`，语义等价但字符串不相等。
+- 中文顿号分隔的架构引用会进一步放大误判：`` `## 8. 架构概要` / `TAR-01...`、`TAR-02...` `` 与 Unit Plan 中两个完整 heading path 引用无法互相 subset。
+- 修复边界：优先抽取并匹配稳定 trace id（`PDR-*`、`TAR-*`、`PD-*`、`TA-*`），没有稳定 id 时才使用规范化全文；这样既兼容现场 Markdown heading 写法，又不会让任意 prose 通过 traceability gate。
+- 已确认源码修复后的 validator 可直接通过现场 V1.5 `requirements-and-acceptance.md` 与 `unit-plan.md` 校验；系统安装副本 `/usr/lib/waygate` 仍需有 sudo 权限才能刷新。为让现场命令立即使用修复版，已创建 `/home/lichangkun/.local/bin/waygate` wrapper 并优先加载源码工作区。
+- V1.5 Journey contract 同样存在 Markdown id 规范化问题：Requirements Journey 表生成的 `journey_id` 可能带反引号（如 `` `J-01` ``），Unit Plan JSON 中的 `covers_journeys` 通常是不带反引号的 `J-01`。Journey gate 必须在 contract 和 test case mapping 两侧统一规范化 `J-*`。
+- 修复 Journey id 规范化后，现场 V1.5 gate 继续前进到真实 Unit Plan 质量缺口：部分 Journey test case 的 `command` 没有逐条列入 `verification_commands`。这应由 Unit Plan revision 补齐精确命令，而不是放宽为任意 regex 推断。
+
+## 2026-05-07 tmux-codex 显式 runner 自动发现
+
+- V1.6 现场命令 `waygate go V1.6 --auto-approve --runner tmux-codex` 在已有 Codex pane 的 tmux session 内仍报错，说明问题不是缺少 Codex pane，而是显式 `tmux-codex` 分支没有走 pane discovery。
+- 根因：`_resolve_target_agent_runner()` 在 `agent_runner == 'tmux-codex'` 且没有 `tmux_target` 时直接抛错；Claude 默认路径可自动创建 pane，显式 target 路径可检测 pane backend，但 Codex 显式 runner 缺少“发现当前 session 已有 pane”的中间路径。
+- 修复边界：Codex 不自动创建新 pane，只发现已有 pane；优先选择 `pane_current_path` 等于目标 workspace 的 Codex pane，只有一个 Codex pane 时可回退使用，多个候选且无 workspace match 时保持阻断，避免错投。
+- discovery 只在 `TMUX` 环境存在时启用；非 tmux 环境仍给出需要 `--tmux-target` 或可发现 Codex pane 的明确错误。
+- 自动发现不能把当前 controller pane 当作目标 agent pane。现场 smoke 发现 controller 进程参数里有 `--runner tmux-codex`，如果继续用宽松 substring 检测，会把当前 pane 误判成 Codex；因此 discovery 使用 `TMUX_PANE` 跳过当前 pane，并将 agent 文本识别改为 token 级匹配，排除 `tmux-codex` / `tmux-claude` runner 名称。
+- 当前 `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.6/session.json` 已因手动 `--tmux-target 7.1` 继续推进；本修复面向后续不手填 target 的同类命令。
+
 ## 2026-05-04 V0.4+ 路线图整合发现
 
 - `AGENTS.md` / `CLAUDE.md` 应作为项目初始化规约进入 V0.4.0，但它们只定义 agent 如何工作、去哪读事实源，不能替代 requirements、acceptance、state 或 evidence。

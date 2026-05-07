@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）和 V0.5.3 Waygate 安装化与现场降噪（阶段 40）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40），以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
 
 ## 各阶段
 
@@ -56,6 +56,8 @@
 - [x] 每次阶段完成后更新 `progress.md`
 - [x] 重大决策或已知限制更新 `findings.md`
 - [x] 计划变化时更新 `task_plan.md`
+- [x] 现场 V1.4.1 Requirements AO 污染恢复：修复 `out_of_scope` reason 判定，清理 live state 中 `requirements:revision-1` 伪 AO，并推进到 Unit Plan 确认。
+- [x] 现场 V1.6 tmux-codex runner 自动发现修复：显式 `--runner tmux-codex` 无 `--tmux-target` 时发现当前 tmux session 中匹配 workspace 的 Codex pane，跳过当前 controller pane，避免把 `tmux-codex` runner 参数误判为 agent，并重新打包 `dist/waygate_0.5.3_all.deb`。
 - **状态：** in_progress
 
 ### 阶段 7：控制器可靠性增强
@@ -366,6 +368,29 @@
 - [x] 相对 artifact 目录测试改为隔离在 `tmp_path`，避免生成 `relative-artifacts/` 污染 repo root。
 - [x] README / USAGE / ROADMAP 同步 Waygate 安装和使用方式。
 - [x] 全量 `workflow_controller/tests` 通过：`339 passed in 40.64s`。
+- **状态：** complete
+
+### 阶段 41：auto Claude pane 权限模式与 tmux 派发可靠性修复
+- [x] 复现首次派发 prompt 停在 tmux pane 输入框、缺少提交键时只能靠 idle nudge 驱动的问题。
+- [x] tmux runner 派发后捕获 pane；当 dispatch prompt 和当前 `RUN_ID` 仍在输入框时自动补发一次提交键。
+- [x] 复现自动启动 Claude Code 因默认交互权限模式停在文件创建确认的问题。
+- [x] 自动创建 Claude pane 默认启动 `claude --permission-mode bypassPermissions`，避免 worker 交互式确认卡住。
+- [x] 支持 `WAYGATE_AUTO_CLAUDE_PERMISSION_MODE` 和 `WAYGATE_AUTO_CLAUDE_COMMAND` 覆盖 auto pane 启动方式。
+- [x] runner 预创建 pending `done.json` 作为兜底，等待循环忽略 pending 并继续等待真实 `done` / `blocked` 信号。
+- [x] 保留 Codex submit retry 事件兼容和 post-done `Working` 等待逻辑。
+- [x] README / USAGE 同步 auto Claude 权限模式、环境变量覆盖、tmux pending `DONE_FILE` 和补交行为。
+- [x] 全量 `workflow_controller/tests` 通过：`343 passed in 47.44s`。
+- **状态：** complete
+
+### 阶段 42：Requirements revision AO Ledger 污染修复
+- [x] 定位 V1.4.1 现场阻塞根因：完整 Requirements gate 正文被当作 requirements feedback 写入 AO Ledger。
+- [x] Requirements / Unit Plan revision 继续把完整 gate 正文传给 drafter，但 AO Ledger 只消费 Plannotator feedback 或 structured annotations。
+- [x] Plannotator 纯文本 `# File Feedback` 输出按反馈章节拆成独立 AO。
+- [x] Requirements / Unit Plan AO id 识别兼容 `AO-01` / `AO-1` 并规范化到 `AO-001`。
+- [x] 已确认 `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.4.1` 是受污染现场 state；本阶段代码修复不静默改写历史 state。
+- [x] 定向测试通过：`4 passed in 1.59s`。
+- [x] AO / Human gate 回归通过：`59 passed in 16.51s`。
+- [x] 全量 `workflow_controller/tests` 通过：`347 passed in 45.63s`。
 - **状态：** complete
 
 ## 关键问题

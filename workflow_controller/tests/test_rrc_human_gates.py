@@ -869,6 +869,106 @@ raise SystemExit(0)
     assert 'Quote: Step 5' in ledger.read_text(encoding='utf-8')
 
 
+def test_revise_requirements_gate_uses_only_plannotator_feedback_for_obligations(tmp_path: Path) -> None:
+    workspace, _ = _make_target_workspace(tmp_path)
+    fake_tmux = tmp_path / 'tmux'
+    _write(
+        fake_tmux,
+        """#!/usr/bin/env python3
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+if sys.argv[1:2] == ["paste-buffer"]:
+    prompt = (Path(os.environ["RRC_RUN_DIR"]) / "prompt.md").read_text(encoding="utf-8")
+    match = re.search(r"Write the Markdown body to this exact file:\\n(.+)", prompt)
+    if match:
+        body_path = Path(match.group(1).strip())
+        body_path.parent.mkdir(parents=True, exist_ok=True)
+        body_path.write_text(
+            "# Requirements & Acceptance Confirmation\\n\\n"
+            "## 1. Requirements\\n- Generated requirement bullet.\\n\\n"
+            "## 2. User Journeys\\n- Generated journey bullet.\\n\\n"
+            "## 3. Acceptance Criteria\\n- AC-1 [verification: manual]: Generated AC.\\n\\n"
+            "## 4. Requirements Traceability Matrix\\n"
+            "| AO | AC | Status | Verification Layer | Evidence/Reason |\\n"
+            "| --- | --- | --- | --- | --- |\\n\\n"
+            "## 4.5 Design/Architecture Traceability Matrix\\n"
+            "| AC | Product Design Ref | Technical Architecture Ref | Notes |\\n"
+            "| --- | --- | --- | --- |\\n"
+            "| AC-1 | Product design summary | Architecture summary | ok |\\n\\n"
+            "## 5. Test Strategy\\n- Generated test strategy bullet.\\n",
+            encoding="utf-8",
+        )
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({"status": "done", "summary": "requirements generated", "run_id": os.environ["RRC_RUN_ID"]}),
+            encoding="utf-8",
+        )
+        raise SystemExit(0)
+raise SystemExit(0)
+""",
+    )
+    fake_tmux.chmod(fake_tmux.stat().st_mode | stat.S_IXUSR)
+    state_dir = tmp_path / '.rrc-controller'
+    init_result = run_rrc(
+        'init',
+        '--state-dir',
+        str(state_dir),
+        '--workspace-dir',
+        str(workspace),
+        '--target',
+        '1.1',
+        '--runner',
+        'tmux-claude',
+        '--tmux-target',
+        '1.2',
+        '--agent',
+        str(fake_tmux),
+        '--force',
+    )
+    assert init_result.returncode == 0, init_result.stderr
+    draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
+    assert draft_result.returncode == 0, draft_result.stderr
+
+    plannotator_dir = state_dir / 'plannotator'
+    plannotator_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = plannotator_dir / 'requirements-last-review.stdout.log'
+    stdout_path.write_text(
+        '# File Feedback\n'
+        "I've reviewed this file and have 2 pieces of feedback:\n\n"
+        '## 1. General feedback about the file\n'
+        '> 这个需求就是瞎扯淡\n\n'
+        '## 2. General feedback about the file\n'
+        '> 这才是我要的需求：\n'
+        '> - 默认只展示 changed / added / removed。\n',
+        encoding='utf-8',
+    )
+    (plannotator_dir / 'requirements-last-review.json').write_text(
+        json.dumps(
+            {
+                'gate': 'requirements',
+                'gate_path': str(state_dir / 'approvals' / 'requirements-and-acceptance.md'),
+                'stdout_path': str(stdout_path),
+                'process_id': None,
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'requirements')
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    obligations = state['acceptanceObligations']
+    assert [item['title'] for item in obligations] == [
+        '这个需求就是瞎扯淡',
+        '这才是我要的需求：',
+    ]
+    assert all('Generated requirement bullet' not in item['description'] for item in obligations)
+
+
 def test_revise_requirements_gate_can_rewind_from_unit_plan_approval(tmp_path: Path) -> None:
     workspace, _ = _make_target_workspace(tmp_path)
     state_dir = tmp_path / '.rrc-controller'

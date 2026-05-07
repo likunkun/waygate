@@ -124,6 +124,113 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert 'Implement this unit.' in prompt
 
 
+def test_tmux_claude_retries_submit_when_prompt_remains_in_input(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    submit_count_path = tmp_path / 'submit-count.txt'
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    path = Path({str(submit_count_path)!r})
+    count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
+    path.write_text(str(count + 1), encoding="utf-8")
+    if count >= 1:
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({{"status": "done", "summary": "claude retry finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+            encoding="utf-8",
+        )
+if sys.argv[1:2] == ["capture-pane"]:
+    print("workflow-controller dispatch.")
+    print("RUN_ID: " + os.environ["RRC_RUN_ID"])
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    log = tmux_log.read_text(encoding='utf-8')
+    assert log.count('send-keys -t 1.2 C-m') == 2
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    retry_event = next(event for event in events if event.get('event') == 'tmux_submit_retry')
+    assert retry_event['reason'] == 'prompt_still_in_input'
+    assert sleep_calls == [0.5, 0.2]
+
+
+def test_tmux_runner_precreates_done_file_before_dispatch(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    marker_path = tmp_path / 'done-precreated.txt'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+done_path = Path(os.environ["RRC_RUN_DONE_FILE"])
+if sys.argv[1:2] == ["paste-buffer"]:
+    if not done_path.exists():
+        print("DONE_FILE was not precreated", file=sys.stderr)
+        raise SystemExit(9)
+    payload = json.loads(done_path.read_text(encoding="utf-8"))
+    if payload.get("status") != "pending" or payload.get("run_id") != os.environ["RRC_RUN_ID"]:
+        print("DONE_FILE did not contain pending run marker", file=sys.stderr)
+        raise SystemExit(9)
+    Path({str(marker_path)!r}).write_text("pending seen", encoding="utf-8")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    done_path.write_text(
+        json.dumps({{"status": "done", "summary": "updated existing done file", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    assert result.done_payload['summary'] == 'updated existing done file'
+    assert marker_path.read_text(encoding='utf-8') == 'pending seen'
+
+
 def test_tmux_codex_runner_reuses_tmux_dispatch_and_records_backend(
     tmp_path: Path,
     monkeypatch,
@@ -836,7 +943,7 @@ raise SystemExit(0)
     elapsed = time.monotonic() - started
 
     assert result.status == 'agent_idle_without_done'
-    assert elapsed < 1.0
+    assert elapsed < 1.5
     assert result.done_path is not None
     assert str(result.done_path) in result.stderr
 
