@@ -58,6 +58,7 @@
 - [x] 计划变化时更新 `task_plan.md`
 - [x] 现场 V1.4.1 Requirements AO 污染恢复：修复 `out_of_scope` reason 判定，清理 live state 中 `requirements:revision-1` 伪 AO，并推进到 Unit Plan 确认。
 - [x] 现场 V1.6 tmux-codex runner 自动发现修复：显式 `--runner tmux-codex` 无 `--tmux-target` 时发现当前 tmux session 中匹配 workspace 的 Codex pane，跳过当前 controller pane，避免把 `tmux-codex` runner 参数误判为 agent，并重新打包 `dist/waygate_0.5.3_all.deb`。
+- [x] GitHub 发布文档整理：英文 README 作为默认入口，中文 `.zh-CN.md` 完整保留，拆分 docs/architecture 与 docs/workflow，补社区文件、LICENSE、GitHub templates 和双语 package docs。
 - **状态：** in_progress
 
 ### 阶段 7：控制器可靠性增强
@@ -391,6 +392,19 @@
 - [x] 定向测试通过：`4 passed in 1.59s`。
 - [x] AO / Human gate 回归通过：`59 passed in 16.51s`。
 - [x] 全量 `workflow_controller/tests` 通过：`347 passed in 45.63s`。
+- **状态：** complete
+
+### 阶段 43：GitHub 发布文档与社区文件整理
+- [x] 将 `README.md` 改为英文 GitHub 默认入口，顶部提供中文入口和核心 docs 链接。
+- [x] 新增 `README.zh-CN.md`，保留中文项目入口。
+- [x] 将 `USAGE.md` / `ROADMAP.md` 调整为英文默认文档，并新增 `USAGE.zh-CN.md` / `ROADMAP.zh-CN.md`。
+- [x] 新增双语架构与工作流文档：`docs/architecture*.md`、`docs/workflow*.md`。
+- [x] 新增 `LICENSE`、`CONTRIBUTING*.md`、`CHANGELOG*.md`、`SECURITY.md`、GitHub issue templates 和 PR template。
+- [x] `.gitignore` 补充本地 controller state、虚拟环境、coverage/cache 忽略规则。
+- [x] Debian packaging 安装双语 docs，并更新 packaging 测试覆盖。
+- [x] 源码 Markdown 本地链接检查通过：`checked 23 source markdown files; all local links resolve`。
+- [x] 打包测试通过：`1 passed in 0.58s`。
+- [x] 全量 `workflow_controller/tests` 通过：`354 passed in 51.27s`。
 - **状态：** complete
 
 ## 关键问题

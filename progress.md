@@ -2,6 +2,26 @@
 
 ## 会话：2026-05-07
 
+### GitHub 发布文档整理
+- **状态：** complete
+- 按用户确认的方案 A 整理 GitHub 对外呈现：英文作为默认入口，中文以 `.zh-CN.md` 完整保留，并在 README 顶部互链。
+- `README.md` 已重写为 GitHub 风格英文入口，聚焦项目定位、能力、安装、Quick Start、workflow、文档索引和项目状态。
+- 新增 `README.zh-CN.md`，保留完整中文入口。
+- `USAGE.md` 改为英文 CLI 使用说明；新增 `USAGE.zh-CN.md`。
+- `ROADMAP.md` 改为英文路线图；新增 `ROADMAP.zh-CN.md`。
+- 新增双语架构和工作流文档：
+  - `docs/architecture.md`
+  - `docs/architecture.zh-CN.md`
+  - `docs/workflow.md`
+  - `docs/workflow.zh-CN.md`
+- 新增 GitHub 社区文件：`LICENSE`、`CONTRIBUTING.md`、`CONTRIBUTING.zh-CN.md`、`CHANGELOG.md`、`CHANGELOG.zh-CN.md`、`SECURITY.md`、issue templates 和 PR template。
+- `.gitignore` 已补充 `.rrc-controller-*/`、`.venv/`、coverage/cache 等发布忽略项，避免本地 controller state 和构建产物污染 GitHub。
+- Debian package docs 安装清单已同步双语 README/USAGE/ROADMAP/CHANGELOG/LICENSE 和公开 docs，并更新 packaging 测试断言。
+- 已验证：
+  - 源码范围 Markdown 本地链接检查 -> `checked 23 source markdown files; all local links resolve`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests/test_packaging.py -q` -> `1 passed in 0.58s`
+  - `source /home/lichangkun/.hermes/hermes-agent/venv/bin/activate && python -m pytest workflow_controller/tests -q` -> `354 passed in 51.27s`
+
 ### V1.6 tmux-codex runner 自动发现修复
 - **状态：** complete
 - 现场命令 `waygate go V1.6 --auto-approve --runner tmux-codex` 失败：`--runner=tmux-codex requires --tmux-target pointing at an existing Codex pane`。

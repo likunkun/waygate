@@ -3,3 +3,9 @@ __pycache__/
 .pytest_cache/
 dist/
 .build/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.rrc-controller-*/

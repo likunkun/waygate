@@ -200,6 +200,15 @@
 - 自动发现不能把当前 controller pane 当作目标 agent pane。现场 smoke 发现 controller 进程参数里有 `--runner tmux-codex`，如果继续用宽松 substring 检测，会把当前 pane 误判成 Codex；因此 discovery 使用 `TMUX_PANE` 跳过当前 pane，并将 agent 文本识别改为 token 级匹配，排除 `tmux-codex` / `tmux-claude` runner 名称。
 - 当前 `/home/lichangkun/code/CLIProxyAPI/.rrc-controller-v1.6/session.json` 已因手动 `--tmux-target 7.1` 继续推进；本修复面向后续不手填 target 的同类命令。
 
+## 2026-05-07 GitHub 发布文档整理
+
+- GitHub 默认入口应服务外部读者，而不是延续内部开发日志口吻；因此 `README.md` 采用英文简洁入口，中文完整入口放到 `README.zh-CN.md`，两者互链。
+- 长篇能力说明不应全部堆在 README；CLI 用法放 `USAGE*.md`，架构和工作流放 `docs/architecture*` 与 `docs/workflow*`，路线图放 `ROADMAP*`。
+- `task_plan.md`、`progress.md`、`findings.md` 是维护者历史和工作记忆，不作为用户必读文档；README 只说明它们的定位，不把它们放在主路径上。
+- `.rrc-controller-*` 是本地 controller state，可能包含 prompt、artifact、路径和项目上下文；发布前必须由 `.gitignore` 忽略，不能作为 GitHub 内容提交。
+- Debian 包内文档应与 GitHub 文档一致，至少包含双语 README/USAGE/ROADMAP/CHANGELOG/LICENSE 和公开 docs，避免安装用户看到过时中文单语文档。
+- 本轮选择 MIT License 作为默认宽松开源许可；如果后续需要更严格的专利授权或贡献协议，可切换到 Apache-2.0 并更新 LICENSE/README。
+
 ## 2026-05-04 V0.4+ 路线图整合发现
 
 - `AGENTS.md` / `CLAUDE.md` 应作为项目初始化规约进入 V0.4.0，但它们只定义 agent 如何工作、去哪读事实源，不能替代 requirements、acceptance、state 或 evidence。

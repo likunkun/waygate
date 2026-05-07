@@ -57,3 +57,10 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     assert './usr/bin/waygate' in contents
     assert './usr/lib/waygate/workflow_controller/cli.py' in contents
     assert './usr/share/doc/waygate/README.md' in contents
+    assert './usr/share/doc/waygate/README.zh-CN.md' in contents
+    assert './usr/share/doc/waygate/USAGE.md' in contents
+    assert './usr/share/doc/waygate/USAGE.zh-CN.md' in contents
+    assert './usr/share/doc/waygate/ROADMAP.md' in contents
+    assert './usr/share/doc/waygate/ROADMAP.zh-CN.md' in contents
+    assert './usr/share/doc/waygate/docs/architecture.md' in contents
+    assert './usr/share/doc/waygate/docs/workflow.zh-CN.md' in contents

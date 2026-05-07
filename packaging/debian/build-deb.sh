@@ -16,6 +16,7 @@ mkdir -p \
   "${PACKAGE_DIR}/usr/bin" \
   "${PACKAGE_DIR}/usr/lib/${PACKAGE_NAME}" \
   "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}" \
+  "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs" \
   "${DIST_DIR}"
 
 cp -a "${ROOT_DIR}/workflow_controller" "${PACKAGE_DIR}/usr/lib/${PACKAGE_NAME}/"
@@ -26,8 +27,18 @@ find "${PACKAGE_DIR}/usr/lib/${PACKAGE_NAME}/workflow_controller" \
   -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
 install -m 0644 "${ROOT_DIR}/README.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/README.md"
+install -m 0644 "${ROOT_DIR}/README.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/README.zh-CN.md"
 install -m 0644 "${ROOT_DIR}/USAGE.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/USAGE.md"
+install -m 0644 "${ROOT_DIR}/USAGE.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/USAGE.zh-CN.md"
 install -m 0644 "${ROOT_DIR}/ROADMAP.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/ROADMAP.md"
+install -m 0644 "${ROOT_DIR}/ROADMAP.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/ROADMAP.zh-CN.md"
+install -m 0644 "${ROOT_DIR}/CHANGELOG.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/CHANGELOG.md"
+install -m 0644 "${ROOT_DIR}/CHANGELOG.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/CHANGELOG.zh-CN.md"
+install -m 0644 "${ROOT_DIR}/LICENSE" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/LICENSE"
+install -m 0644 "${ROOT_DIR}/docs/architecture.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture.md"
+install -m 0644 "${ROOT_DIR}/docs/architecture.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture.zh-CN.md"
+install -m 0644 "${ROOT_DIR}/docs/workflow.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/workflow.md"
+install -m 0644 "${ROOT_DIR}/docs/workflow.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/workflow.zh-CN.md"
 
 cat > "${PACKAGE_DIR}/DEBIAN/control" <<EOF
 Package: ${PACKAGE_NAME}
