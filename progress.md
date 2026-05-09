@@ -1,5 +1,33 @@
 # 进度日志
 
+## 会话：2026-05-09
+
+### Final Acceptance 后 Agent 状态同步
+- **状态：** complete
+- 现场问题：Final Acceptance 由 controller / human gate 批准后，最后一轮实现 agent pane 已经停止，无法得知验收已通过，也就不会及时更新 `task_plan.md`、`progress.md`、`findings.md` 等状态文档。
+- 根因：终验通过后原流程直接从 `WAITING_FINAL_ACCEPTANCE` 推到 `RELEASE_GATE` / `DONE`，中间没有再向 live tmux agent 派发 controller state transition。
+- 修复：
+  - 新增 `FINAL_ACCEPTANCE_AGENT_SYNC` 状态和 `sync_final_acceptance_agent` action。
+  - Final Acceptance 通过后，如果 state 中存在 workspace 且配置了 `tmux-claude` / `tmux-codex` live pane，会先派发最终状态同步 prompt。
+  - prompt 明确要求 agent 读取 `AGENTS.md`、`ROADMAP.md`、`task_plan.md`、`progress.md`、`findings.md`、`session.json` 和 final acceptance gate，只更新状态文档，不改源码、gate、controller state 或无关文件。
+  - agent 必须写 `artifacts/final-acceptance-sync/final-sync-summary.json`；controller 将同步结果写入 `finalAcceptanceAgentSyncStatus` 和事件日志。
+  - 无 workspace 或无 live tmux pane 时记录 `skipped`，不影响 dry-run、subprocess 和历史本地流程。
+- 文档同步：
+  - `README.md` / `README.zh-CN.md`
+  - `USAGE.md` / `USAGE.zh-CN.md`
+  - `docs/workflow.md` / `docs/workflow.zh-CN.md`
+  - `docs/architecture.md` / `docs/architecture.zh-CN.md`
+- 已验证 RED：
+  - `python -m pytest workflow_controller/tests/state_machine/test_state_transitions.py::TestComputeNextAllowedAction::test_final_acceptance_agent_sync -q` -> 先失败于 action 为 `None`。
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_final_acceptance_approval_syncs_tmux_agent_before_release -q` -> 先失败于缺少 `workflow_controller.steps.final_sync`。
+- 已验证 GREEN：
+  - `python -m pytest workflow_controller/tests/state_machine/test_state_transitions.py -q` -> `36 passed in 0.05s`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_final_acceptance_approval_accepts_passed_journey_evidence workflow_controller/tests/test_rrc_controller.py::test_final_acceptance_approval_syncs_tmux_agent_before_release workflow_controller/tests/test_rrc_controller.py::test_dry_run_until_done_advances_workflow_and_writes_artifacts workflow_controller/tests/test_rrc_controller.py::test_non_dry_run_until_done_with_auto_approve_advances_to_done -q` -> `4 passed in 0.41s`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_final_acceptance_gate_blocks_done_until_approved -q` -> `1 passed in 0.18s`
+  - `python -m pytest workflow_controller/tests/test_packaging.py -q` -> `1 passed in 0.41s`
+  - `python -m pytest workflow_controller/tests/test_rrc_e2e.py::test_e2e_controller_runs_target_through_tmux_runner_and_verifier -q` -> `1 passed in 3.80s`
+  - `python -m pytest workflow_controller/tests -q` -> `356 passed in 47.46s`
+
 ## 会话：2026-05-07
 
 ### GitHub 发布脱敏与 superpowers 目录清理

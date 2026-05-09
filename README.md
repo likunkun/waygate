@@ -101,6 +101,7 @@ Requirements Draft
   -> Reviewer
   -> Verifier
   -> Final Acceptance Gate
+  -> Agent Status Sync
   -> Done
 ```
 

@@ -54,6 +54,10 @@ class TestComputeNextAllowedAction:
         state = _make_state(currentStep='WAITING_FINAL_ACCEPTANCE')
         assert compute_next_allowed_action(state) == 'check_final_acceptance'
 
+    def test_final_acceptance_agent_sync(self) -> None:
+        state = _make_state(currentStep='FINAL_ACCEPTANCE_AGENT_SYNC')
+        assert compute_next_allowed_action(state) == 'sync_final_acceptance_agent'
+
     def test_plan_created_no_scope_approval(self) -> None:
         state = _make_state(currentStep='PLAN_CREATED', scopeApproved=False)
         assert compute_next_allowed_action(state) == 'require_scope_approval'

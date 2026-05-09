@@ -16,6 +16,7 @@ Requirements Draft
   -> Reviewer
   -> Verifier
   -> Final Acceptance Gate
+  -> Agent Status Sync
   -> Done
 ```
 
@@ -94,7 +95,9 @@ Final Acceptance presents:
 - changed files;
 - rejection routing.
 
-The workflow reaches `DONE` only after this gate is approved.
+When a live tmux agent pane is configured, approval first triggers an Agent Status Sync step. That prompt tells the agent final acceptance has been approved and asks it to update status documents such as `task_plan.md`, `progress.md`, and `findings.md` before release.
+
+The workflow reaches `DONE` only after final acceptance is approved and any required status sync has completed.
 
 ## Rejection Routing
 

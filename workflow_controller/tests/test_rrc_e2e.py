@@ -138,6 +138,24 @@ if sys.argv[1:2] == ["paste-buffer"]:
             encoding="utf-8",
         )
         raise SystemExit(0)
+    match = re.search(r"Sync summary artifact to write: (.+)", prompt)
+    if match:
+        summary_path = Path(match.group(1).strip())
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        Path("task_plan.md").write_text("# Target Plan\\n\\nV1.1 delivery acceptance complete.\\n", encoding="utf-8")
+        summary_path.write_text(
+            json.dumps({
+                "status": "ok",
+                "updated_files": ["task_plan.md"],
+                "notes": ["marked V1.1 complete"],
+            }),
+            encoding="utf-8",
+        )
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({"status": "done", "summary": "final status synced", "run_id": os.environ["RRC_RUN_ID"]}),
+            encoding="utf-8",
+        )
+        raise SystemExit(0)
     Path("delivery.txt").write_text("ready\\n", encoding="utf-8")
     Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
         json.dumps({"status": "done", "summary": "delivery artifact created", "run_id": os.environ["RRC_RUN_ID"]}),
@@ -201,6 +219,13 @@ if sys.argv[1:2] == ["paste-buffer"]:
     assert session['status'] == 'done'
     assert session['agentRunner'] == 'tmux-claude'
     assert session['tmuxTarget'] == '1.2'
+    assert session['finalAcceptanceAgentSyncStatus'] == 'done'
+    assert 'complete' in (workspace / 'task_plan.md').read_text(encoding='utf-8')
+    sync_summary = json.loads(
+        (state_dir / 'artifacts' / 'final-acceptance-sync' / 'final-sync-summary.json').read_text(encoding='utf-8')
+    )
+    assert sync_summary['status'] == 'ok'
+    assert sync_summary['updated_files'] == ['task_plan.md']
 
     unit_dir = state_dir / 'artifacts' / '1.1-delivery'
     builder = json.loads((unit_dir / 'builder-summary.json').read_text(encoding='utf-8'))

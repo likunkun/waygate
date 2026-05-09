@@ -16,6 +16,7 @@ Requirements Draft
   -> Reviewer
   -> Verifier
   -> Final Acceptance Gate
+  -> Agent Status Sync
   -> Done
 ```
 
@@ -94,7 +95,9 @@ Final Acceptance 展示：
 - changed files；
 - rejection routing。
 
-只有这个 gate 被批准后，workflow 才进入 `DONE`。
+如果配置了 live tmux agent pane，批准后会先触发 Agent Status Sync。这个 prompt 会告知 agent 最终验收已批准，并要求它在 release 前更新 `task_plan.md`、`progress.md`、`findings.md` 等状态文档。
+
+最终验收批准且必要的状态同步完成后，workflow 才进入 `DONE`。
 
 ## 返工路由
 

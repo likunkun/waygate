@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40），以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40），以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
 
 ## 各阶段
 
@@ -416,6 +416,16 @@
 - [x] 发布脱敏扫描通过：无本机绝对路径、私有环境标识或本机 venv 激活命令残留；tracked 文件中无 `docs/superpowers/`。
 - [x] 打包测试通过：`1 passed in 0.49s`。
 - [x] 全量 `workflow_controller/tests` 通过：`354 passed in 48.50s`。
+- **状态：** complete
+
+### 阶段 45：Final Acceptance 后 Agent 状态同步
+- [x] 新增 `FINAL_ACCEPTANCE_AGENT_SYNC` 状态和 `sync_final_acceptance_agent` action。
+- [x] Final Acceptance 通过后，如存在 live tmux agent pane，先派发最终状态同步 prompt，再进入 release。
+- [x] 同步 prompt 要求 agent 读取 `AGENTS.md`、`ROADMAP.md`、`task_plan.md`、`progress.md`、`findings.md` 和 controller `session.json`，并更新状态文档。
+- [x] 无 workspace 或无 live tmux agent pane 的流程记录 skipped，不影响 dry-run、subprocess 或历史测试路径。
+- [x] 新增 `artifacts/final-acceptance-sync/final-sync-summary.json` 作为同步证据。
+- [x] 文档同步 README、USAGE、docs/workflow 和 docs/architecture。
+- [x] 全量 `workflow_controller/tests` 通过：`356 passed in 47.46s`。
 - **状态：** complete
 
 ## 关键问题

@@ -137,6 +137,8 @@ waygate approve --state-dir .rrc-controller-v1.0 --gate unit-plan
 waygate approve --state-dir .rrc-controller-v1.0 --gate final-acceptance
 ```
 
+Final acceptance approval is processed by the next `run`, `drive`, `start`, or `go` step. When a live tmux agent pane is configured, Waygate dispatches a final status-sync prompt before release so the agent can update `task_plan.md`, `progress.md`, and `findings.md`.
+
 ### `revise`
 
 Ask the agent to revise a requirements or unit-plan gate after feedback is written.

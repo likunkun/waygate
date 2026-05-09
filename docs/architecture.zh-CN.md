@@ -112,6 +112,8 @@ Runner 执行 agent 工作，并返回 metadata 和 artifacts。
 
 tmux runner 使用 prompt 文件和 `DONE_FILE` JSON 完成信号。Controller 会校验 `run_id`，避免上一轮残留信号串线。
 
+Final Acceptance 批准后，使用 live tmux agent 的 workflow 会在 release 前运行一次最终状态同步 prompt。该 prompt 只面向状态文档，要求 agent 将 controller 验收结果同步到 `task_plan.md`、`progress.md`、`findings.md` 等文件。
+
 ## Evidence 层
 
 Verifier 输出写入 `verification.json`。现代 verifier artifact 包含：

@@ -33,6 +33,10 @@ from workflow_controller.steps.builder import (
     select_next_unit,
     target_acceptance_covered,
 )
+from workflow_controller.steps.final_sync import (
+    final_acceptance_agent_sync_required,
+    run_final_acceptance_agent_sync,
+)
 
 __all__ = [
     'StepResult',
@@ -52,6 +56,8 @@ __all__ = [
     'select_next_unit',
     'mark_current_unit_covered',
     'target_acceptance_covered',
+    'final_acceptance_agent_sync_required',
+    'run_final_acceptance_agent_sync',
     '_merge_review_package_into_unit_plan_gate',
     '_run_test_strategist_if_enabled',
     '_disabled_test_strategist_summary',

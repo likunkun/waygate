@@ -43,6 +43,7 @@
 | Unit Plan 使用 `test-strategy` skill | TDD 解决“先写测试再实现”，但不能替代从验收标准到测试用例矩阵的策略设计 |
 | Test Case Matrix 成为 Unit Plan 一等内容 | 只看 verification command 是否通过不足以证明验收覆盖；需要 AC -> test case -> layer -> evidence 的映射 |
 | 静态检查不能单独作为行为验收 | `tsc`/lint/typecheck 可以兜底质量，但不能证明用户路径、UI 可见结果或缺陷回归 |
+| Final Acceptance 通过后先同步 live agent | 终验批准是 controller/human 侧状态变化；最后一轮实现 agent 已停止，不主动派发同步就无法及时更新 `task_plan.md` / `progress.md` / `findings.md` |
 
 ## 遇到的问题
 | 问题 | 解决方案 |
@@ -62,6 +63,16 @@
 | 选择 `Defect fix` 后仍提示未选择 Rejection Routing | 根因是现场旧 `final-acceptance.md` 没有 `Defect fix` 行，旧写入逻辑只勾选已存在行且不校验写入结果；已改为规范化 canonical checklist 并补齐缺失 route |
 | Plannotator 反馈后终端写 route 可能让反馈变 stale | 终端选择 route 会重写 gate 文件导致 mtime 晚于 Plannotator summary；final acceptance 现在允许读取本轮 stale feedback，避免返工 prompt 丢失浏览器批注 |
 | `init --target` 不带 `--from-ralph` 生成 demo state | 根因是非 Ralph 初始化无 target 分支，直接使用 `DEFAULT_INITIAL_STATE`；已新增 target acceptance 初始化路径 |
+| Final Acceptance 通过后 agent 不知道验收结果 | 根因是终验通过后直接进入 `RELEASE_GATE` / `DONE`，没有 runner 派发；已新增 `FINAL_ACCEPTANCE_AGENT_SYNC`，要求 live tmux agent 在 release 前同步状态文档并写 summary artifact |
+
+## 2026-05-09 Final Acceptance 后 Agent 状态同步
+
+- 该问题主要出现在终验：Requirements / Unit Plan approval 后通常还会派发 drafter 或 builder prompt，agent 能通过下一轮任务获得新状态；Final Acceptance approval 原先直接进入 release/DONE，没有下一轮 agent prompt。
+- controller state 是事实源，但 `task_plan.md`、`progress.md`、`findings.md` 是 agent 和维护者的人类可读上下文；只更新 state 不同步这些文档，会导致后续 agent 继续把已验收目标视为 in_progress。
+- 修复边界选择在 Final Acceptance approval 后、release 前新增 `FINAL_ACCEPTANCE_AGENT_SYNC`：这能让 live tmux agent 获得明确的 controller state transition，又不改变 Requirements/Unit Plan/Verifier gate 语义。
+- 终验状态同步只在存在 workspace 且配置 live tmux agent pane 时默认启用；无 live pane 的 dry-run、subprocess 和历史本地路径应记录 skipped，避免为没有常驻 agent 的流程引入无意义阻塞。
+- 同步 prompt 必须禁止修改 approved gate、controller state、artifacts 和源码；允许修改的目标限定为状态文档，如 `task_plan.md`、`progress.md`、`findings.md`，必要时按 `ROADMAP.md` 与 `session.json` 校准版本事实。
+- `artifacts/final-acceptance-sync/final-sync-summary.json` 是本步骤证据；缺失或 runner 失败时 controller 阻断在 `FINAL_ACCEPTANCE_AGENT_SYNC`，避免 release/DONE 掩盖状态文档未同步。
 
 ## 2026-05-03 V0.3.1 设计发现
 

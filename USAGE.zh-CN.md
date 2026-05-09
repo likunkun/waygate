@@ -137,6 +137,8 @@ waygate approve --state-dir .rrc-controller-v1.0 --gate unit-plan
 waygate approve --state-dir .rrc-controller-v1.0 --gate final-acceptance
 ```
 
+最终验收批准会在下一次 `run`、`drive`、`start` 或 `go` 推进时处理。如果配置了 live tmux agent pane，Waygate 会在 release 前派发最终状态同步 prompt，让 agent 更新 `task_plan.md`、`progress.md` 和 `findings.md`。
+
 ### `revise`
 
 在 feedback 已写入 gate 后，让 agent 重新生成 Requirements 或 Unit Plan。

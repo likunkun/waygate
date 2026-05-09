@@ -92,6 +92,12 @@ from workflow_controller.steps.builder import (
     target_acceptance_covered,
 )
 from workflow_controller.steps.bug_fix import run_bug_fix
+from workflow_controller.steps.final_sync import (
+    FINAL_ACCEPTANCE_SYNC_DIRNAME,
+    FINAL_ACCEPTANCE_SYNC_SUMMARY,
+    final_acceptance_agent_sync_required,
+    run_final_acceptance_agent_sync,
+)
 from workflow_controller.steps.requirements import run_requirements_drafter
 from workflow_controller.steps.unit_plan import run_unit_plan_drafter
 
@@ -162,6 +168,7 @@ ACTION_LABELS = {
     'check_requirements_acceptance': '检查需求与验收确认',
     'check_unit_plan_approval': '检查 Unit Plan 确认',
     'check_final_acceptance': '检查最终验收确认',
+    'sync_final_acceptance_agent': '同步终验状态给 Agent',
     'check_bug_fix_gate': '检查 Bug Fix Gate',
     'run_bug_fix': '运行 Bug Fix Agent',
     'run_bug_fix_verifier': '运行 Bug Fix 回归验证',
@@ -1509,7 +1516,7 @@ class RalphRefinerController:
             gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
             if self._unsafe_skip_gate(state, 'final_acceptance', gate_path):
                 state['finalAcceptanceAccepted'] = True
-                state['currentStep'] = 'RELEASE_GATE'
+                self._advance_after_final_acceptance_approval(state)
                 self._save_state(state)
                 return state
             gate = check_gate_file(gate_path)
@@ -1526,7 +1533,7 @@ class RalphRefinerController:
                 state['finalAcceptanceAcceptedBy'] = gate.confirmed_by
                 state.pop('finalAcceptanceRejectionFeedback', None)
                 state['blockedReason'] = None
-                state['currentStep'] = 'RELEASE_GATE'
+                self._advance_after_final_acceptance_approval(state)
                 self.store.append_event('final_acceptance_approved', {
                     'task_id': state.get('task_id'),
                     'path': str(gate_path),
@@ -1536,6 +1543,43 @@ class RalphRefinerController:
             else:
                 state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
                 state['blockedReason'] = f'final acceptance gate not approved: {gate.reason}'
+            self._save_state(state)
+            return state
+
+        if action == 'sync_final_acceptance_agent':
+            summary_path = self.artifacts_dir / FINAL_ACCEPTANCE_SYNC_DIRNAME / FINAL_ACCEPTANCE_SYNC_SUMMARY
+            try:
+                run_final_acceptance_agent_sync(
+                    state,
+                    state_dir=self.state_dir,
+                    artifacts_dir=self.artifacts_dir,
+                    dry_run=self.dry_run,
+                )
+            except RuntimeError as exc:
+                state['status'] = 'blocked'
+                state['currentStep'] = 'FINAL_ACCEPTANCE_AGENT_SYNC'
+                state['finalAcceptanceAgentSyncStatus'] = 'failed'
+                state['blockedReason'] = f'final acceptance agent sync failed: {exc}'
+                self.store.append_event('final_acceptance_agent_sync_failed', {
+                    'task_id': state.get('task_id'),
+                    'summary_path': str(summary_path),
+                    'reason': str(exc),
+                })
+                self._save_state(state)
+                return state
+
+            summary = json.loads(summary_path.read_text(encoding='utf-8'))
+            sync_status = str(summary.get('status') or '').lower()
+            state['finalAcceptanceAgentSyncStatus'] = 'skipped' if sync_status == 'skipped' else 'done'
+            state['finalAcceptanceAgentSyncSummaryPath'] = str(summary_path)
+            state['blockedReason'] = None
+            state['currentStep'] = 'RELEASE_GATE'
+            self.store.append_event('final_acceptance_agent_synced', {
+                'task_id': state.get('task_id'),
+                'summary_path': str(summary_path),
+                'status': state.get('finalAcceptanceAgentSyncStatus'),
+                'updated_files': summary.get('updated_files') or [],
+            })
             self._save_state(state)
             return state
 
@@ -1801,6 +1845,20 @@ class RalphRefinerController:
         state = rollback_to_last_verified_step(state)
         self._save_state(state)
         return state
+
+    def _advance_after_final_acceptance_approval(self, state: dict[str, Any]) -> None:
+        state.pop('finalAcceptanceAgentSyncSummaryPath', None)
+        if final_acceptance_agent_sync_required(state):
+            state['finalAcceptanceAgentSyncStatus'] = 'pending'
+            state['currentStep'] = 'FINAL_ACCEPTANCE_AGENT_SYNC'
+            self.store.append_event('final_acceptance_agent_sync_requested', {
+                'task_id': state.get('task_id'),
+                'runner': state.get('agentRunner'),
+                'tmux_target': state.get('tmuxTarget'),
+            })
+            return
+        state['finalAcceptanceAgentSyncStatus'] = 'skipped'
+        state['currentStep'] = 'RELEASE_GATE'
 
     def _save_state(self, state: dict[str, Any]) -> None:
         next_action = compute_next_allowed_action(state)

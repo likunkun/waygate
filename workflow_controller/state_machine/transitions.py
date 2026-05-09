@@ -31,7 +31,10 @@ def reconcile_state(state: dict[str, Any], artifacts_root: Path) -> dict[str, An
 
     _reopen_covered_objectives_with_incomplete_units(state)
 
-    if current_step in {'WAITING_FINAL_ACCEPTANCE', 'RELEASE_GATE'} and not validate_objective_coverage(state):
+    if (
+        current_step in {'WAITING_FINAL_ACCEPTANCE', 'FINAL_ACCEPTANCE_AGENT_SYNC', 'RELEASE_GATE'}
+        and not validate_objective_coverage(state)
+    ):
         next_unit = first_incomplete_unit_id(state)
         if next_unit:
             state['currentUnitId'] = next_unit

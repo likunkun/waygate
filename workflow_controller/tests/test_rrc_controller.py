@@ -7380,6 +7380,102 @@ def test_final_acceptance_approval_accepts_passed_journey_evidence(tmp_path: Pat
     assert state['currentStep'] == 'RELEASE_GATE'
 
 
+def test_final_acceptance_approval_syncs_tmux_agent_before_release(tmp_path: Path, monkeypatch) -> None:
+    import workflow_controller.steps.final_sync as final_sync_module
+
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    for filename in ['AGENTS.md', 'ROADMAP.md', 'task_plan.md', 'progress.md', 'findings.md']:
+        (workspace / filename).write_text(f'# {filename}\n', encoding='utf-8')
+    state_dir = workspace / '.rrc-controller-v1.7'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'target-v1-7',
+            'currentUnitId': 'v1-7-u1',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'V1.7',
+            'feasibleOutcome': 'V1.7',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'workspacePath': str(workspace),
+            'executionWorkspacePath': str(workspace),
+            'agentRunner': 'tmux-codex',
+            'agentCommand': 'codex',
+            'tmuxTarget': '7.1',
+            'targetContextFiles': [
+                str(workspace / 'task_plan.md'),
+                str(workspace / 'progress.md'),
+                str(workspace / 'findings.md'),
+            ],
+            'objectiveCoverage': [
+                {'objective': 'Target V1.7 acceptance', 'units': ['v1-7-u1'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'v1-7-u1', 'name': 'V1.7 delivery', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    from workflow_controller.gates.generators import ensure_final_acceptance_gate
+    from workflow_controller.gates.parsers import approve_gate_file
+
+    gate_path = ensure_final_acceptance_gate(
+        controller.store.load_state(),
+        approvals_dir,
+        state_dir / 'artifacts',
+        force=True,
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['finalAcceptanceAccepted'] is True
+    assert state['currentStep'] == 'FINAL_ACCEPTANCE_AGENT_SYNC'
+    assert state['nextAllowedActions'] == ['sync_final_acceptance_agent']
+    assert state['finalAcceptanceAgentSyncStatus'] == 'pending'
+
+    captured: dict[str, Any] = {}
+
+    def fake_run_agent_backend(request):
+        captured['request'] = request
+        captured['prompt'] = request.prompt_path.read_text(encoding='utf-8')
+        (request.artifact_dir / 'final-sync-summary.json').write_text(
+            json.dumps(
+                {
+                    'status': 'ok',
+                    'updated_files': ['task_plan.md', 'progress.md', 'findings.md'],
+                    'notes': ['marked V1.7 complete'],
+                }
+            ),
+            encoding='utf-8',
+        )
+        return _fake_agent_result(request)
+
+    monkeypatch.setattr(final_sync_module, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'RELEASE_GATE'
+    assert state['nextAllowedActions'] == ['require_release_approval']
+    assert state['finalAcceptanceAgentSyncStatus'] == 'done'
+    assert captured['request'].role == 'final_sync'
+    assert captured['request'].backend == 'tmux-codex'
+    assert 'Final acceptance has been approved' in captured['prompt']
+    assert 'session.json' in captured['prompt']
+    assert 'events.jsonl' in captured['prompt']
+    assert 'task_plan.md' in captured['prompt']
+    assert 'progress.md' in captured['prompt']
+    assert 'findings.md' in captured['prompt']
+
+
 def test_plannotator_final_acceptance_feedback_is_not_replaced_by_template_patch_comment(tmp_path: Path) -> None:
     from workflow_controller.gates.parsers import write_gate_file
     from workflow_controller.gates.generators import normalize_final_acceptance_rejection_routing

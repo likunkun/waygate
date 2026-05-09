@@ -112,6 +112,8 @@ Current runner families:
 
 tmux runners use prompt files and `DONE_FILE` JSON completion signals. The controller validates `run_id` to avoid stale completion signals from previous runs.
 
+After Final Acceptance approval, a live tmux-backed workflow runs a final status-sync prompt before release. The prompt is scoped to status documents and tells the agent to reflect controller acceptance in files such as `task_plan.md`, `progress.md`, and `findings.md`.
+
 ## Evidence Layer
 
 Verifier output is stored as `verification.json`. Modern verifier artifacts include:
