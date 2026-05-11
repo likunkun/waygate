@@ -7,8 +7,20 @@ from pathlib import Path
 
 import pytest
 
+from workflow_controller import __version__
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_version_flag_outputs_package_version() -> None:
+    result = subprocess.run(
+        ['python', '-m', 'workflow_controller.cli', '--version'],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert f'waygate {__version__}' in result.stdout
 
 
 def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:

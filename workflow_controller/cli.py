@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from workflow_controller import __version__
 from workflow_controller.rrc_controller import (
     COLOR_MODES,
     DEFAULT_MAX_AUTOMATIC_STEPS,
@@ -85,6 +86,7 @@ def parse_args() -> argparse.Namespace:
         description='Waygate workflow control surface',
         allow_abbrev=False,
     )
+    parser.add_argument('--version', action='version', version=f'waygate {__version__}')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     init_parser = subparsers.add_parser(

@@ -2,8 +2,10 @@
 
 重要项目变更应记录在这里。
 
-## Unreleased
+## Unreleased (0.6.0)
 
+- Python 包新增 `__version__`，CLI 新增 `--version` flag。
+- 清理路线图版本编号：下一步优先级从 V0.6.0 开始。
 - 整理 GitHub 对外英文和中文文档。
 - 新增 contribution、security、issue 和 pull request 社区文件。
 

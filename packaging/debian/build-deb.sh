@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PACKAGE_NAME="waygate"
-VERSION="${WAYGATE_VERSION:-0.5.3}"
+_PKG_VERSION="$(python3 -c "import sys; sys.path.insert(0, '${ROOT_DIR}'); from workflow_controller import __version__; print(__version__)")"
+VERSION="${WAYGATE_VERSION:-${_PKG_VERSION}}"
 ARCHITECTURE="all"
 DIST_DIR="${WAYGATE_DIST_DIR:-"${ROOT_DIR}/dist"}"
 BUILD_ROOT="${WAYGATE_BUILD_ROOT:-"${ROOT_DIR}/.build/debian"}"

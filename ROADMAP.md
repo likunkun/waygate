@@ -53,7 +53,7 @@ This roadmap describes the direction of Waygate as an AI coding workflow control
 
 ## Next Priorities
 
-### V0.4.6 - Strict Test Presence
+### V0.6.0 - Strict Test Presence
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.
 
@@ -64,7 +64,7 @@ Planned work:
 - Require concrete fixture/setup, command, and expected assertion in Unit Plan test cases.
 - Ensure verifier and final acceptance evidence rows map back to test case IDs.
 
-### V0.5.6 - Per-Role Runner Configuration
+### V0.6.1 - Per-Role Runner Configuration
 
 Goal: make Builder, Refiner, Reviewer, Verifier, and Bug Fix Agent independently configurable.
 
@@ -74,7 +74,7 @@ Planned work:
 - Normalize role metadata in artifacts.
 - Keep secret values out of logs and artifacts.
 
-### V0.5.7 - OpenCode Runner
+### V0.6.2 - OpenCode Runner
 
 Goal: provide a first-class OpenCode runner implementation.
 
@@ -84,7 +84,7 @@ Planned work:
 - Align metadata and artifacts with existing runner contracts.
 - Add regression coverage for dispatch, completion, and failure modes.
 
-### V0.5.8 - Task Workspace and Branch Isolation
+### V0.6.3 - Task Workspace and Branch Isolation
 
 Goal: reduce cross-task mutation and stale state pollution.
 
@@ -94,7 +94,7 @@ Planned work:
 - Produce patch/checkpoint artifacts per unit.
 - Keep state transitions tied to the isolated execution context.
 
-### V0.5.9 - File and Tool Policy
+### V0.6.4 - File and Tool Policy
 
 Goal: move role restrictions from prompts toward enforceable policy.
 
@@ -104,7 +104,7 @@ Planned work:
 - Restrict approved requirements and acceptance files during implementation.
 - Record policy decisions in artifacts.
 
-### V0.5.10 - Clean Verification
+### V0.6.5 - Clean Verification
 
 Goal: make verifier results less dependent on local leftovers.
 
@@ -116,7 +116,7 @@ Planned work:
 
 ## Longer-Term Direction
 
-### V0.6 - Recovery and Observability
+### V0.7 - Recovery and Observability
 
 - Checkpoint and time-travel support.
 - Unified trace IDs across runs, units, AOs, ACs, journeys, evidence, and logs.
@@ -124,7 +124,7 @@ Planned work:
 - Failure taxonomy for requirements, test gaps, environment issues, implementation bugs, runner failures, and permission blocks.
 - Automatic context repair based on failure classification.
 
-### V0.7 - Structured Contracts and CI Authority
+### V0.8 - Structured Contracts and CI Authority
 
 - Promote `requirements.json`, `acceptance.json`, `tasks.json`, and `journeys.json` to first-class contracts.
 - Keep Markdown as a review view instead of the only source of structured data.

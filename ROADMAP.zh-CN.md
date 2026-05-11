@@ -53,7 +53,7 @@
 
 ## 下一步优先级
 
-### V0.4.6 - Strict Test Presence
+### V0.6.0 - Strict Test Presence
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。
 
@@ -64,7 +64,7 @@
 - Unit Plan test case 必须包含 fixture/setup、command 和 expected assertion。
 - Verifier 和 Final Acceptance 的 evidence rows 必须能映射回 Test Case ID。
 
-### V0.5.6 - Per-Role Runner Configuration
+### V0.6.1 - Per-Role Runner Configuration
 
 目标：Builder、Refiner、Reviewer、Verifier 和 Bug Fix Agent 都可以独立配置。
 
@@ -74,7 +74,7 @@
 - 标准化 artifacts 中的 role metadata。
 - 避免 secrets value 出现在 logs 和 artifacts 中。
 
-### V0.5.7 - OpenCode Runner
+### V0.6.2 - OpenCode Runner
 
 目标：实现一等 OpenCode runner。
 
@@ -84,7 +84,7 @@
 - 统一 metadata 和 artifacts 契约。
 - 增加 dispatch、completion 和 failure mode 回归测试。
 
-### V0.5.8 - Task Workspace / Branch Isolation
+### V0.6.3 - Task Workspace / Branch Isolation
 
 目标：降低跨任务修改和旧状态污染。
 
@@ -94,7 +94,7 @@
 - 每个 unit 产出 patch/checkpoint artifacts。
 - 状态转移绑定到隔离执行上下文。
 
-### V0.5.9 - File and Tool Policy
+### V0.6.4 - File and Tool Policy
 
 目标：把 role 约束从 prompt 提升到可执行策略。
 
@@ -104,7 +104,7 @@
 - implementation 阶段禁止修改已批准 requirements / acceptance。
 - 将 policy decision 记录到 artifacts。
 
-### V0.5.10 - Clean Verification
+### V0.6.5 - Clean Verification
 
 目标：减少 verifier 结果对本地残留的依赖。
 
@@ -116,7 +116,7 @@
 
 ## 长期方向
 
-### V0.6 - 恢复能力与可观测性
+### V0.7 - 恢复能力与可观测性
 
 - checkpoint 和 time-travel。
 - 跨 run、unit、AO、AC、Journey、evidence、log 的统一 trace id。
@@ -124,7 +124,7 @@
 - failure taxonomy：需求缺失、测试缺口、环境问题、实现 bug、runner 失败、权限阻断。
 - 基于 failure taxonomy 自动补上下文。
 
-### V0.7 - 结构化契约与 CI 权威验收
+### V0.8 - 结构化契约与 CI 权威验收
 
 - `requirements.json`、`acceptance.json`、`tasks.json`、`journeys.json` 成为一等契约。
 - Markdown 变成 review view，而不是唯一结构化事实源。

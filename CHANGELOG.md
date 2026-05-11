@@ -2,8 +2,10 @@
 
 All notable project changes should be recorded here.
 
-## Unreleased
+## Unreleased (0.6.0)
 
+- Added `__version__` to the Python package and `--version` flag to the CLI.
+- Cleaned up roadmap version numbering: next priorities now start at V0.6.0.
 - Prepared GitHub-facing English and Chinese documentation.
 - Added community files for contribution, security, issues, and pull requests.
 
