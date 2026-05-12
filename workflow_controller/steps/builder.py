@@ -134,9 +134,10 @@ def run_builder(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) ->
             tmux_hint = ''
             if agent_result.backend in {'tmux-claude', 'tmux-codex'}:
                 tmux_hint = f" tmux target {state.get('tmuxTarget')!s} failed."
+            agent_hint = _agent_done_failure_hint(agent_result.done_payload or {})
             stderr_hint = f" stderr: {agent_result.stderr.strip()}" if agent_result.stderr.strip() else ''
             raise RuntimeError(
-                f"Builder agent failed with exit code {agent_result.returncode}.{tmux_hint}{stderr_hint} "
+                f"Builder agent failed with exit code {agent_result.returncode}.{tmux_hint}{agent_hint}{stderr_hint} "
                 f"See {unit_dir / 'builder-summary.json'}"
             )
         return StepResult(
@@ -173,6 +174,18 @@ def run_builder(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) ->
         summary='builder complete',
         outputs=['builder-summary.json', 'changed-files.txt', 'red-test.txt', 'green-test.txt'],
     )
+
+
+def _agent_done_failure_hint(done_payload: dict[str, Any]) -> str:
+    status = str(done_payload.get('status') or '').strip()
+    summary = str(done_payload.get('summary') or '').strip()
+    if not status and not summary:
+        return ''
+    if status and summary:
+        return f' agent status={status}: {summary}.'
+    if status:
+        return f' agent status={status}.'
+    return f' agent summary: {summary}.'
 
 
 def prepare_builder_prompt(state: dict[str, Any], approvals_dir: Path, unit_dir: Path) -> Path | None:

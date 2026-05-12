@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from workflow_controller.gates.parsers import approve_gate_file, write_gate_file
+from workflow_controller.rrc_real_runtime import AgentRunResult
 from workflow_controller.steps.builder import prepare_builder_prompt, run_builder
 
 
@@ -63,6 +66,49 @@ def test_run_builder_falls_back_to_unit_specific_default_artifacts_when_state_is
 
     changed_files = (unit_dir / 'changed-files.txt').read_text(encoding='utf-8').splitlines()
     assert changed_files == ['src/unit-09.py']
+
+
+def test_run_builder_failure_error_includes_agent_done_summary(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    prompt_path.write_text('Implement current unit.', encoding='utf-8')
+    unit_dir = tmp_path / 'artifacts' / 'unit-01'
+    blocker = '缺少已批准的 CLI Proxy Management API 契约与 AC-03 验证入口'
+
+    def fake_run_agent_for_current_step(*_args, **_kwargs) -> AgentRunResult:
+        return AgentRunResult(
+            command=['tmux', 'send-keys', '-t', '%20', 'C-m'],
+            returncode=1,
+            stdout='',
+            stderr='',
+            backend='tmux-claude',
+            status='blocked',
+            run_dir=str(unit_dir / 'runs' / 'builder-run'),
+            done_payload={'status': 'blocked', 'summary': blocker, 'run_id': 'builder-run'},
+            runner_metadata={'backend': 'tmux-claude'},
+        )
+
+    monkeypatch.setattr(
+        'workflow_controller.steps.builder.run_agent_for_current_step',
+        fake_run_agent_for_current_step,
+    )
+    state = {
+        'task_id': 'target-v1-8-1',
+        'currentUnitId': 'unit-01',
+        'workspacePath': str(workspace),
+        'promptPath': str(prompt_path),
+        'agentRunner': 'tmux-claude',
+        'tmuxTarget': '%20',
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        run_builder(state, unit_dir, dry_run=False)
+
+    message = str(exc_info.value)
+    assert 'Builder agent failed with exit code 1' in message
+    assert 'tmux target %20 failed' in message
+    assert blocker in message
 
 
 def test_prepare_builder_prompt_includes_final_acceptance_rejection_feedback(tmp_path: Path) -> None:

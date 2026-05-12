@@ -68,6 +68,7 @@
 | Final Acceptance 通过后 agent 不知道验收结果 | 根因是终验通过后直接进入 `RELEASE_GATE` / `DONE`，没有 runner 派发；已新增 `FINAL_ACCEPTANCE_AGENT_SYNC`，要求 live tmux agent 在 release 前同步状态文档并写 summary artifact |
 | Requirements Draft 澄清等待超时后重新讨论需求 | 根因是 requirements 专用 timeout 仍为 1800 秒，且超时后下一次执行会创建新 run 并重新派发 prompt；已改为默认 7200 秒，并在超时 summary 中记录 `done_path`，下次仅在 fresh `done.json` + fresh body 同时存在时恢复 |
 | Claude 完成后又自动开始同一个 dispatch | 根因是 tmux-claude submit retry 把 pane 中可见的历史 `workflow-controller dispatch` / RUN_ID 当作“prompt 仍在输入框”；已禁用 tmux-claude 该重试，tmux-codex 专用重试不变 |
+| Builder agent blocked 时终端只显示 exit code | 根因是 `run_builder()` 抛错时没有提取 `done_payload.summary`；已将 agent `status` 和 `summary` 直接拼入 RuntimeError，完整 artifact 路径仍保留 |
 
 ## 2026-05-09 Final Acceptance 后 Agent 状态同步
 

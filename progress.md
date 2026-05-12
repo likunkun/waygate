@@ -21,6 +21,8 @@
 - 已验证：新增 RED/GREEN 覆盖 `test_requirements_draft_uses_two_hour_timeout_by_default`、`test_requirements_draft_timeout_resumes_existing_pending_run_without_redispatch`、`test_requirements_draft_recovers_legacy_timed_out_summary_when_done_run_and_body_exist`、`test_requirements_draft_does_not_recover_done_and_body_older_than_timeout` 和 `test_requirements_draft_waits_on_existing_timeout_run_until_fresh_body_arrives`；修订路径回归 passed；全量 `python -m pytest workflow_controller/tests -q` -> `368 passed in 52.00s`。
 - tmux-claude 重复 dispatch 现场修复完成：根因是 submit retry 看到 Claude pane 里的历史 `workflow-controller dispatch` / RUN_ID 文本后，无法区分 transcript 和输入框残留，可能在第一轮完成后让 Claude 又开始同一个 RUN_ID。已禁用 tmux-claude 的歧义提交重试，保留 tmux-codex 的 prompt/input 重试。
 - 已验证：`test_tmux_claude_does_not_retry_when_dispatch_text_is_visible_after_submit` RED/GREEN；Codex submit retry 三条回归 passed；`python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `32 passed in 11.77s`；全量 `python -m pytest workflow_controller/tests -q` -> `365 passed in 51.16s`。
+- Builder blocked 错误提示现场修复完成：当 agent 写出 `DONE_FILE status=blocked` 且包含 `summary` 时，`run_builder()` 的 RuntimeError 现在会直接显示 `agent status=<status>: <summary>`，不再只输出 exit code 和 `builder-summary.json` 路径。
+- 已验证 RED/GREEN：`test_run_builder_failure_error_includes_agent_done_summary` 先失败于错误信息缺少 blocker summary，修复后 passed。
 
 ## 会话：2026-05-09
 
