@@ -44,6 +44,8 @@
 | Test Case Matrix 成为 Unit Plan 一等内容 | 只看 verification command 是否通过不足以证明验收覆盖；需要 AC -> test case -> layer -> evidence 的映射 |
 | 静态检查不能单独作为行为验收 | `tsc`/lint/typecheck 可以兜底质量，但不能证明用户路径、UI 可见结果或缺陷回归 |
 | Final Acceptance 通过后先同步 live agent | 终验批准是 controller/human 侧状态变化；最后一轮实现 agent 已停止，不主动派发同步就无法及时更新 `task_plan.md` / `progress.md` / `findings.md` |
+| Requirements Draft 澄清等待超时后保留 pending run | 需求澄清是一问一答的人类等待，不应 30 分钟后重新派发同一需求讨论；超时只暂停 controller，下一次继续只有在 `done.json` 和 body 都晚于 timeout 记录时才接回 |
+| tmux-claude 不做基于 pane 文本的 submit retry | Claude pane 的历史 transcript 和输入框残留在 `capture-pane` 中难以可靠区分；看到同一 RUN_ID 不足以证明需要再次回车 |
 
 ## 遇到的问题
 | 问题 | 解决方案 |
@@ -64,6 +66,8 @@
 | Plannotator 反馈后终端写 route 可能让反馈变 stale | 终端选择 route 会重写 gate 文件导致 mtime 晚于 Plannotator summary；final acceptance 现在允许读取本轮 stale feedback，避免返工 prompt 丢失浏览器批注 |
 | `init --target` 不带 `--from-ralph` 生成 demo state | 根因是非 Ralph 初始化无 target 分支，直接使用 `DEFAULT_INITIAL_STATE`；已新增 target acceptance 初始化路径 |
 | Final Acceptance 通过后 agent 不知道验收结果 | 根因是终验通过后直接进入 `RELEASE_GATE` / `DONE`，没有 runner 派发；已新增 `FINAL_ACCEPTANCE_AGENT_SYNC`，要求 live tmux agent 在 release 前同步状态文档并写 summary artifact |
+| Requirements Draft 澄清等待超时后重新讨论需求 | 根因是 requirements 专用 timeout 仍为 1800 秒，且超时后下一次执行会创建新 run 并重新派发 prompt；已改为默认 7200 秒，并在超时 summary 中记录 `done_path`，下次仅在 fresh `done.json` + fresh body 同时存在时恢复 |
+| Claude 完成后又自动开始同一个 dispatch | 根因是 tmux-claude submit retry 把 pane 中可见的历史 `workflow-controller dispatch` / RUN_ID 当作“prompt 仍在输入框”；已禁用 tmux-claude 该重试，tmux-codex 专用重试不变 |
 
 ## 2026-05-09 Final Acceptance 后 Agent 状态同步
 

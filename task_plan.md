@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40），以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40）、V0.5.4 人工评审防串聊与强制 Requirements 澄清（阶段 46），以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
 
 ## 各阶段
 
@@ -60,6 +60,9 @@
 - [x] 现场 V1.6 tmux-codex runner 自动发现修复：显式 `--runner tmux-codex` 无 `--tmux-target` 时发现当前 tmux session 中匹配 workspace 的 Codex pane，跳过当前 controller pane，避免把 `tmux-codex` runner 参数误判为 agent，并重新打包 `dist/waygate_0.5.3_all.deb`。
 - [x] GitHub 发布文档整理：英文 README 作为默认入口，中文 `.zh-CN.md` 完整保留，拆分 docs/architecture 与 docs/workflow，补社区文件、LICENSE、GitHub templates 和双语 package docs。
 - [x] GitHub 发布脱敏：移除已跟踪 `docs/superpowers/`，忽略后续 superpowers 目录；清理本机 venv 激活命令、用户目录和私有工作区绝对路径；更新 agent guide 模板的标准验证命令。
+- [x] V0.5.4 Final Acceptance 已批准：完成人工评审防串聊提醒、强制 Requirements 澄清、正常 tmux dispatch 前清输入框、项目目标版本展示和版本规划规则。
+- [x] Requirements Draft 澄清等待默认延长到 2 小时；等待超时后保留 pending run，下次继续优先接回同一轮 `done.json` / body，不重新派发需求讨论。
+- [x] tmux-claude 派发后禁用歧义 submit retry，避免 Claude 完成后又处理同一个 dispatch；tmux-codex 的 prompt/input 重试保持不变。
 - **状态：** in_progress
 
 ### 阶段 7：控制器可靠性增强
@@ -426,6 +429,19 @@
 - [x] 新增 `artifacts/final-acceptance-sync/final-sync-summary.json` 作为同步证据。
 - [x] 文档同步 README、USAGE、docs/workflow 和 docs/architecture。
 - [x] 全量 `workflow_controller/tests` 通过：`356 passed in 47.46s`。
+- **状态：** complete
+
+### 阶段 46：V0.5.4 人工评审防串聊与强制 Requirements 澄清
+- [x] Requirements Draft prompt 改为写正式 Requirements Gate 前必须先提出简洁澄清问题，并要求等待用户回答期间不写 `DONE_FILE`。
+- [x] 澄清结论要求写入 `## 4.8 已澄清事项、关键假设与待确认风险`，并同步到需求、范围外、验收标准和测试策略。
+- [x] Requirements、Unit Plan、Final Acceptance、Bug Fix 人工评审阶段会向 `tmuxTarget` 粘贴中英文防串聊提醒，但不提交、不创建或等待 `DONE_FILE`、不推进 workflow state。
+- [x] 正常 tmux dispatch 默认先用 `C-u` 清空目标 pane 输入框，再 paste/submit；idle nudge 不清输入框；`WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH=0` 可关闭。
+- [x] compact/status 输出展示 `projectTargetVersion` / 项目目标版本分支，`waygate --version` 继续表示 package version。
+- [x] 根目录 `AGENTS.md` 和 `workflow_controller/agent_guides.py` 生成模板补充版本规划事实源规则。
+- [x] Final Acceptance 已批准，覆盖目标 `Complete V0.5.4 development acceptance using current planning progress` 已为 `covered`，单元 `v0-5-4-u1-review-boundary-and-version-rules` 已 `passes=true`。
+- [x] 验证通过：6 条定向 pytest 命令均 passed；`python -m pytest workflow_controller/tests -q` -> `363 passed`。
+- [x] 追加现场修复：Requirements Draft 默认等待 7200 秒；超时提示“等了太久，先休息一下，等agent好了，再接着干”，并支持下次运行接回同一 pending run 继续生成 gate。
+- [x] 追加现场修复：tmux-claude 不再根据 pane 里可见的 `workflow-controller dispatch` 文本重试提交，避免 transcript 被误判为输入框残留导致同一 RUN_ID 自动再跑一遍；Codex 专用重试仍保留。
 - **状态：** complete
 
 ## 关键问题

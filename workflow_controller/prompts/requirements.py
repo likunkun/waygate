@@ -62,8 +62,8 @@ Requirements approval 会被 controller 预检：每条 AC 必须声明 verifica
 V0.3.4 还要求每条 covered AC 在 Design/Architecture Traceability Matrix 中同时映射 Product Design Ref 和 Technical Architecture Ref。
 
 Agent-side requirements clarification:
-- 如果信息足够，直接生成 Requirements Gate；不要为了形式化澄清而打断用户。
-- 如果缺少会导致方向做错的关键信息，请在当前 tmux agent pane 里一次性提出集中问题，等待用户回答后继续。
+- 写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题，并在当前 tmux agent pane 里等待用户回答。
+- 等待用户回答期间不得写 `DONE_FILE`；收到用户回答后，再继续生成 Requirements Gate。
 - 用户回答后，将澄清结果写入本 Requirements Gate 的 `## 4.8 已澄清事项、关键假设与待确认风险`，并同步反映到需求、范围外、验收标准和测试策略中。
 - 可用保守假设推进时必须推进，并在 gate 中写明关键假设和待确认风险。
 - 不要因为一般不确定性反复提问；只有没有安全假设且无法继续时，才按 runner 要求写 blocked DONE_FILE。

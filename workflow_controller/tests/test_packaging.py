@@ -42,7 +42,7 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
-    deb_path = tmp_path / 'dist' / 'waygate_0.5.3_all.deb'
+    deb_path = tmp_path / 'dist' / f'waygate_{__version__}_all.deb'
     assert deb_path.exists()
 
     package_name = subprocess.run(
@@ -65,7 +65,7 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     ).stdout
 
     assert package_name == 'waygate'
-    assert version == '0.5.3'
+    assert version == __version__
     assert './usr/bin/waygate' in contents
     assert './usr/lib/waygate/workflow_controller/cli.py' in contents
     assert './usr/share/doc/waygate/README.md' in contents

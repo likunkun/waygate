@@ -124,15 +124,17 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert 'Implement this unit.' in prompt
 
 
-def test_tmux_claude_retries_submit_when_prompt_remains_in_input(tmp_path: Path, monkeypatch) -> None:
+def test_tmux_claude_does_not_retry_when_dispatch_text_is_visible_after_submit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     prompt_path = workspace / 'prompt.md'
     _write(prompt_path, 'Implement this unit.')
     tmux_log = tmp_path / 'tmux.log'
     submit_count_path = tmp_path / 'submit-count.txt'
-    sleep_calls: list[float] = []
-    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    monkeypatch.setenv('RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS', '0')
     fake_tmux = _make_executable(
         tmp_path / 'tmux',
         f"""#!/usr/bin/env python3
@@ -146,11 +148,6 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     path = Path({str(submit_count_path)!r})
     count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
     path.write_text(str(count + 1), encoding="utf-8")
-    if count >= 1:
-        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-            json.dumps({{"status": "done", "summary": "claude retry finished", "run_id": os.environ["RRC_RUN_ID"]}}),
-            encoding="utf-8",
-        )
 if sys.argv[1:2] == ["capture-pane"]:
     print("workflow-controller dispatch.")
     print("RUN_ID: " + os.environ["RRC_RUN_ID"])
@@ -165,21 +162,20 @@ if sys.argv[1:2] == ["capture-pane"]:
         unit_id='unit-1',
         agent_command=str(fake_tmux),
         tmux_target='1.2',
-        timeout_seconds=5,
+        timeout_seconds=1,
     )
 
     result = run_agent_backend(request)
 
-    assert result.status == 'done'
+    assert result.status == 'timeout'
     log = tmux_log.read_text(encoding='utf-8')
-    assert log.count('send-keys -t 1.2 C-m') == 2
+    assert log.count('send-keys -t 1.2 C-m') == 1
     events = [
         json.loads(line)
         for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
     ]
-    retry_event = next(event for event in events if event.get('event') == 'tmux_submit_retry')
-    assert retry_event['reason'] == 'prompt_still_in_input'
-    assert sleep_calls == [0.5, 0.2]
+    skipped_event = next(event for event in events if event.get('event') == 'tmux_submit_retry_skipped')
+    assert skipped_event['reason'] == 'disabled_for_tmux_claude'
 
 
 def test_tmux_runner_precreates_done_file_before_dispatch(tmp_path: Path) -> None:
@@ -229,6 +225,146 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert result.status == 'done'
     assert result.done_payload['summary'] == 'updated existing done file'
     assert marker_path.read_text(encoding='utf-8') == 'pending seen'
+
+
+def test_tmux_dispatch_clears_input_before_submit_and_idle_nudge_does_not(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    monkeypatch.delenv('WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH', raising=False)
+    monkeypatch.delenv('RRC_TMUX_CLEAR_BEFORE_DISPATCH', raising=False)
+    monkeypatch.setenv('RRC_TMUX_SUBMIT_DELAY_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.01')
+    monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
+    monkeypatch.setattr(tmux_runner.time, 'sleep', lambda _seconds: None)
+
+    normal_log = tmp_path / 'normal-tmux.log'
+    normal_tmux = _make_executable(
+        tmp_path / 'normal' / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(normal_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args, ensure_ascii=False) + "\\n")
+if args[:1] == ["send-keys"] and "/clear" not in args and args[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "normal finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts-normal',
+        unit_id='unit-clear',
+        agent_command=str(normal_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    normal_commands = [json.loads(line) for line in normal_log.read_text(encoding='utf-8').splitlines()]
+    assert normal_commands[0] == ['send-keys', '-t', '1.2', 'C-u']
+    assert normal_commands[1][0] == 'load-buffer'
+    assert normal_commands[2] == ['paste-buffer', '-t', '1.2']
+    assert normal_commands[3] == ['send-keys', '-t', '1.2', 'C-m']
+    assert ['send-keys', '-t', '1.2', '/clear', 'C-m'] not in normal_commands
+
+    disabled_log = tmp_path / 'disabled-tmux.log'
+    disabled_tmux = _make_executable(
+        tmp_path / 'disabled' / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(disabled_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args, ensure_ascii=False) + "\\n")
+if args[:1] == ["send-keys"] and args[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "disabled finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+    monkeypatch.setenv('WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH', '0')
+    disabled_request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts-disabled',
+        unit_id='unit-clear-disabled',
+        agent_command=str(disabled_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    disabled_result = run_agent_backend(disabled_request)
+
+    assert disabled_result.status == 'done'
+    disabled_commands = [json.loads(line) for line in disabled_log.read_text(encoding='utf-8').splitlines()]
+    assert ['send-keys', '-t', '1.2', 'C-u'] not in disabled_commands
+    assert ['send-keys', '-t', '1.2', '/clear', 'C-m'] not in disabled_commands
+
+    nudge_log = tmp_path / 'nudge-tmux.log'
+    nudge_tmux = _make_executable(
+        tmp_path / 'nudge' / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(nudge_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args, ensure_ascii=False) + "\\n")
+if args[:1] == ["capture-pane"]:
+    print("Agent is still thinking")
+elif args[:1] == ["send-keys"] and "\\u7ee7\\u7eed" in " ".join(args):
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "nudged finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+    monkeypatch.delenv('WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH', raising=False)
+    nudge_request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts-nudge',
+        unit_id='unit-nudge-clear',
+        agent_command=str(nudge_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    nudge_result = run_agent_backend(nudge_request)
+
+    assert nudge_result.status == 'done'
+    nudge_commands = [json.loads(line) for line in nudge_log.read_text(encoding='utf-8').splitlines()]
+    clear_commands = [
+        command
+        for command in nudge_commands
+        if command == ['send-keys', '-t', '1.2', 'C-u']
+        or command == ['send-keys', '-t', '1.2', '/clear', 'C-m']
+    ]
+    assert clear_commands == [['send-keys', '-t', '1.2', 'C-u']]
+    nudge_index = next(index for index, command in enumerate(nudge_commands) if '继续' in ' '.join(command))
+    assert not any(command == ['send-keys', '-t', '1.2', 'C-u'] for command in nudge_commands[nudge_index:])
+    assert not any(command == ['send-keys', '-t', '1.2', '/clear', 'C-m'] for command in nudge_commands[nudge_index:])
 
 
 def test_tmux_codex_runner_reuses_tmux_dispatch_and_records_backend(
@@ -661,7 +797,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert f'DONE_FILE: {result.done_path.resolve()}' in dispatch_text
 
 
-def test_tmux_claude_runner_does_not_clear_claude_session_by_default(tmp_path: Path) -> None:
+def test_tmux_claude_runner_clears_input_without_clearing_session_by_default(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     prompt_path = workspace / 'prompt.md'
@@ -683,6 +819,57 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not 
     )
 """,
     )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=5,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    log_lines = tmux_log.read_text(encoding='utf-8').splitlines()
+    assert log_lines[0] == 'send-keys -t 1.2 C-u'
+    assert 'send-keys -t 1.2 /clear C-m' not in log_lines
+    assert log_lines[1:4] == [
+        f'load-buffer {result.run_dir / "dispatch.md"}',
+        'paste-buffer -t 1.2',
+        'send-keys -t 1.2 C-m',
+    ]
+
+
+def test_tmux_claude_runner_legacy_clear_opt_out_disables_input_clear(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not in sys.argv:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "tmux finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+    monkeypatch.setenv('RRC_TMUX_CLEAR_BEFORE_DISPATCH', '0')
 
     request = RunnerRequest(
         backend='tmux-claude',
@@ -705,52 +892,6 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not 
         f'load-buffer {result.run_dir / "dispatch.md"}',
         'paste-buffer -t 1.2',
         'send-keys -t 1.2 C-m',
-    ]
-
-
-def test_tmux_claude_runner_clears_only_when_enabled(tmp_path: Path, monkeypatch) -> None:
-    workspace = tmp_path / 'workspace'
-    workspace.mkdir()
-    prompt_path = workspace / 'prompt.md'
-    _write(prompt_path, 'Implement this unit.')
-    tmux_log = tmp_path / 'tmux.log'
-    fake_tmux = _make_executable(
-        tmp_path / 'tmux',
-        f"""#!/usr/bin/env python3
-import json
-import os
-import sys
-from pathlib import Path
-with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
-    log.write(" ".join(sys.argv[1:]) + "\\n")
-if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not in sys.argv:
-    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
-        json.dumps({{"status": "done", "summary": "tmux finished", "run_id": os.environ["RRC_RUN_ID"]}}),
-        encoding="utf-8",
-    )
-""",
-    )
-    monkeypatch.setenv('RRC_TMUX_CLEAR_BEFORE_DISPATCH', '1')
-
-    request = RunnerRequest(
-        backend='tmux-claude',
-        workspace_dir=workspace,
-        prompt_path=prompt_path,
-        artifact_dir=tmp_path / 'artifacts',
-        unit_id='unit-1',
-        agent_command=str(fake_tmux),
-        tmux_target='1.2',
-        timeout_seconds=5,
-    )
-
-    result = run_agent_backend(request)
-
-    assert result.status == 'done'
-    log_lines = tmux_log.read_text(encoding='utf-8').splitlines()
-    assert log_lines[:3] == [
-        'send-keys -t 1.2 C-u',
-        'send-keys -t 1.2 /clear C-m',
-        f'load-buffer {result.run_dir / "dispatch.md"}',
     ]
 
 
@@ -881,7 +1022,6 @@ raise SystemExit(0)
     monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
     monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
     monkeypatch.setenv('RRC_TMUX_IDLE_MAX_NUDGES', '0')
-    monkeypatch.setenv('RRC_TMUX_CLEAR_DELAY_SECONDS', '0')
 
     request = RunnerRequest(
         backend='tmux-claude',
@@ -925,7 +1065,6 @@ raise SystemExit(0)
     monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
     monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
     monkeypatch.setenv('RRC_TMUX_IDLE_MAX_NUDGES', '0')
-    monkeypatch.setenv('RRC_TMUX_CLEAR_DELAY_SECONDS', '0')
 
     request = RunnerRequest(
         backend='tmux-claude',
@@ -1213,7 +1352,6 @@ raise SystemExit(0)
     monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
     monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
     monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
-    monkeypatch.setenv('RRC_TMUX_CLEAR_DELAY_SECONDS', '0')
     monkeypatch.setenv('RRC_TMUX_SUBMIT_DELAY_SECONDS', '0')
 
     request = RunnerRequest(

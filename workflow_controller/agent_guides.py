@@ -103,6 +103,11 @@ def _agents_md_template() -> str:
 | 人类可读进度 | `progress.md` | 只能作为摘要，不能单独作为完成依据。 |
 | 决策与已知问题 | `findings.md` | 历史决策、根因、约束和风险。 |
 
+## 版本规划规则
+
+- 讨论版本范围前，必须读取 `ROADMAP.md`、`task_plan.md` 和 Controller state-dir 中的 `session.json`，不要根据最近进度推断版本范围。
+- 讨论某个版本时，必须把当前版本需求和后续版本候选分开记录；不要把后续 backlog 当作当前版本范围。
+
 ## 文档目录
 
 项目文档使用以下目录结构：

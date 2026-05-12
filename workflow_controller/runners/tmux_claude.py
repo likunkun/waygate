@@ -15,7 +15,6 @@ from workflow_controller.runners.base import BaseRunner, RunnerRequest, RunnerRe
 
 DEFAULT_TMUX_SUBMIT_DELAY_SECONDS = 0.5
 DEFAULT_TMUX_CODEX_SUBMIT_DELAY_SECONDS = 2.0
-DEFAULT_TMUX_CLEAR_DELAY_SECONDS = 0.5
 DEFAULT_TMUX_IDLE_GRACE_SECONDS = 60.0
 DEFAULT_TMUX_IDLE_POLL_SECONDS = 60.0
 DEFAULT_TMUX_IDLE_NUDGE_SECONDS = 120.0
@@ -96,7 +95,6 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     if _tmux_clear_before_dispatch_enabled():
         clear_commands = [
             [*tmux_command, 'send-keys', '-t', request.tmux_target, 'C-u'],
-            [*tmux_command, 'send-keys', '-t', request.tmux_target, '/clear', submit_key],
         ]
     dispatch_commands = [
         [*tmux_command, 'load-buffer', str(dispatch_prompt_path)],
@@ -139,13 +137,6 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
                 done_path=done_path,
                 runner_metadata=runner_metadata,
             )
-        if clear_commands and command == clear_commands[-1]:
-            delay_seconds = _tmux_clear_delay_seconds()
-            _append_event(events_path, {
-                'event': 'tmux_clear_delay',
-                'seconds': delay_seconds,
-            })
-            time.sleep(delay_seconds)
         if command == dispatch_commands[1]:
             delay_seconds = _tmux_submit_delay_seconds(backend)
             _append_event(events_path, {
@@ -449,14 +440,12 @@ def _tmux_submit_key(backend: str) -> str:
 
 
 def _tmux_clear_before_dispatch_enabled() -> bool:
-    raw_value = os.environ.get('RRC_TMUX_CLEAR_BEFORE_DISPATCH')
+    raw_value = os.environ.get('WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH')
     if raw_value is None:
-        return False
-    return raw_value.strip().lower() in {'1', 'true', 'yes', 'on'}
-
-
-def _tmux_clear_delay_seconds() -> float:
-    return _env_float('RRC_TMUX_CLEAR_DELAY_SECONDS', DEFAULT_TMUX_CLEAR_DELAY_SECONDS)
+        raw_value = os.environ.get('RRC_TMUX_CLEAR_BEFORE_DISPATCH')
+    if raw_value is None:
+        return True
+    return raw_value.strip().lower() not in {'0', 'false', 'no', 'off', 'disabled'}
 
 
 def _tmux_idle_grace_seconds() -> float:
@@ -552,6 +541,9 @@ def _retry_submit_if_prompt_still_pending(
     retry_event = _tmux_submit_retry_event_name(backend, '')
     if _done_file_has_non_pending_signal(done_path):
         _append_event(events_path, {'event': skipped_event, 'reason': 'done_file_exists'})
+        return
+    if backend == 'tmux-claude':
+        _append_event(events_path, {'event': skipped_event, 'reason': 'disabled_for_tmux_claude'})
         return
     delay_seconds = _tmux_submit_retry_delay_seconds(backend)
     if delay_seconds > 0:

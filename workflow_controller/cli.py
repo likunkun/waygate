@@ -73,10 +73,12 @@ def _build_role_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
 
 def render_status_line(state: dict[str, Any]) -> str:
     next_action = state.get('nextAction') or compute_next_allowed_action(state)
+    project_target_version = str(state.get('feasibleOutcome') or state.get('requestedOutcome') or '-')
     return (
         f"currentStep={state.get('currentStep')} "
         f"status={state.get('status')} "
-        f"nextAction={next_action}"
+        f"nextAction={next_action} "
+        f"projectTargetVersion={project_target_version}"
     )
 
 

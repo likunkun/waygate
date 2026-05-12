@@ -222,6 +222,11 @@ HUMAN_GATE_LABELS = {
     'final-acceptance': '最终验收',
     'bug-fix': 'Bug Fix',
 }
+HUMAN_REVIEW_TMUX_REMINDER = (
+    'Agent结论已形成，已进入人工评审阶段，请不要和Agent再继续沟通！\n'
+    'The agent has reached its conclusion and the workflow is now in human review. '
+    'Please do not continue chatting with the agent.'
+)
 
 FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS = {
     'requirements': 'Requirements revision',
@@ -2067,6 +2072,7 @@ class RalphRefinerController:
         input_func: Callable[[str], str],
         output_func: Callable[[str], None],
     ) -> bool:
+        self._send_human_review_tmux_reminder(self.store.load_state(), str(gate_info['gate']))
         output_func(f"[人工确认] {gate_info['label']}")
         output_func(f"  文件：{gate_info['path']}")
         review_path = Path(gate_info.get('review_path') or gate_info['path'])
@@ -2204,6 +2210,7 @@ class RalphRefinerController:
                     continue
                 output_func('[Plannotator] 未返回可执行决策；仍停在人工确认点。')
                 continue
+
             if choice in {'a', 'approve'}:
                 try:
                     self.approve_human_gate(str(gate_info['gate']), actor=actor)
@@ -2249,6 +2256,52 @@ class RalphRefinerController:
                 output_func('[退出] 已停止在人工确认点。')
                 return False
             output_func('[提示] 请输入 v / a / r / p / q。')
+
+    def _send_human_review_tmux_reminder(self, state: dict[str, Any], gate: str) -> None:
+        tmux_target = str(state.get('tmuxTarget') or '').strip()
+        if not tmux_target:
+            return
+        workspace_dir = _agent_guide_workspace_dir(
+            explicit_workspace=self.workspace_dir,
+            state_dir=self.state_dir,
+            state=state,
+        )
+        tmux_command = _tmux_command_for_controller(
+            str(state.get('agentCommand') or self.agent_command or 'tmux')
+        )
+        commands = [
+            [*tmux_command, 'set-buffer', HUMAN_REVIEW_TMUX_REMINDER],
+            [*tmux_command, 'paste-buffer', '-t', tmux_target],
+        ]
+        try:
+            for command in commands:
+                completed = subprocess.run(
+                    command,
+                    cwd=workspace_dir,
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                if completed.returncode != 0:
+                    self.store.append_event('human_review_tmux_reminder_failed', {
+                        'gate': gate,
+                        'tmux_target': tmux_target,
+                        'returncode': completed.returncode,
+                        'stderr': completed.stderr.strip(),
+                    })
+                    return
+        except Exception as exc:
+            self.store.append_event('human_review_tmux_reminder_failed', {
+                'gate': gate,
+                'tmux_target': tmux_target,
+                'error': str(exc),
+            })
+            return
+        self.store.append_event('human_review_tmux_reminder_sent', {
+            'gate': gate,
+            'tmux_target': tmux_target,
+        })
 
     def _print_compact_revision_status(self, gate_info: dict[str, Any], *, source: str) -> None:
         compact_reporter = getattr(self, '_drive_compact_reporter', None)
@@ -3303,6 +3356,7 @@ def _compact_roadmap(
     planning_stage: str | None = None,
 ) -> str:
     unit_id = str(state.get('currentUnitId') or '-')
+    project_target_version = _project_target_version(state)
     units = _display_units_for_state(state)
     unit_ids = [str(unit.get('id')) for unit in units]
     total = len(units) or 1
@@ -3318,12 +3372,16 @@ def _compact_roadmap(
     action = state.get('nextAction') or compute_next_allowed_action(state)
     now = current_label or _compact_current_label(state, action)
     return (
-        f"{_paint('▶', 'green', color_enabled)} {_paint(str(state.get('requestedOutcome') or '-'), 'bold', color_enabled)}\n"
+        f"{_paint('▶', 'green', color_enabled)} {_paint(project_target_version, 'bold', color_enabled)}  项目目标版本/分支\n"
         f"          {_paint('单元', 'cyan', color_enabled)}   {index}/{total}  {unit_id}\n"
         f"          {_paint('阶段', 'cyan', color_enabled)} {_stage_tokens_for_state(state, color_enabled=color_enabled, planning_stage=planning_stage)}\n"
         f"          {_paint('当前', 'cyan', color_enabled)}   {_paint(str(now), 'yellow', color_enabled) if now != '-' else now}\n"
         f"          {_paint('剩余', 'cyan', color_enabled)}   {_paint(str(remaining_after), 'dim', color_enabled)} 个单元"
     )
+
+
+def _project_target_version(state: dict[str, Any]) -> str:
+    return str(state.get('feasibleOutcome') or state.get('requestedOutcome') or '-')
 
 
 def _compact_current_label(state: dict[str, Any], action: str | None) -> str:
@@ -4550,10 +4608,12 @@ def _build_role_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
 
 def render_status_line(state: dict[str, Any]) -> str:
     next_action = state.get('nextAction') or compute_next_allowed_action(state)
+    project_target_version = _project_target_version(state)
     return (
         f"currentStep={state.get('currentStep')} "
         f"status={state.get('status')} "
-        f"nextAction={next_action}"
+        f"nextAction={next_action} "
+        f"projectTargetVersion={project_target_version}"
     )
 
 

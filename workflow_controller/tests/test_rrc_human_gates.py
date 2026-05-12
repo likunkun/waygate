@@ -259,11 +259,11 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '可断言的期望值' in requirements_prompt
     assert '不能用截图或人工观察替代断言' in requirements_prompt
     assert 'Agent-side requirements clarification' in requirements_prompt
-    assert '如果信息足够，直接生成 Requirements Gate' in requirements_prompt
+    assert '写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题' in requirements_prompt
     assert '当前 tmux agent pane' in requirements_prompt
-    assert '一次性提出集中问题' in requirements_prompt
+    assert '等待用户回答期间不得写 `DONE_FILE`' in requirements_prompt
+    assert '收到用户回答后，再继续生成 Requirements Gate' in requirements_prompt
     assert '用户回答后，将澄清结果写入本 Requirements Gate' in requirements_prompt
-    assert '不要因为一般不确定性反复提问' in requirements_prompt
     assert '`acceptance_criterion`' in unit_plan_prompt
     assert '`fixture`' in unit_plan_prompt
     assert '`product_design_refs`' in unit_plan_prompt
@@ -288,6 +288,55 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '截图或人工观察不能替代断言' in requirements_body
     assert '| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
     assert 'E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言' in unit_plan_body
+
+
+def test_requirements_prompt_requires_clarification_before_gate(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': 'V0.5.4',
+        'feasibleOutcome': 'V0.5.4',
+        'currentUnitId': 'target-v0-5-4',
+        'objectiveCoverage': [
+            {'objective': 'Complete V0.5.4 development acceptance', 'units': ['target-v0-5-4'], 'status': 'partial'},
+        ],
+        'units': [
+            {
+                'id': 'target-v0-5-4',
+                'name': 'V0.5.4 development acceptance',
+                'passes': False,
+            },
+        ],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert '写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题' in prompt
+    assert '等待用户回答期间不得写 `DONE_FILE`' in prompt
+    assert '收到用户回答后，再继续生成 Requirements Gate' in prompt
+    assert '如果信息足够，直接生成 Requirements Gate' not in prompt
+
+
+def test_requirements_prompt_requires_clarification_results_in_section_4_8(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': 'V0.5.4',
+        'feasibleOutcome': 'V0.5.4',
+        'currentUnitId': 'target-v0-5-4',
+        'objectiveCoverage': [
+            {'objective': 'Complete V0.5.4 development acceptance', 'units': ['target-v0-5-4'], 'status': 'partial'},
+        ],
+        'units': [
+            {
+                'id': 'target-v0-5-4',
+                'name': 'V0.5.4 development acceptance',
+                'passes': False,
+            },
+        ],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert '## 4.8 已澄清事项、关键假设与待确认风险' in prompt
+    assert '用户回答后，将澄清结果写入本 Requirements Gate 的 `## 4.8 已澄清事项、关键假设与待确认风险`' in prompt
+    assert '同步反映到需求、范围外、验收标准和测试策略中' in prompt
 
 
 def test_requirements_and_unit_plan_prompts_require_simplified_chinese(tmp_path: Path) -> None:

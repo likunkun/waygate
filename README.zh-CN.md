@@ -38,7 +38,7 @@ Waygate 把这些状态转移显式化。状态写入磁盘，人工 gate 是 Ma
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.5.3_all.deb
+sudo apt install ./dist/waygate_0.5.4_all.deb
 waygate --help
 ```
 

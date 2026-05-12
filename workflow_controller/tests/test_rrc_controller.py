@@ -2725,6 +2725,177 @@ def test_compact_reporter_dedupes_identical_rendered_status_cards() -> None:
     assert output[0].count('当前   检查 Unit Plan 确认') == 1
 
 
+def test_human_review_sends_tmux_reminder_without_submit(tmp_path: Path, monkeypatch) -> None:
+    tmux_log = tmp_path / 'tmux-reminder.log'
+    fake_tmux = tmp_path / 'tmux'
+    fake_tmux.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args, ensure_ascii=False) + "\\n")
+""",
+        encoding='utf-8',
+    )
+    fake_tmux.chmod(0o755)
+    _prepend_path(monkeypatch, tmp_path)
+
+    cases = [
+        (
+            'requirements',
+            {
+                'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+                'requirementsAccepted': False,
+                'unitPlanAccepted': False,
+                'finalAcceptanceAccepted': False,
+            },
+        ),
+        (
+            'unit-plan',
+            {
+                'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+                'requirementsAccepted': True,
+                'unitPlanAccepted': False,
+                'finalAcceptanceAccepted': False,
+            },
+        ),
+        (
+            'final-acceptance',
+            {
+                'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+                'lastVerifiedStep': 'VERIFY_UNIT',
+                'requirementsAccepted': True,
+                'unitPlanAccepted': True,
+                'finalAcceptanceAccepted': False,
+                'objectiveCoverage': [
+                    {'objective': 'Target V0.5.4 acceptance', 'units': ['unit-01'], 'status': 'covered'},
+                ],
+                'units': [
+                    {'id': 'unit-01', 'name': 'Unit 1', 'passes': True},
+                ],
+            },
+        ),
+        (
+            'bug-fix',
+            {
+                'currentStep': 'WAITING_BUG_FIX_GATE',
+                'requirementsAccepted': True,
+                'unitPlanAccepted': True,
+                'finalAcceptanceAccepted': False,
+                'activeBugFixId': 'bug-fix-1',
+                'bugFixFeedback': 'Fix final acceptance defect.',
+            },
+        ),
+    ]
+    for gate, overrides in cases:
+        state_dir = tmp_path / f'state-{gate}'
+        controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+        base_state = {
+            'task_id': f'target-{gate}',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V0.5.4',
+            'feasibleOutcome': 'V0.5.4',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'agentRunner': 'tmux-codex',
+            'agentCommand': 'tmux',
+            'tmuxTarget': '2.1',
+            'objectiveCoverage': [
+                {'objective': 'Target V0.5.4 acceptance', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Unit 1', 'passes': False},
+            ],
+        }
+        base_state.update(overrides)
+        controller.init_state(base_state, force=True)
+        before = controller.store.load_state()
+
+        state = controller.drive(
+            max_steps=0,
+            input_func=lambda _prompt: (_ for _ in ()).throw(EOFError),
+            output_func=lambda _line: None,
+            timestamp_output=False,
+            print_agent_target=False,
+        )
+
+        assert state['currentStep'] == before['currentStep']
+        assert state['nextAllowedActions'] == before['nextAllowedActions']
+        assert not list(state_dir.rglob('done.json'))
+
+    commands = [json.loads(line) for line in tmux_log.read_text(encoding='utf-8').splitlines()]
+    set_buffer_commands = [command for command in commands if command[:1] == ['set-buffer']]
+    paste_commands = [command for command in commands if command[:1] == ['paste-buffer']]
+    send_key_commands = [command for command in commands if command[:1] == ['send-keys']]
+
+    assert len(set_buffer_commands) == 4
+    assert len(paste_commands) == 4
+    assert send_key_commands == []
+    for command in set_buffer_commands:
+        reminder = command[-1]
+        assert 'Agent结论已形成，已进入人工评审阶段，请不要和Agent再继续沟通！' in reminder
+        assert 'The agent has reached its conclusion and the workflow is now in human review. Please do not continue chatting with the agent.' in reminder
+    assert all(command == ['paste-buffer', '-t', '2.1'] for command in paste_commands)
+
+
+def test_compact_status_shows_target_version_separate_from_package_version(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': 'V0.5.4',
+        'feasibleOutcome': 'V0.5.4',
+        'currentUnitId': 'v0-5-4-u1',
+        'currentStep': 'EXECUTE_UNIT',
+        'status': 'active',
+        'scopeApproved': True,
+        'objectiveCoverage': [
+            {'objective': 'Complete V0.5.4 development acceptance', 'units': ['v0-5-4-u1'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'v0-5-4-u1', 'name': 'V0.5.4 unit', 'passes': False},
+        ],
+    }
+    output: list[str] = []
+    reporter = rrc_controller_module._CompactDriveReporter(output.append, color_enabled=False)
+
+    reporter.print_status(state)
+    status_line = rrc_controller_module.render_status_line(state)
+    cli_status_line = cli_module.render_status_line(state)
+    version_result = subprocess.run(
+        [sys.executable, '-m', 'workflow_controller.cli', '--version'],
+        cwd=str(ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    rendered = '\n'.join(output)
+    assert 'V0.5.4' in rendered
+    assert '项目目标版本/分支' in rendered
+    assert 'projectTargetVersion=V0.5.4' in status_line
+    assert 'projectTargetVersion=V0.5.4' in cli_status_line
+    assert version_result.returncode == 0
+    assert version_result.stdout.startswith('waygate ')
+    assert 'projectTargetVersion' not in version_result.stdout
+
+
+def test_agent_guides_include_version_planning_rules(tmp_path: Path) -> None:
+    from workflow_controller.agent_guides import ensure_agent_operating_guides
+
+    generated_workspace = tmp_path / 'generated-workspace'
+    ensure_agent_operating_guides(generated_workspace)
+    generated_agents = (generated_workspace / 'AGENTS.md').read_text(encoding='utf-8')
+    root_agents = (ROOT / 'AGENTS.md').read_text(encoding='utf-8')
+
+    for content in (root_agents, generated_agents):
+        assert '讨论版本范围前，必须读取 `ROADMAP.md`、`task_plan.md` 和 Controller state-dir 中的 `session.json`' in content
+        assert '不要根据最近进度推断版本范围' in content
+        assert '讨论某个版本时，必须把当前版本需求和后续版本候选分开记录' in content
+
+
 def test_complete_unit_keeps_multi_unit_objective_partial_until_all_units_pass(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -3947,6 +4118,525 @@ print('{"decision":"approved"}')
     )
     assert revision['controller_validation_error'].startswith('requirements gate invalid:')
     assert '## Controller Validation Error' in revision['feedback']
+
+
+def test_requirements_draft_uses_two_hour_timeout_by_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    captured_timeout_seconds: list[int] = []
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        captured_timeout_seconds.append(request.timeout_seconds)
+        body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
+        body_path.write_text(
+            """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: unit]: User can continue after clarification.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | unit | pytest |
+""",
+            encoding='utf-8',
+        )
+        return RunnerResult(
+            backend='tmux-claude',
+            status='done',
+            command=['fake-claude'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=state_dir / 'artifacts' / 'requirements-draft' / 'runs' / 'requirements-draft-run',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+
+    controller.run_once()
+
+    assert captured_timeout_seconds == [7200]
+
+
+def test_requirements_draft_timeout_resumes_existing_pending_run_without_redispatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    run_dir = state_dir / 'artifacts' / 'requirements-draft' / 'runs' / 'requirements-draft-run'
+    done_path = run_dir / 'done.json'
+    dispatch_count = 0
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        nonlocal dispatch_count
+        dispatch_count += 1
+        run_dir.mkdir(parents=True, exist_ok=True)
+        done_path.write_text(
+            json.dumps({
+                'status': 'pending',
+                'summary': 'waiting for requirements clarification',
+                'run_id': run_dir.name,
+            }),
+            encoding='utf-8',
+        )
+        return RunnerResult(
+            backend='tmux-claude',
+            status='timeout',
+            command=['fake-claude'],
+            returncode=124,
+            stdout='',
+            stderr='',
+            run_dir=run_dir,
+            prompt_path=request.prompt_path,
+            done_path=done_path,
+            done_payload={'status': 'pending', 'run_id': run_dir.name},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        controller.run_once()
+
+    assert '等了太久，先休息一下，等agent好了，再接着干' in str(exc_info.value)
+    assert dispatch_count == 1
+
+    body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
+    body_path.write_text(
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: unit]: User can resume requirements drafting.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | unit | pytest |
+""",
+        encoding='utf-8',
+    )
+    done_path.write_text(
+        json.dumps({
+            'status': 'done',
+            'summary': 'requirements generated after clarification',
+            'run_id': run_dir.name,
+        }),
+        encoding='utf-8',
+    )
+    summary_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-draft-summary.json'
+    newer_than_timeout = summary_path.stat().st_mtime + 10
+    os.utime(body_path, (newer_than_timeout, newer_than_timeout))
+    os.utime(done_path, (newer_than_timeout, newer_than_timeout))
+
+    state = controller.run_once()
+
+    assert dispatch_count == 1
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsDraftGenerated'] is True
+    gate_content = (state_dir / 'approvals' / 'requirements-and-acceptance.md').read_text(encoding='utf-8')
+    assert 'User can resume requirements drafting.' in gate_content
+    summary = json.loads(
+        (state_dir / 'artifacts' / 'requirements-draft' / 'requirements-draft-summary.json').read_text(encoding='utf-8')
+    )
+    assert summary['status'] == 'done'
+    assert summary['resumed_from_pending_run'] is True
+
+
+def test_requirements_draft_recovers_legacy_timed_out_summary_when_done_run_and_body_exist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    draft_dir = state_dir / 'artifacts' / 'requirements-draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    body_path = draft_dir / 'requirements-body.md'
+    legacy_run_dir = draft_dir / 'runs' / 'requirements-draft-legacy'
+    legacy_run_dir.mkdir(parents=True)
+    summary_path = draft_dir / 'requirements-draft-summary.json'
+    summary_path.write_text(
+        json.dumps({
+            'status': 'timeout',
+            'mode': 'tmux-claude',
+            'runner_run_dir': str(legacy_run_dir),
+            'exit_code': 124,
+            'body_path': str(body_path),
+        }),
+        encoding='utf-8',
+    )
+    body_path.write_text(
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: unit]: Legacy completed run is reviewed without redispatch.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | unit | pytest |
+""",
+        encoding='utf-8',
+    )
+    done_path = legacy_run_dir / 'done.json'
+    done_path.write_text(
+        json.dumps({
+            'status': 'done',
+            'summary': 'requirements generated before controller resumed',
+            'run_id': legacy_run_dir.name,
+        }),
+        encoding='utf-8',
+    )
+    newer_than_timeout = summary_path.stat().st_mtime + 10
+    os.utime(body_path, (newer_than_timeout, newer_than_timeout))
+    os.utime(done_path, (newer_than_timeout, newer_than_timeout))
+    dispatch_count = 0
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        nonlocal dispatch_count
+        dispatch_count += 1
+        raise AssertionError('requirements drafter should recover the completed legacy run')
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert dispatch_count == 0
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsDraftGenerated'] is True
+    gate_content = (state_dir / 'approvals' / 'requirements-and-acceptance.md').read_text(encoding='utf-8')
+    assert 'Legacy completed run is reviewed without redispatch.' in gate_content
+    summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    assert summary['status'] == 'done'
+    assert summary['resumed_from_pending_run'] is True
+    assert summary['done_path'] == str(done_path.resolve())
+
+
+def test_requirements_draft_does_not_recover_done_and_body_older_than_timeout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'requirementsDraftTimeoutSeconds': 0,
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    draft_dir = state_dir / 'artifacts' / 'requirements-draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    body_path = draft_dir / 'requirements-body.md'
+    body_path.write_text(
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: unit]: Stale requirements body must not be reviewed.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | unit | pytest |
+""",
+        encoding='utf-8',
+    )
+    stale_run_dir = draft_dir / 'runs' / 'requirements-draft-stale'
+    stale_run_dir.mkdir(parents=True)
+    done_path = stale_run_dir / 'done.json'
+    done_path.write_text(
+        json.dumps({
+            'status': 'done',
+            'summary': 'stale requirements body',
+            'run_id': stale_run_dir.name,
+        }),
+        encoding='utf-8',
+    )
+    stale_time = body_path.stat().st_mtime
+    summary_path = draft_dir / 'requirements-draft-summary.json'
+    summary_path.write_text(
+        json.dumps({
+            'status': 'timeout',
+            'mode': 'tmux-claude',
+            'runner_run_dir': str(stale_run_dir),
+            'exit_code': 124,
+            'body_path': str(body_path),
+        }),
+        encoding='utf-8',
+    )
+    timeout_time = stale_time + 10
+    os.utime(summary_path, (timeout_time, timeout_time))
+    os.utime(body_path, (stale_time, stale_time))
+    os.utime(done_path, (stale_time, stale_time))
+    dispatch_count = 0
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        nonlocal dispatch_count
+        dispatch_count += 1
+        raise AssertionError('requirements drafter should not redispatch while waiting for fresh done and body')
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        controller.run_once()
+
+    assert '等了太久，先休息一下，等agent好了，再接着干' in str(exc_info.value)
+    assert dispatch_count == 0
+
+
+def test_requirements_draft_waits_on_existing_timeout_run_until_fresh_body_arrives(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'requirementsDraftTimeoutSeconds': 5,
+            'requirementsDraftResumePollSeconds': 0,
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    draft_dir = state_dir / 'artifacts' / 'requirements-draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    body_path = draft_dir / 'requirements-body.md'
+    run_dir = draft_dir / 'runs' / 'requirements-draft-waiting'
+    run_dir.mkdir(parents=True)
+    done_path = run_dir / 'done.json'
+    done_path.write_text(
+        json.dumps({
+            'status': 'pending',
+            'summary': 'waiting for requirements body',
+            'run_id': run_dir.name,
+        }),
+        encoding='utf-8',
+    )
+    summary_path = draft_dir / 'requirements-draft-summary.json'
+    summary_path.write_text(
+        json.dumps({
+            'status': 'timeout',
+            'mode': 'tmux-claude',
+            'runner_run_dir': str(run_dir),
+            'done_path': str(done_path),
+            'exit_code': 124,
+            'body_path': str(body_path),
+        }),
+        encoding='utf-8',
+    )
+    fresh_time = summary_path.stat().st_mtime + 10
+    dispatch_count = 0
+    sleep_count = 0
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        nonlocal dispatch_count
+        dispatch_count += 1
+        raise AssertionError('requirements drafter should wait on existing run instead of redispatching')
+
+    def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_count
+        sleep_count += 1
+        body_path.write_text(
+            """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: unit]: Existing run can finish while controller waits.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | unit | pytest |
+""",
+            encoding='utf-8',
+        )
+        done_path.write_text(
+            json.dumps({
+                'status': 'done',
+                'summary': 'requirements body arrived',
+                'run_id': run_dir.name,
+            }),
+            encoding='utf-8',
+        )
+        os.utime(body_path, (fresh_time, fresh_time))
+        os.utime(done_path, (fresh_time, fresh_time))
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+    monkeypatch.setattr(requirements_step.time, 'sleep', fake_sleep)
+
+    state = controller.run_once()
+
+    assert sleep_count >= 1
+    assert dispatch_count == 0
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsDraftGenerated'] is True
+    gate_content = (state_dir / 'approvals' / 'requirements-and-acceptance.md').read_text(encoding='utf-8')
+    assert 'Existing run can finish while controller waits.' in gate_content
 
 
 def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_review(

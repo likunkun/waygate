@@ -1,5 +1,27 @@
 # 进度日志
 
+## 会话：2026-05-12
+
+### V0.5.4 人工评审防串聊与强制 Requirements 澄清
+- **状态：** complete
+- Controller Final Acceptance 已批准：`finalAcceptanceAccepted=true`，确认人为 human，hash 为 `sha256:5c23862c9a86a39cd8af05ac3637909b3d5bbbe338653b2db4507851d3f48e80`。
+- 当前目标 `Complete V0.5.4 development acceptance using current planning progress` 已标记为 `covered`；单元 `v0-5-4-u1-review-boundary-and-version-rules` 已 `passes=true`。
+- 已完成内容：
+  - Requirements Draft prompt 强制先澄清，等待用户回答期间不写 `DONE_FILE`。
+  - 澄清结论进入 `## 4.8 已澄清事项、关键假设与待确认风险`，并同步到需求、范围外、验收标准和测试策略。
+  - Requirements、Unit Plan、Final Acceptance、Bug Fix 人工评审阶段向 `tmuxTarget` 粘贴中英文防串聊提醒，不提交、不推进 workflow。
+  - 正常 tmux dispatch 默认先 `C-u` 清输入框，idle nudge 不清输入框，`WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH=0` 可关闭。
+  - compact/status 展示项目目标版本分支；`waygate --version` 仍表示 package version。
+  - 根目录 `AGENTS.md` 和 `workflow_controller/agent_guides.py` 生成模板补充版本规划规则。
+- Final Acceptance evidence matrix 中 AC-01 到 AC-07 均 passed；Golden Path `python -m pytest workflow_controller/tests -q` 已 passed。
+- 本次状态同步更新了 `task_plan.md` 和 `progress.md`；`findings.md` 没有新增决策、缺陷或风险，因此未修改。
+- V0.5.4 打包完成：`workflow_controller.__version__` 更新为 `0.5.4`，双语 README/USAGE 安装示例和双语 CHANGELOG 已同步，已生成 `dist/waygate_0.5.4_all.deb`。
+- 打包验证通过：`python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`；`python -m pytest workflow_controller/tests -q` -> `363 passed in 50.22s`；`dpkg-deb --field dist/waygate_0.5.4_all.deb Version` -> `0.5.4`。
+- Requirements Draft 澄清等待现场修复完成：默认 timeout 从 1800 秒调整为 7200 秒；超时消息改为“等了太久，先休息一下，等agent好了，再接着干”；超时后保留 `requirements-draft-summary.json` 中的 pending run 信息。下次运行会继续等待同一轮 run，不重新派发需求讨论；只有在 `done.json` 和 `requirements-body.md` 都存在、且二者修改时间都晚于 timeout 记录时间时，才直接生成 Requirements Gate；旧残留不会被误审核。
+- 已验证：新增 RED/GREEN 覆盖 `test_requirements_draft_uses_two_hour_timeout_by_default`、`test_requirements_draft_timeout_resumes_existing_pending_run_without_redispatch`、`test_requirements_draft_recovers_legacy_timed_out_summary_when_done_run_and_body_exist`、`test_requirements_draft_does_not_recover_done_and_body_older_than_timeout` 和 `test_requirements_draft_waits_on_existing_timeout_run_until_fresh_body_arrives`；修订路径回归 passed；全量 `python -m pytest workflow_controller/tests -q` -> `368 passed in 52.00s`。
+- tmux-claude 重复 dispatch 现场修复完成：根因是 submit retry 看到 Claude pane 里的历史 `workflow-controller dispatch` / RUN_ID 文本后，无法区分 transcript 和输入框残留，可能在第一轮完成后让 Claude 又开始同一个 RUN_ID。已禁用 tmux-claude 的歧义提交重试，保留 tmux-codex 的 prompt/input 重试。
+- 已验证：`test_tmux_claude_does_not_retry_when_dispatch_text_is_visible_after_submit` RED/GREEN；Codex submit retry 三条回归 passed；`python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `32 passed in 11.77s`；全量 `python -m pytest workflow_controller/tests -q` -> `365 passed in 51.16s`。
+
 ## 会话：2026-05-09
 
 ### Final Acceptance 后 Agent 状态同步

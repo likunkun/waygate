@@ -9,6 +9,14 @@
 - 整理 GitHub 对外英文和中文文档。
 - 新增 contribution、security、issue 和 pull request 社区文件。
 
+## 0.5.4
+
+- Requirements Gate 写入前必须先做简洁需求澄清，澄清结论记录到 4.8 小节。
+- Requirements、Unit Plan、Final Acceptance 和 Bug Fix 人工评审阶段新增 tmux 防串聊提醒，不提交输入、不推进 workflow state。
+- 正常 tmux 派发默认先清空 agent 输入框，并支持 `WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH=0` 关闭。
+- compact/status 输出把当前项目目标版本与 Waygate 包版本分开展示。
+- 项目 agent guide 补充版本规划事实源规则。
+
 ## 0.5.3
 
 - 新增 Waygate Debian 包和 `/usr/bin/waygate` wrapper。

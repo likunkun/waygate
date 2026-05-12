@@ -9,6 +9,14 @@ All notable project changes should be recorded here.
 - Prepared GitHub-facing English and Chinese documentation.
 - Added community files for contribution, security, issues, and pull requests.
 
+## 0.5.4
+
+- Added mandatory Requirements clarification before writing the Requirements Gate, with clarified answers recorded in section 4.8.
+- Added human-review tmux reminders for Requirements, Unit Plan, Final Acceptance, and Bug Fix gates without submitting input or advancing workflow state.
+- Cleared tmux agent input before normal dispatch by default, with `WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH=0` as the opt-out.
+- Showed the current project target version separately from the Waygate package version.
+- Added version-planning source-of-truth rules to project agent guides.
+
 ## 0.5.3
 
 - Added Waygate Debian packaging and `/usr/bin/waygate` wrapper.
