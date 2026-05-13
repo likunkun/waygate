@@ -24,6 +24,7 @@ DEFAULT_TMUX_CODEX_SUBMIT_KEY = 'Enter'
 DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS = 1.0
 DEFAULT_TMUX_SUBMIT_RETRY_DELAY_SECONDS = 0.2
 DEFAULT_TMUX_POST_DONE_IDLE_POLL_SECONDS = 0.5
+DEFAULT_TMUX_CLEAR_INPUT_KEYS = ('C-c', 'C-u')
 
 
 class TmuxClaudeRunner(BaseRunner):
@@ -94,7 +95,7 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     clear_commands = []
     if _tmux_clear_before_dispatch_enabled():
         clear_commands = [
-            [*tmux_command, 'send-keys', '-t', request.tmux_target, 'C-u'],
+            [*tmux_command, 'send-keys', '-t', request.tmux_target, *_tmux_clear_input_keys()],
         ]
     dispatch_commands = [
         [*tmux_command, 'load-buffer', str(dispatch_prompt_path)],
@@ -446,6 +447,10 @@ def _tmux_clear_before_dispatch_enabled() -> bool:
     if raw_value is None:
         return True
     return raw_value.strip().lower() not in {'0', 'false', 'no', 'off', 'disabled'}
+
+
+def _tmux_clear_input_keys() -> tuple[str, ...]:
+    return DEFAULT_TMUX_CLEAR_INPUT_KEYS
 
 
 def _tmux_idle_grace_seconds() -> float:

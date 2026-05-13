@@ -209,6 +209,14 @@ def test_init_with_target_and_workspace_without_ralph_creates_target_acceptance_
     workspace.mkdir()
     (workspace / 'task_plan.md').write_text('# Plan\n\nV3.0 target acceptance.\n', encoding='utf-8')
     state_dir = workspace / '.rrc-controller-v3.0'
+    fake_tmux = _make_fake_tmux(
+        tmp_path,
+        pane_command='claude',
+        pane_title='claude',
+        pane_current_path=str(workspace),
+        pane_pid='12345',
+        pane_output='Claude Code',
+    )
 
     result = run_rrc(
         'init',
@@ -222,6 +230,8 @@ def test_init_with_target_and_workspace_without_ralph_creates_target_acceptance_
         'tmux-claude',
         '--tmux-target',
         '3.0',
+        '--agent',
+        str(fake_tmux),
         '--force',
     )
 
@@ -2838,6 +2848,7 @@ with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
     assert send_key_commands == []
     for command in set_buffer_commands:
         reminder = command[-1]
+        assert '\n' not in reminder
         assert 'Agent结论已形成，已进入人工评审阶段，请不要和Agent再继续沟通！' in reminder
         assert 'The agent has reached its conclusion and the workflow is now in human review. Please do not continue chatting with the agent.' in reminder
     assert all(command == ['paste-buffer', '-t', '2.1'] for command in paste_commands)
@@ -6842,6 +6853,105 @@ def test_drive_can_revise_unit_plan_gate_from_human_notes(tmp_path: Path) -> Non
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
     assert state['unitPlanRevisionCount'] == 1
+
+
+def test_revise_unit_plan_after_builder_blocked_preserves_requirements_and_injects_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    requirements_hash = 'sha256:req-approved'
+    unit_plan_hash = 'sha256:unit-approved'
+    blocker = 'CLI Proxy API contract is missing; cannot safely implement disable/restore behavior.'
+    controller.init_state(
+        {
+            'task_id': 'target-v1-8-1',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'PLAN_APPROVED',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V1.8.1',
+            'feasibleOutcome': 'V1.8.1',
+            'scopeApproved': True,
+            'autoApprove': True,
+            'agentRunner': 'tmux-claude',
+            'workspacePath': str(workspace),
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': requirements_hash,
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': unit_plan_hash,
+            'unitPlanAcceptedBy': 'human',
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'scope': ['Implement delivery behavior'], 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n- AC-1: Delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        'Reviewer note: keep the manual CLI Proxy path as supplemental context.\n\n'
+        '## Human Confirmation\n\n'
+        'Status: approved\n'
+        'Confirmed by: human\n'
+        'Content hash: sha256:unit-approved\n',
+        encoding='utf-8',
+    )
+    unit_dir = state_dir / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / 'builder-summary.json').write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {
+                    'status': 'blocked',
+                    'summary': blocker,
+                    'run_id': 'builder-run',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+    planner_prompts: list[str] = []
+
+    def fake_run_agent_backend(request):
+        planner_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    controller.revise_human_gate('unit-plan')
+
+    assert planner_prompts, 'Expected Unit Plan drafter prompt to be captured'
+    prompt = planner_prompts[0]
+    assert blocker in prompt
+    assert 'Treat this as Unit Plan revision context, not a Requirements change.' in prompt
+    assert prompt.index(blocker) < prompt.index('keep the manual CLI Proxy path as supplemental context')
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'unitPlanAcceptedHash' not in state
+    assert 'unitPlanAcceptedBy' not in state
+    assert state['requirementsAccepted'] is True
+    assert state['requirementsAcceptedHash'] == requirements_hash
+    assert state['requirementsAcceptedBy'] == 'human'
+    assert state['unitPlanRevisionCount'] == 1
+    assert not (state_dir / 'change_requests.jsonl').exists()
 
 
 def test_drive_can_reject_final_acceptance_and_return_to_builder(tmp_path: Path) -> None:

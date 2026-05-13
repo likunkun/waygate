@@ -1,5 +1,19 @@
 # 发现与决策
 
+## 2026-05-13 人工评审提醒草稿清理
+
+- 人工评审提醒原先是中英文两行，controller 只粘贴、不提交；下一轮正常 dispatch 前只发送一次 `C-u`，在 Claude 多行输入框里只能保证清理光标所在行，无法可靠移除整段未提交草稿。
+- 修复边界应在 runner 派发前清理输入草稿：先发 `C-c` 取消当前未提交输入，再发 `C-u` 兜底清当前行；不能用 `/clear`，否则会清掉 agent 会话上下文。
+- 为避免后续再次制造多行残留，人工评审提醒应保持单行文本；视觉换行由终端宽度自然处理，不写入实际 newline。
+- idle nudge 不能复用 dispatch 前清理逻辑；nudge 是对正在等待完成信号的 agent 提醒，发送 `C-c` 会把正在进行的 agent 工作打断。
+
+## 2026-05-13 Builder blocked 到 Unit Plan revision 恢复
+
+- Builder 在已批准 Unit Plan 后返回 `blocked` 不一定代表 Requirements 需要变更；当 blocker 指向实现计划缺口或未定义的相邻契约时，更合理的恢复路径是回到 Unit Plan revision。
+- `builder-summary.json` 中的 `runner_status=blocked` 或 `done_payload.status=blocked` 是 controller 可验证的恢复信号；自然语言错误输出不能作为唯一事实源。
+- Unit Plan revision prompt 必须优先携带 Builder `done_payload.summary`，否则 drafter 看不到真正的 blocker，容易继续生成同一个不可执行计划。
+- Requirements approval 在该恢复路径中应保持不变；只清除 Unit Plan approval，并重新进入 `WAITING_UNIT_PLAN_APPROVAL`。
+
 ## 需求
 - 最终验收阶段不应强迫只能选择同意，应保留清晰的人工确认路径。
 - Plannotator 启动不应因长期前台运行导致控制器 30 秒超时。

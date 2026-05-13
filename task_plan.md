@@ -63,6 +63,8 @@
 - [x] V0.5.4 Final Acceptance 已批准：完成人工评审防串聊提醒、强制 Requirements 澄清、正常 tmux dispatch 前清输入框、项目目标版本展示和版本规划规则。
 - [x] Requirements Draft 澄清等待默认延长到 2 小时；等待超时后保留 pending run，下次继续优先接回同一轮 `done.json` / body，不重新派发需求讨论。
 - [x] tmux-claude 派发后禁用歧义 submit retry，避免 Claude 完成后又处理同一个 dispatch；tmux-codex 的 prompt/input 重试保持不变。
+- [x] Builder `blocked` 后允许 `waygate revise --gate unit-plan` 回到 Unit Plan revision，保留 Requirements approval，并把 Builder blocker summary 注入 revision prompt。
+- [x] 人工评审提醒改为单行，下一轮 tmux dispatch 前用 `C-c C-u` 取消未提交多行草稿，避免中文/英文提醒残留进入下一轮 prompt。
 - **状态：** in_progress
 
 ### 阶段 7：控制器可靠性增强

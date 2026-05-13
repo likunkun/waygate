@@ -223,7 +223,7 @@ HUMAN_GATE_LABELS = {
     'bug-fix': 'Bug Fix',
 }
 HUMAN_REVIEW_TMUX_REMINDER = (
-    'Agent结论已形成，已进入人工评审阶段，请不要和Agent再继续沟通！\n'
+    'Agent结论已形成，已进入人工评审阶段，请不要和Agent再继续沟通！ '
     'The agent has reached its conclusion and the workflow is now in human review. '
     'Please do not continue chatting with the agent.'
 )
@@ -581,6 +581,68 @@ class RalphRefinerController:
         if gate == 'requirements' and reason.startswith('requirements gate invalid:'):
             return reason
         return None
+
+    def _builder_blocked_unit_plan_revision_feedback(self, state: dict[str, Any]) -> str:
+        current_unit_id = str(state.get('currentUnitId') or '').strip()
+        if not current_unit_id:
+            raise ValueError(
+                'Current state does not support Builder recovery to Unit Plan revision: currentUnitId is missing'
+            )
+        summary_path = self.artifacts_dir / current_unit_id / 'builder-summary.json'
+        if not summary_path.exists():
+            raise ValueError(
+                'Current state does not support Builder recovery to Unit Plan revision: '
+                f'missing {summary_path}'
+            )
+        try:
+            builder_summary = json.loads(summary_path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                'Current state does not support Builder recovery to Unit Plan revision: '
+                f'{summary_path} is not valid JSON'
+            ) from exc
+        if not isinstance(builder_summary, dict):
+            raise ValueError(
+                'Current state does not support Builder recovery to Unit Plan revision: '
+                f'{summary_path} is not a JSON object'
+            )
+
+        done_payload = builder_summary.get('done_payload')
+        if not isinstance(done_payload, dict):
+            done_payload = {}
+        runner_status = str(builder_summary.get('runner_status') or '').strip().lower()
+        done_status = str(done_payload.get('status') or '').strip().lower()
+        if runner_status != 'blocked' and done_status != 'blocked':
+            raise ValueError(
+                'Current state does not support Builder recovery to Unit Plan revision: '
+                f'{summary_path} does not show Builder blocked'
+            )
+
+        blocker_summary = str(done_payload.get('summary') or '').strip()
+        if not blocker_summary:
+            blocker_summary = 'Builder reported blocked but did not provide done_payload.summary.'
+        return (
+            '## Builder Blocked Summary\n\n'
+            'Builder returned `blocked` after the approved Unit Plan. '
+            'Treat this as Unit Plan revision context, not a Requirements change.\n\n'
+            f'{blocker_summary}\n\n'
+            f'Builder artifact: {summary_path}\n'
+        )
+
+    def _prepend_builder_blocked_unit_plan_feedback(
+        self,
+        builder_feedback: str,
+        revision_feedback: str,
+    ) -> str:
+        revision_feedback = revision_feedback.strip()
+        if not revision_feedback:
+            return builder_feedback.rstrip() + '\n'
+        return (
+            builder_feedback.rstrip()
+            + '\n\n## Existing Unit Plan Gate And Human Feedback\n\n'
+            + revision_feedback
+            + '\n'
+        )
 
     def _append_acceptance_obligations_from_feedback(
         self,
@@ -1004,7 +1066,13 @@ class RalphRefinerController:
 
     def _revise_unit_plan_gate(self, *, controller_validation_only: bool = False) -> Path:
         state = self.store.load_state()
-        if state.get('currentStep') != 'WAITING_UNIT_PLAN_APPROVAL':
+        current_step = state.get('currentStep')
+        builder_blocked_feedback: str | None = None
+        if current_step == 'WAITING_UNIT_PLAN_APPROVAL':
+            pass
+        elif current_step in {'PLAN_APPROVED', 'EXECUTE_UNIT'}:
+            builder_blocked_feedback = self._builder_blocked_unit_plan_revision_feedback(state)
+        else:
             raise ValueError('Unit plan can only be revised at WAITING_UNIT_PLAN_APPROVAL')
 
         gate_path = self.approvals_dir / 'unit-plan.md'
@@ -1013,11 +1081,17 @@ class RalphRefinerController:
                 f'Unit plan gate not found: {gate_path}. Run the unit plan drafter first.'
             )
 
-        state['unitPlanRevisionFeedback'], unit_plan_annotations = self._revision_feedback_and_annotations_for_gate(
+        revision_feedback, unit_plan_annotations = self._revision_feedback_and_annotations_for_gate(
             'unit-plan',
             gate_path,
             allow_controller_validation_only=controller_validation_only,
         )
+        if builder_blocked_feedback:
+            revision_feedback = self._prepend_builder_blocked_unit_plan_feedback(
+                builder_blocked_feedback,
+                revision_feedback,
+            )
+        state['unitPlanRevisionFeedback'] = revision_feedback
         state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
         if not controller_validation_only:
             obligation_feedback, obligation_annotations = self._acceptance_obligation_feedback_and_annotations_for_gate(
@@ -1035,6 +1109,9 @@ class RalphRefinerController:
         state['unitPlanAccepted'] = False
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
+        state['unitPlanDraftGenerated'] = False
+        state['status'] = 'active'
+        state['blockedReason'] = None
 
         try:
             self._run_controller_unit_plan_drafter(state)

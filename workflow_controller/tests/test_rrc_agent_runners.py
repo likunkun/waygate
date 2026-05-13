@@ -276,7 +276,7 @@ if args[:1] == ["send-keys"] and "/clear" not in args and args[-1:] == ["C-m"]:
 
     assert result.status == 'done'
     normal_commands = [json.loads(line) for line in normal_log.read_text(encoding='utf-8').splitlines()]
-    assert normal_commands[0] == ['send-keys', '-t', '1.2', 'C-u']
+    assert normal_commands[0] == ['send-keys', '-t', '1.2', 'C-c', 'C-u']
     assert normal_commands[1][0] == 'load-buffer'
     assert normal_commands[2] == ['paste-buffer', '-t', '1.2']
     assert normal_commands[3] == ['send-keys', '-t', '1.2', 'C-m']
@@ -358,12 +358,12 @@ elif args[:1] == ["send-keys"] and "\\u7ee7\\u7eed" in " ".join(args):
     clear_commands = [
         command
         for command in nudge_commands
-        if command == ['send-keys', '-t', '1.2', 'C-u']
+        if command == ['send-keys', '-t', '1.2', 'C-c', 'C-u']
         or command == ['send-keys', '-t', '1.2', '/clear', 'C-m']
     ]
-    assert clear_commands == [['send-keys', '-t', '1.2', 'C-u']]
+    assert clear_commands == [['send-keys', '-t', '1.2', 'C-c', 'C-u']]
     nudge_index = next(index for index, command in enumerate(nudge_commands) if '继续' in ' '.join(command))
-    assert not any(command == ['send-keys', '-t', '1.2', 'C-u'] for command in nudge_commands[nudge_index:])
+    assert not any(command == ['send-keys', '-t', '1.2', 'C-c', 'C-u'] for command in nudge_commands[nudge_index:])
     assert not any(command == ['send-keys', '-t', '1.2', '/clear', 'C-m'] for command in nudge_commands[nudge_index:])
 
 
@@ -835,7 +835,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not 
 
     assert result.status == 'done'
     log_lines = tmux_log.read_text(encoding='utf-8').splitlines()
-    assert log_lines[0] == 'send-keys -t 1.2 C-u'
+    assert log_lines[0] == 'send-keys -t 1.2 C-c C-u'
     assert 'send-keys -t 1.2 /clear C-m' not in log_lines
     assert log_lines[1:4] == [
         f'load-buffer {result.run_dir / "dispatch.md"}',

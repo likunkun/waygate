@@ -1,5 +1,22 @@
 # 进度日志
 
+## 会话：2026-05-13
+
+### Builder blocked 恢复与人工评审草稿清理
+- **状态：** complete
+- Builder `blocked` 后的 Unit Plan 修订入口已补齐：`waygate revise --gate unit-plan` 现在支持在 `PLAN_APPROVED` / `EXECUTE_UNIT` 且当前 unit 的 `builder-summary.json` 表示 blocked 时回到 Unit Plan revision。
+- Unit Plan revision prompt 会把 Builder `done_payload.summary` 放在最前面作为 blocker 上下文，并保留已有 Unit Plan gate / 人工反馈；Requirements approval 保留，Unit Plan approval hash 清除。
+- 人工评审防串聊提醒改为单行文本，避免在 Claude 输入框里制造多行草稿。
+- 正常 tmux dispatch 前的输入清理由 `C-u` 改为 `C-c C-u`：先取消未提交的多行草稿，再兜底清当前行；idle nudge 仍不清输入、不发送 `/clear`。
+- 已验证 RED/GREEN：旧清理实现只发 `C-u C-u C-u` 时新增用例失败；改为 `C-c C-u` 后通过。
+- 已验证：
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `32 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `157 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_builder.py -q` -> `5 passed`
+  - `python -m pytest workflow_controller/tests -q` -> `370 passed in 49.38s`
+- 已重新打包：`bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.4_all.deb`。
+- 打包验证通过：`python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`；`dpkg-deb --field dist/waygate_0.5.4_all.deb Package Version Architecture Depends` -> `waygate / 0.5.4 / all / python3`；解包检查确认包含 `DEFAULT_TMUX_CLEAR_INPUT_KEYS = ('C-c', 'C-u')`、单行人工评审提醒和 `Builder Blocked Summary`。
+
 ## 会话：2026-05-12
 
 ### V0.5.4 人工评审防串聊与强制 Requirements 澄清
