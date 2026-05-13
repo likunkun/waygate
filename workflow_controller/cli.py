@@ -156,6 +156,11 @@ def parse_args() -> argparse.Namespace:
         choices=['requirements', 'unit-plan'],
         help='Markdown human gate to revise',
     )
+    revise_parser.add_argument(
+        '--reason',
+        default=None,
+        help='Human reason to include in a requirements change request prompt',
+    )
 
     migrate_parser = subparsers.add_parser(
         'migrate',
@@ -288,7 +293,7 @@ def main() -> None:
 
     if args.command == 'revise':
         try:
-            gate_path = controller.revise_human_gate(args.gate)
+            gate_path = controller.revise_human_gate(args.gate, reason=getattr(args, 'reason', None))
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None

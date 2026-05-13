@@ -25,6 +25,7 @@ DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS = 1.0
 DEFAULT_TMUX_SUBMIT_RETRY_DELAY_SECONDS = 0.2
 DEFAULT_TMUX_POST_DONE_IDLE_POLL_SECONDS = 0.5
 DEFAULT_TMUX_CLEAR_INPUT_KEYS = ('C-c', 'C-u')
+DEFAULT_TMUX_CLEAR_INPUT_SETTLE_SECONDS = 0.2
 
 
 class TmuxClaudeRunner(BaseRunner):
@@ -95,7 +96,8 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     clear_commands = []
     if _tmux_clear_before_dispatch_enabled():
         clear_commands = [
-            [*tmux_command, 'send-keys', '-t', request.tmux_target, *_tmux_clear_input_keys()],
+            [*tmux_command, 'send-keys', '-t', request.tmux_target, key]
+            for key in _tmux_clear_input_keys()
         ]
     dispatch_commands = [
         [*tmux_command, 'load-buffer', str(dispatch_prompt_path)],
@@ -138,6 +140,13 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
                 done_path=done_path,
                 runner_metadata=runner_metadata,
             )
+        if command in clear_commands:
+            delay_seconds = _tmux_clear_input_settle_seconds()
+            _append_event(events_path, {
+                'event': 'tmux_clear_input_settle',
+                'seconds': delay_seconds,
+            })
+            time.sleep(delay_seconds)
         if command == dispatch_commands[1]:
             delay_seconds = _tmux_submit_delay_seconds(backend)
             _append_event(events_path, {
@@ -451,6 +460,19 @@ def _tmux_clear_before_dispatch_enabled() -> bool:
 
 def _tmux_clear_input_keys() -> tuple[str, ...]:
     return DEFAULT_TMUX_CLEAR_INPUT_KEYS
+
+
+def _tmux_clear_input_settle_seconds() -> float:
+    raw = (
+        os.environ.get('WAYGATE_TMUX_CLEAR_INPUT_SETTLE_SECONDS')
+        or os.environ.get('RRC_TMUX_CLEAR_INPUT_SETTLE_SECONDS')
+        or str(DEFAULT_TMUX_CLEAR_INPUT_SETTLE_SECONDS)
+    )
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_TMUX_CLEAR_INPUT_SETTLE_SECONDS
+    return max(0.0, value)
 
 
 def _tmux_idle_grace_seconds() -> float:

@@ -512,9 +512,9 @@ class RalphRefinerController:
             return f'final acceptance gate invalid: {exc}'
         return None
 
-    def revise_human_gate(self, gate: str) -> Path:
+    def revise_human_gate(self, gate: str, *, reason: str | None = None) -> Path:
         if gate == 'requirements':
-            return self._revise_requirements_gate()
+            return self._revise_requirements_gate(change_reason=reason)
         if gate == 'unit-plan':
             return self._revise_unit_plan_gate()
         raise ValueError(f'Unsupported gate revision: {gate}')
@@ -643,6 +643,109 @@ class RalphRefinerController:
             + revision_feedback
             + '\n'
         )
+
+    def _optional_builder_blocked_requirements_change_feedback(self, state: dict[str, Any]) -> str | None:
+        current_unit_id = str(state.get('currentUnitId') or '').strip()
+        if not current_unit_id:
+            return None
+        summary_path = self.artifacts_dir / current_unit_id / 'builder-summary.json'
+        if not summary_path.exists():
+            return None
+        try:
+            builder_summary = json.loads(summary_path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(builder_summary, dict):
+            return None
+
+        done_payload = builder_summary.get('done_payload')
+        if not isinstance(done_payload, dict):
+            done_payload = {}
+        runner_status = str(builder_summary.get('runner_status') or '').strip().lower()
+        done_status = str(done_payload.get('status') or '').strip().lower()
+        if runner_status != 'blocked' and done_status != 'blocked':
+            return None
+
+        blocker_summary = str(done_payload.get('summary') or '').strip()
+        if not blocker_summary:
+            blocker_summary = 'Builder reported blocked but did not provide done_payload.summary.'
+        return (
+            '## Recent Builder Blocked Summary\n\n'
+            'Builder returned `blocked` after the approved Unit Plan. '
+            'Use this as auxiliary context for the Requirements change request; '
+            'do not treat it as the only fact source.\n\n'
+            f'{blocker_summary}\n\n'
+            f'Builder artifact: {summary_path}\n'
+        )
+
+    def _requirements_change_revision_feedback(
+        self,
+        state: dict[str, Any],
+        *,
+        revision_feedback: str,
+        change_reason: str | None,
+        include_approved_requirements_change_context: bool,
+    ) -> str:
+        change_reason = (change_reason or '').strip() or None
+        if not change_reason and not include_approved_requirements_change_context:
+            return revision_feedback
+
+        sections: list[str] = []
+        if include_approved_requirements_change_context:
+            sections.append(
+                '## Approved Requirements Change Context\n\n'
+                '这是 approved Requirements 后的需求变更，不是 Unit Plan 返工。'
+                'Unit Plan 只能在已批准 Requirements 内调整实现方案；'
+                '如果已批准 Requirements 与可执行实现冲突，必须先变更 Requirements 并重新人工确认。\n\n'
+                '本次输出必须是完整的 Requirements Gate，而不是当前 unit 的局部需求。'
+                '当前 unit、Unit Plan 和 Builder blocker 只是变更定位上下文；'
+                '它们不能替代或缩小已批准 Requirements 的版本范围。\n'
+            )
+        if include_approved_requirements_change_context and revision_feedback.strip():
+            sections.append(
+                '## Approved Requirements Baseline (Preserve Unless Explicitly Changed)\n\n'
+                '下面是本次变更前已经 approved 的完整 Requirements baseline。'
+                '必须保留所有未被本次 `--reason` 或人工反馈明确修改的已批准 Requirements、AC、Journey、'
+                'Design/Architecture traceability、范围外、测试策略和人工审阅清单。\n\n'
+                '不要把 Requirements 收缩为当前 unit、Builder blocker 或 Unit Plan 片段。'
+                '只把本次变更作为 delta 合并进完整 baseline；'
+                '如果某条旧需求不受本次变更影响，必须原样或等价保留。\n\n'
+                + revision_feedback.strip()
+                + '\n'
+            )
+        if change_reason:
+            sections.append(
+                '## Human Change Reason\n\n'
+                f'{change_reason}\n'
+            )
+        if include_approved_requirements_change_context:
+            unit_plan_path = self.approvals_dir / 'unit-plan.md'
+            if unit_plan_path.exists():
+                unit_plan_context = _strip_html_comments(unit_plan_path.read_text(encoding='utf-8')).strip()
+                sections.append(
+                    '## Current Unit Plan Constraint Context\n\n'
+                    'The current approved Unit Plan may contain constraints that caused the conflict. '
+                    'Use this as context for updating Requirements; do not preserve these constraints '
+                    'if the Requirements change intentionally supersedes them.\n\n'
+                    f'{unit_plan_context}\n'
+                )
+            builder_feedback = self._optional_builder_blocked_requirements_change_feedback(state)
+            if builder_feedback:
+                sections.append(builder_feedback.rstrip())
+            sections.append(
+                '## Requirements Drafter Instructions For This Change\n\n'
+                '- 把变更落实到 Requirements 的需求、验收标准、架构约束、范围外和测试策略；不要只写在评论或说明里。\n'
+                '- 更新 AC、Design/Architecture Traceability、Journey、Test Strategy 和 Out of Scope，使新的约束可被 Unit Plan 消费。\n'
+                '- 保留 approved baseline 中所有未受影响的需求；不要因为当前执行单元较窄而删除自动生成、小眼睛、前端 UX、closure/E2E 等后续单元需求。\n'
+                '- Builder blocked summary 只是辅助上下文；最终需求内容必须以用户变更原因、现有 Requirements 和人工审阅为准。\n'
+            )
+        if revision_feedback.strip() and not include_approved_requirements_change_context:
+            sections.append(
+                '## Existing Requirements Gate, Validation Feedback, And Human Feedback\n\n'
+                + revision_feedback.strip()
+                + '\n'
+            )
+        return '\n\n'.join(section.rstrip() for section in sections).rstrip() + '\n'
 
     def _append_acceptance_obligations_from_feedback(
         self,
@@ -972,11 +1075,28 @@ class RalphRefinerController:
             if current_unit_id in (coverage.get('units') or []):
                 coverage['status'] = 'partial'
 
-    def _revise_requirements_gate(self, *, controller_validation_only: bool = False) -> Path:
+    def _revise_requirements_gate(
+        self,
+        *,
+        controller_validation_only: bool = False,
+        change_reason: str | None = None,
+    ) -> Path:
         state = self.store.load_state()
-        if state.get('currentStep') not in {'WAITING_REQUIREMENTS_ACCEPTANCE', 'WAITING_UNIT_PLAN_APPROVAL'}:
+        current_step = str(state.get('currentStep') or '')
+        if current_step == 'WAITING_FINAL_ACCEPTANCE':
             raise ValueError(
-                'Requirements can only be revised before unit plan approval'
+                'Requirements cannot be revised directly at WAITING_FINAL_ACCEPTANCE; '
+                'use the final acceptance rejection route and select Requirements revision.'
+            )
+        if current_step not in {
+            'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'WAITING_UNIT_PLAN_APPROVAL',
+            'PLAN_APPROVED',
+            'EXECUTE_UNIT',
+        }:
+            raise ValueError(
+                'Requirements can only be revised at WAITING_REQUIREMENTS_ACCEPTANCE, '
+                'WAITING_UNIT_PLAN_APPROVAL, PLAN_APPROVED, or EXECUTE_UNIT'
             )
 
         gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
@@ -987,7 +1107,13 @@ class RalphRefinerController:
 
         before_body = gate_body(gate_path.read_text(encoding='utf-8'))
         controller_validation_error = self._validation_feedback_for_gate('requirements')
-        state['requirementsRevisionFeedback'], requirements_annotations = self._revision_feedback_and_annotations_for_gate('requirements', gate_path)
+        raw_revision_feedback, requirements_annotations = self._revision_feedback_and_annotations_for_gate('requirements', gate_path)
+        state['requirementsRevisionFeedback'] = self._requirements_change_revision_feedback(
+            state,
+            revision_feedback=raw_revision_feedback,
+            change_reason=change_reason,
+            include_approved_requirements_change_context=current_step in {'PLAN_APPROVED', 'EXECUTE_UNIT'},
+        )
         state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
         revision_count = int(state.get('requirementsRevisionCount') or 0)
         revision_feedback = state['requirementsRevisionFeedback']
@@ -1010,7 +1136,10 @@ class RalphRefinerController:
         state.pop('requirementsAcceptedBy', None)
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
+        state['requirementsDraftGenerated'] = False
         state['unitPlanDraftGenerated'] = False
+        state['status'] = 'active'
+        state['blockedReason'] = None
         (self.approvals_dir / 'unit-plan.md').unlink(missing_ok=True)
 
         run_requirements_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)
@@ -3941,6 +4070,12 @@ def _process_is_alive(process_id: Any) -> bool:
     if pid <= 0:
         return False
     try:
+        waited_pid, _status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        waited_pid = 0
+    if waited_pid == pid:
+        return False
+    try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
@@ -4546,6 +4681,11 @@ def parse_args() -> argparse.Namespace:
         choices=['requirements', 'unit-plan'],
         help='Markdown human gate to revise',
     )
+    revise_parser.add_argument(
+        '--reason',
+        default=None,
+        help='Human reason to include in a requirements change request prompt',
+    )
 
     migrate_parser = subparsers.add_parser(
         'migrate',
@@ -4735,7 +4875,7 @@ def main() -> None:
 
     if args.command == 'revise':
         try:
-            gate_path = controller.revise_human_gate(args.gate)
+            gate_path = controller.revise_human_gate(args.gate, reason=getattr(args, 'reason', None))
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None

@@ -1062,6 +1062,129 @@ def test_revise_requirements_gate_can_rewind_from_unit_plan_approval(tmp_path: P
     assert state['unitPlanAccepted'] is False
 
 
+def test_revise_requirements_gate_can_rewind_from_plan_approved_with_reason(tmp_path: Path) -> None:
+    workspace, _ = _make_target_workspace(tmp_path)
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'target-v1-8-1',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'PLAN_APPROVED',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V1.8.1',
+            'feasibleOutcome': 'V1.8.1',
+            'scopeApproved': True,
+            'agentRunner': 'subprocess',
+            'workspacePath': str(workspace),
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req-approved',
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:unit-approved',
+            'unitPlanAcceptedBy': 'human',
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '- Must use the CLI Proxy Management API for disable/restore.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '- Keep the approved API-only proxy implementation plan.\n',
+        encoding='utf-8',
+    )
+    reason = '允许保留副本 + 删除/创建作为 disable/restore 替代策略。'
+
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--reason',
+        reason,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'gate=requirements status=revised' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsAccepted'] is False
+    assert state['unitPlanAccepted'] is False
+    assert 'requirementsAcceptedHash' not in state
+    assert 'unitPlanAcceptedHash' not in state
+    assert state['requirementsRevisionCount'] == 1
+    assert not (approvals_dir / 'unit-plan.md').exists()
+    revision = json.loads((state_dir / 'artifacts' / 'requirements-revisions' / 'revision-1.json').read_text(encoding='utf-8'))
+    assert reason in revision['feedback']
+    assert '这是 approved Requirements 后的需求变更，不是 Unit Plan 返工' in revision['feedback']
+    change_request = json.loads((state_dir / 'change_requests.jsonl').read_text(encoding='utf-8').splitlines()[0])
+    assert change_request['status'] == 'pending_requirements_approval'
+    assert reason in change_request['reason']
+
+
+def test_revise_requirements_gate_rejects_direct_final_acceptance_rewind(tmp_path: Path) -> None:
+    workspace, _ = _make_target_workspace(tmp_path)
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'agentRunner': 'subprocess',
+            'workspacePath': str(workspace),
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': True},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text('# Requirements\n', encoding='utf-8')
+
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--reason',
+        'change requirements from final acceptance',
+    )
+
+    assert result.returncode != 0
+    assert 'final acceptance rejection route' in result.stderr
+    assert 'Traceback' not in result.stderr
+
+
 def test_revise_unit_plan_gate_reruns_tmux_drafter_with_human_feedback(tmp_path: Path) -> None:
     workspace, _ = _make_target_workspace(tmp_path)
     fake_tmux = tmp_path / 'tmux'

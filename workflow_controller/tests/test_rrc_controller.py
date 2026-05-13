@@ -14,6 +14,7 @@ from typing import Any
 import workflow_controller.rrc_controller as rrc_controller_module
 import workflow_controller.cli as cli_module
 from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
+from workflow_controller.steps.requirements import run_requirements_drafter
 from workflow_controller.steps._common import TestStrategistBlocked as StrategistBlocked
 from workflow_controller.state_machine.transitions import reconcile_state, validate_objective_coverage
 
@@ -761,6 +762,7 @@ def _fake_agent_result(request, *, status: str = 'done', returncode: int = 0, st
         stderr=stderr,
         run_dir=request.artifact_dir,
         prompt_path=request.prompt_path,
+        done_path=None,
         done_payload={},
         runner_metadata={
             'role': request.role,
@@ -6952,6 +6954,276 @@ def test_revise_unit_plan_after_builder_blocked_preserves_requirements_and_injec
     assert state['requirementsAcceptedBy'] == 'human'
     assert state['unitPlanRevisionCount'] == 1
     assert not (state_dir / 'change_requests.jsonl').exists()
+
+
+def test_revise_requirements_after_plan_approved_reopens_requirements_change_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    reason = (
+        '允许 proxy-collector 在 CLI Proxy API 不支持 disable/restore 时，'
+        '以保留副本 + 删除/创建作为禁用/恢复替代策略。'
+    )
+    blocker = 'CLI Proxy API lacks disable/restore endpoints for the approved Unit Plan.'
+    controller.init_state(
+        {
+            'task_id': 'target-v1-8-1',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'PLAN_APPROVED',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V1.8.1',
+            'feasibleOutcome': 'V1.8.1',
+            'scopeApproved': True,
+            'autoApprove': True,
+            'agentRunner': 'tmux-claude',
+            'workspacePath': str(workspace),
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req-approved',
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:unit-approved',
+            'unitPlanAcceptedBy': 'human',
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Proxy collector controls proxy lifecycle', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Proxy collector', 'scope': ['Implement disable/restore'], 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 1. Requirements\n'
+        '- Proxy collector must use the CLI Proxy Management API for disable and restore.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Constraints\n'
+        '- Builder must call CLI Proxy Management API disable/restore operations and must not delete/recreate proxies.\n\n'
+        '## Controller State Patch\n\n'
+        '```json\n'
+        '{"currentUnitId": "unit-01"}\n'
+        '```\n\n'
+        '## Human Confirmation\n\n'
+        'Status: approved\n'
+        'Confirmed by: human\n'
+        'Content hash: sha256:unit-approved\n',
+        encoding='utf-8',
+    )
+    unit_dir = state_dir / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / 'builder-summary.json').write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {
+                    'status': 'blocked',
+                    'summary': blocker,
+                    'run_id': 'builder-run',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+    prompts: list[str] = []
+
+    def fake_run_agent_backend(request):
+        prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        (request.artifact_dir / 'requirements-body.md').write_text(
+            '# 需求与验收确认\n\n'
+            '## 1. 需求\n'
+            '- Proxy collector may preserve a copy and delete/recreate when CLI disable/restore is unavailable.\n\n'
+            '## 2. 用户旅程\n'
+            '- User disables and restores a proxy through the supported fallback.\n\n'
+            '## 3. 验收标准\n'
+            '- AC-01 [verification: integration]: fallback disable/restore is observable.\n\n'
+            '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）\n'
+            '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+            '| --- | --- | --- | --- | --- |\n\n'
+            '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）\n'
+            '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+            '| --- | --- | --- | --- |\n'
+            '| AC-01 | ## 7. 产品设计概要 | ## 8. 架构概要 | traced |\n\n'
+            '## 5. 测试策略（Test Strategy）\n'
+            '- Run integration tests for fallback behavior.\n\n'
+            '## 6. 范围外\n'
+            '- Replacing unrelated proxy features.\n\n'
+            '## 7. 产品设计概要\n'
+            '- CLI output shows fallback state.\n\n'
+            '## 8. 架构概要\n'
+            '- Proxy lifecycle strategy chooses API or fallback.\n\n'
+            '## 9. 人工审阅清单\n'
+            '- [ ] Review fallback scope.\n',
+            encoding='utf-8',
+        )
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_requirements_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    controller.revise_human_gate('requirements', reason=reason)
+
+    assert prompts, 'Expected Requirements drafter prompt to be captured'
+    prompt = prompts[0]
+    assert reason in prompt
+    assert '这是 approved Requirements 后的需求变更，不是 Unit Plan 返工' in prompt
+    assert 'Builder must call CLI Proxy Management API disable/restore operations' in prompt
+    assert blocker in prompt
+    assert '需求、验收标准、架构约束、范围外和测试策略' in prompt
+    assert '```json' in prompt
+    assert '\n````md\n## Approved Requirements Change Context' in prompt
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsAccepted'] is False
+    assert state['unitPlanAccepted'] is False
+    assert 'requirementsAcceptedHash' not in state
+    assert 'requirementsAcceptedBy' not in state
+    assert 'unitPlanAcceptedHash' not in state
+    assert 'unitPlanAcceptedBy' not in state
+    assert state['requirementsRevisionCount'] == 1
+    assert state['pendingRequirementChangeRequestIds'] == ['CR-0001']
+    assert not (approvals_dir / 'unit-plan.md').exists()
+
+    revision = json.loads((state_dir / 'artifacts' / 'requirements-revisions' / 'revision-1.json').read_text(encoding='utf-8'))
+    assert reason in revision['feedback']
+    assert blocker in revision['feedback']
+    change_requests = [
+        json.loads(line)
+        for line in (state_dir / 'change_requests.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert len(change_requests) == 1
+    assert change_requests[0]['id'] == 'CR-0001'
+    assert change_requests[0]['status'] == 'pending_requirements_approval'
+    assert change_requests[0]['source'] == 'requirements_revision'
+    assert reason in change_requests[0]['reason']
+
+
+def test_revise_requirements_after_plan_approved_preserves_approved_baseline_before_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    reason = '允许用 CLI Proxy 原生状态化契约解锁 disable/restore，不改变前端自动生成和小眼睛需求。'
+    blocker = 'Builder is blocked on CLI Proxy disable/restore semantics.'
+    controller.init_state(
+        {
+            'task_id': 'target-v1-8-1',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'PLAN_APPROVED',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V1.8.1',
+            'feasibleOutcome': 'V1.8.1',
+            'scopeApproved': True,
+            'autoApprove': True,
+            'agentRunner': 'tmux-claude',
+            'workspacePath': str(workspace),
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req-approved',
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:unit-approved',
+            'unitPlanAcceptedBy': 'human',
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'V1.8.1 full target', 'units': ['unit-01', 'unit-02'], 'status': 'partial'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'CLI Proxy contract unlock',
+                    'scope': ['Only unlock CLI Proxy disable/restore contract'],
+                    'passes': False,
+                },
+                {
+                    'id': 'unit-02',
+                    'name': 'Frontend UX',
+                    'scope': ['Implement auto-generate and reveal controls'],
+                    'passes': False,
+                },
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 1. Requirements\n'
+        '- RQ-01: CLI Proxy must support disable/restore semantics.\n'
+        '- RQ-02: 新增真实 KEY 时必须提供自动生成按钮。\n'
+        '- RQ-03: 列表、新增表单、已有 KEY 编辑场景都必须支持小眼睛查看完整 KEY。\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-01 [verification: integration]: disable/restore semantics work.\n'
+        '- AC-05 [verification: functional]: 自动生成按钮回填兼容 KEY。\n'
+        '- AC-04 [verification: manual]: 小眼睛显示/隐藏完整 KEY。\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Current Unit\n'
+        '- Current unit is only the CLI Proxy contract unlock.\n\n'
+        '## Controller State Patch\n\n'
+        '```json\n'
+        '{"currentUnitId": "unit-01"}\n'
+        '```\n',
+        encoding='utf-8',
+    )
+    unit_dir = state_dir / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / 'builder-summary.json').write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {
+                    'status': 'blocked',
+                    'summary': blocker,
+                    'run_id': 'builder-run',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+    prompts: list[str] = []
+
+    def fake_run_agent_backend(request):
+        prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        (request.artifact_dir / 'requirements-body.md').write_text(
+            '# 需求与验收确认\n\n'
+            '## 1. 需求\n'
+            '- Revised full target requirements.\n',
+            encoding='utf-8',
+        )
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_requirements_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    controller.revise_human_gate('requirements', reason=reason)
+
+    prompt = prompts[0]
+    assert '## Approved Requirements Baseline (Preserve Unless Explicitly Changed)' in prompt
+    assert '必须保留所有未被本次 `--reason` 或人工反馈明确修改的已批准 Requirements' in prompt
+    assert '不要把 Requirements 收缩为当前 unit、Builder blocker 或 Unit Plan 片段' in prompt
+    assert 'RQ-02: 新增真实 KEY 时必须提供自动生成按钮' in prompt
+    assert 'RQ-03: 列表、新增表单、已有 KEY 编辑场景都必须支持小眼睛查看完整 KEY' in prompt
+    assert prompt.index('RQ-02: 新增真实 KEY') < prompt.index('## Current Unit Plan Constraint Context')
+    assert prompt.index('## Approved Requirements Baseline') < prompt.index(blocker)
 
 
 def test_drive_can_reject_final_acceptance_and_return_to_builder(tmp_path: Path) -> None:

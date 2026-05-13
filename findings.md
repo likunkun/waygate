@@ -1,11 +1,29 @@
 # 发现与决策
 
+## 2026-05-13 Approved Unit Plan 后 Requirements Change
+
+- Requirements 是 Unit Plan 和 Builder 的上游约束源；当 approved Requirements 写死某个不可执行策略时，Unit Plan revision 不能合法绕过它，必须先创建 Requirements change request。
+- `waygate revise --gate requirements --reason ...` 在 `PLAN_APPROVED` / `EXECUTE_UNIT` 中代表用户显式要求变更已批准 Requirements，因此应同时失效 Requirements 和 Unit Plan approval，并重新进入 Requirements 人工确认。
+- Builder blocked summary 只适合作为 Requirements revision prompt 的辅助证据；它不能替代用户变更原因、当前 Requirements、Unit Plan 约束和后续人工审批。
+- Final Acceptance 阶段已经有带路由选择的 rejection gate；直接 `revise --gate requirements` 会绕过终验路由语义，因此仍应提示使用 final acceptance rejection route。
+- Requirements revision prompt 可能嵌入 Unit Plan 的 fenced JSON patch；外层 Markdown fence 必须根据内容自适应长度，避免 prompt 结构被内层 code fence 截断。
+- 8 号窗口现场证明仅“把旧 gate 放进反馈上下文”不够：旧 approved Requirements 被埋在 Unit Plan 与 Builder blocker 之后时，drafter 会把需求误收缩为当前 unit 的 blocker 修订，丢掉后续单元需求。Approved Requirements change 必须把旧 gate 明确标成 baseline，并要求 preserve-unless-explicitly-changed。
+- Unit Plan、当前 unit 和 Builder blocked summary 在 Requirements change prompt 中只能作为 delta/context；它们不能作为需求范围事实源，也不能影响旧 Requirements 中未被 `--reason` 或人工反馈明确修改的 AC、Journey、Design/Architecture、Out of Scope 和 Test Strategy。
+
+## 2026-05-13 Plannotator 短命进程等待问题
+
+- Plannotator runner 看到 review link 后会先返回给 controller；如果被调用进程打印链接后立即退出，后续 `_wait_for_plannotator_gate_decision()` 只能通过 `process_id` 判断进程状态。
+- 仅使用 `os.kill(pid, 0)` 会把已退出但未回收的子进程 zombie 当成仍然 alive，导致 controller 无限等待 Plannotator 决策，测试和现场都无法消费后续 `r/q` 输入。
+- `_process_is_alive()` 对当前子进程应优先调用 `os.waitpid(pid, os.WNOHANG)`：返回 pid 表示已退出并可视为 closed；非子进程或已被回收时再回退到 `os.kill(pid, 0)`。
+
 ## 2026-05-13 人工评审提醒草稿清理
 
 - 人工评审提醒原先是中英文两行，controller 只粘贴、不提交；下一轮正常 dispatch 前只发送一次 `C-u`，在 Claude 多行输入框里只能保证清理光标所在行，无法可靠移除整段未提交草稿。
 - 修复边界应在 runner 派发前清理输入草稿：先发 `C-c` 取消当前未提交输入，再发 `C-u` 兜底清当前行；不能用 `/clear`，否则会清掉 agent 会话上下文。
 - 为避免后续再次制造多行残留，人工评审提醒应保持单行文本；视觉换行由终端宽度自然处理，不写入实际 newline。
 - idle nudge 不能复用 dispatch 前清理逻辑；nudge 是对正在等待完成信号的 agent 提醒，发送 `C-c` 会把正在进行的 agent 工作打断。
+- 8 号窗口现场进一步证明，`tmux send-keys C-c C-u` 返回码为 0 只能说明按键已交给 tmux，不能证明 Claude TUI 已处理完成。现场 06:46:31 的 events 显示清理命令和 `paste-buffer` 相隔不到 10ms，导致旧人工评审提醒仍作为多行输入前缀保留，并和新的 `workflow-controller dispatch` 拼到一起。
+- 清理必须拆成两个 tmux 命令：先 `C-c`，等待短暂 settle，再 `C-u`，再等待短暂 settle，最后才 paste 新 dispatch。该 settle 不是 idle nudge，也不能应用到 nudge 阶段。
 
 ## 2026-05-13 Builder blocked 到 Unit Plan revision 恢复
 

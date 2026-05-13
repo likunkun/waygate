@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 from workflow_controller.acceptance_obligations import render_acceptance_obligations_markdown
 from workflow_controller.requirements_dialogue_brief import render_requirements_dialogue_brief_prompt_section
 from workflow_controller.steps._common import _find_unit
+
+
+def _markdown_code_fence_for(text: str) -> str:
+    longest = 2
+    for match in re.finditer(r'`{3,}', text):
+        longest = max(longest, len(match.group(0)))
+    return '`' * max(3, longest + 1)
 
 
 def _render_requirements_draft_prompt(state: dict[str, Any], body_path: Path) -> str:
@@ -34,12 +42,13 @@ Do not collapse multiple AO items into one vague requirement.
     revision_feedback = state.get('requirementsRevisionFeedback')
     revision_section = ''
     if revision_feedback:
+        revision_fence = _markdown_code_fence_for(str(revision_feedback))
         revision_section = f"""
 已有草案及人工批注：
 
-```md
+{revision_fence}md
 {revision_feedback}
-```
+{revision_fence}
 
 Controller 会记录本轮 requirements revision diff artifact；请解决这些反馈，但不要复制审阅评论。
 除非审阅意见本身属于最终需求内容，否则不要把审阅者评论原样带入正文。

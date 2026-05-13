@@ -276,10 +276,11 @@ if args[:1] == ["send-keys"] and "/clear" not in args and args[-1:] == ["C-m"]:
 
     assert result.status == 'done'
     normal_commands = [json.loads(line) for line in normal_log.read_text(encoding='utf-8').splitlines()]
-    assert normal_commands[0] == ['send-keys', '-t', '1.2', 'C-c', 'C-u']
-    assert normal_commands[1][0] == 'load-buffer'
-    assert normal_commands[2] == ['paste-buffer', '-t', '1.2']
-    assert normal_commands[3] == ['send-keys', '-t', '1.2', 'C-m']
+    assert normal_commands[0] == ['send-keys', '-t', '1.2', 'C-c']
+    assert normal_commands[1] == ['send-keys', '-t', '1.2', 'C-u']
+    assert normal_commands[2][0] == 'load-buffer'
+    assert normal_commands[3] == ['paste-buffer', '-t', '1.2']
+    assert normal_commands[4] == ['send-keys', '-t', '1.2', 'C-m']
     assert ['send-keys', '-t', '1.2', '/clear', 'C-m'] not in normal_commands
 
     disabled_log = tmp_path / 'disabled-tmux.log'
@@ -358,12 +359,17 @@ elif args[:1] == ["send-keys"] and "\\u7ee7\\u7eed" in " ".join(args):
     clear_commands = [
         command
         for command in nudge_commands
-        if command == ['send-keys', '-t', '1.2', 'C-c', 'C-u']
+        if command == ['send-keys', '-t', '1.2', 'C-c']
+        or command == ['send-keys', '-t', '1.2', 'C-u']
         or command == ['send-keys', '-t', '1.2', '/clear', 'C-m']
     ]
-    assert clear_commands == [['send-keys', '-t', '1.2', 'C-c', 'C-u']]
+    assert clear_commands == [
+        ['send-keys', '-t', '1.2', 'C-c'],
+        ['send-keys', '-t', '1.2', 'C-u'],
+    ]
     nudge_index = next(index for index, command in enumerate(nudge_commands) if '继续' in ' '.join(command))
-    assert not any(command == ['send-keys', '-t', '1.2', 'C-c', 'C-u'] for command in nudge_commands[nudge_index:])
+    assert not any(command == ['send-keys', '-t', '1.2', 'C-c'] for command in nudge_commands[nudge_index:])
+    assert not any(command == ['send-keys', '-t', '1.2', 'C-u'] for command in nudge_commands[nudge_index:])
     assert not any(command == ['send-keys', '-t', '1.2', '/clear', 'C-m'] for command in nudge_commands[nudge_index:])
 
 
@@ -428,7 +434,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["Enter"]:
     assert events[0]['backend'] == 'tmux-codex'
     submit_delay = next(event for event in events if event.get('event') == 'tmux_submit_delay')
     assert submit_delay['seconds'] == 2.0
-    assert sleep_calls == [2.0]
+    assert sleep_calls == [0.2, 0.2, 2.0]
 
 
 def test_tmux_codex_submit_key_can_be_overridden(tmp_path: Path, monkeypatch) -> None:
@@ -528,7 +534,7 @@ if sys.argv[1:2] == ["capture-pane"]:
     ]
     retry_event = next(event for event in events if event.get('event') == 'tmux_codex_submit_retry')
     assert retry_event['reason'] == 'prompt_still_in_input'
-    assert sleep_calls == [2.0, 1.0]
+    assert sleep_calls == [0.2, 0.2, 2.0, 1.0]
 
 
 def test_tmux_codex_retries_submit_when_codex_collapses_pasted_input(tmp_path: Path, monkeypatch) -> None:
@@ -579,7 +585,7 @@ if sys.argv[1:2] == ["capture-pane"]:
     assert result.status == 'done'
     log = tmux_log.read_text(encoding='utf-8')
     assert log.count('send-keys -t 1.2 Enter') == 2
-    assert sleep_calls == [2.0, 1.0]
+    assert sleep_calls == [0.2, 0.2, 2.0, 1.0]
 
 
 def test_tmux_codex_retries_submit_when_agent_is_not_working_after_submit(tmp_path: Path, monkeypatch) -> None:
@@ -636,7 +642,7 @@ if sys.argv[1:2] == ["capture-pane"]:
     ]
     retry_event = next(event for event in events if event.get('event') == 'tmux_codex_submit_retry')
     assert retry_event['reason'] == 'agent_not_working_after_submit'
-    assert sleep_calls == [2.0, 1.0]
+    assert sleep_calls == [0.2, 0.2, 2.0, 1.0]
 
 
 def test_tmux_codex_waits_for_pane_to_leave_working_state_after_done(
@@ -698,7 +704,7 @@ if sys.argv[1:2] == ["capture-pane"]:
     ]
     assert any(event.get('event') == 'tmux_agent_busy_after_done' for event in events)
     assert any(event.get('event') == 'tmux_agent_idle_after_done' for event in events)
-    assert sleep_calls == [2.0, 0.1]
+    assert sleep_calls == [0.2, 0.2, 2.0, 0.1]
 
 
 def test_tmux_claude_runner_pastes_short_dispatch_that_points_to_full_prompt(tmp_path: Path) -> None:
@@ -797,12 +803,18 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert f'DONE_FILE: {result.done_path.resolve()}' in dispatch_text
 
 
-def test_tmux_claude_runner_clears_input_without_clearing_session_by_default(tmp_path: Path) -> None:
+def test_tmux_claude_runner_clears_input_without_clearing_session_by_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     prompt_path = workspace / 'prompt.md'
     _write(prompt_path, 'Implement this unit.')
     tmux_log = tmp_path / 'tmux.log'
+    sleep_calls: list[float] = []
+    monkeypatch.setenv('RRC_TMUX_SUBMIT_DELAY_SECONDS', '0')
+    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
     fake_tmux = _make_executable(
         tmp_path / 'tmux',
         f"""#!/usr/bin/env python3
@@ -835,13 +847,15 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"] and "/clear" not 
 
     assert result.status == 'done'
     log_lines = tmux_log.read_text(encoding='utf-8').splitlines()
-    assert log_lines[0] == 'send-keys -t 1.2 C-c C-u'
+    assert log_lines[0] == 'send-keys -t 1.2 C-c'
+    assert log_lines[1] == 'send-keys -t 1.2 C-u'
     assert 'send-keys -t 1.2 /clear C-m' not in log_lines
-    assert log_lines[1:4] == [
+    assert log_lines[2:5] == [
         f'load-buffer {result.run_dir / "dispatch.md"}',
         'paste-buffer -t 1.2',
         'send-keys -t 1.2 C-m',
     ]
+    assert sleep_calls == [0.2, 0.2, 0.0]
 
 
 def test_tmux_claude_runner_legacy_clear_opt_out_disables_input_clear(

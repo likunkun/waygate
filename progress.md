@@ -2,20 +2,41 @@
 
 ## 会话：2026-05-13
 
+### Requirements Change 回退入口
+- **状态：** complete
+- 已补齐 `waygate revise --gate requirements --reason "<reason>"`：在 `PLAN_APPROVED` / `EXECUTE_UNIT` 且 Requirements 与 Unit Plan 已批准后，用户可显式创建 Requirements change request 并回到 Requirements 人工确认。
+- Requirements revision prompt 会明确标注“这是 approved Requirements 后的需求变更，不是 Unit Plan 返工”，注入人工 `--reason`、当前 Unit Plan 约束上下文，以及最近 Builder blocked summary（如存在）；drafter 被要求把变更落到需求、AC、架构约束、范围外和测试策略中。
+- 现场 8 号窗口 `/home/lichangkun/code/proxy-collector/.rrc-controller-v1.8.1` 复核确认：旧 approved Requirements 已在 prompt 中，但被放在 Unit Plan/blocker 后且只标成普通 feedback，导致新草案收缩成当前 CLI Proxy blocker 相关需求，丢掉“自动生成”“小眼睛”和 AC-04/AC-05 等后续单元需求。
+- 已修复 Requirements change prompt：新增 `Approved Requirements Baseline (Preserve Unless Explicitly Changed)` section，把旧 approved gate 提升为必须保留的完整 baseline，并明确要求不要把 Requirements 收缩为当前 unit、Builder blocker 或 Unit Plan 片段；Unit Plan/blocker 只作为 delta 上下文。
+- 回退会清除 Requirements / Unit Plan approval 状态与 hash/actor，删除当前 `approvals/unit-plan.md`，追加 `change_requests.jsonl` 的 `pending_requirements_approval` 记录，增加 `requirementsRevisionCount`，并回到 `WAITING_REQUIREMENTS_ACCEPTANCE`。
+- `WAITING_FINAL_ACCEPTANCE` 仍不允许直接 `revise --gate requirements`，错误提示改为使用 final acceptance rejection route 选择 Requirements revision。
+- Requirements revision prompt 的 Markdown code fence 现在会根据反馈内容自适应长度，避免 Unit Plan 的 fenced Controller State Patch 破坏外层 prompt。
+- 修复验证中暴露 Plannotator 短命进程 hang：fake Plannotator 打印链接后退出会留下未回收子进程，旧 `_process_is_alive()` 用 `os.kill(pid, 0)` 把 zombie 当成 alive，导致 `drive` 一直等待浏览器决策；现在先用 `waitpid(..., WNOHANG)` 识别并回收已退出子进程。
+- 已验证 RED/GREEN：新增 approved Unit Plan 后 Requirements revision、approved baseline 保留、CLI `--reason`、Final Acceptance 禁止直返 Requirements，以及 Plannotator 短命进程不再卡住的回归覆盖。
+- 已验证：
+  - `timeout 10 python -m pytest workflow_controller/tests/test_rrc_controller.py::test_drive_blocks_revise_after_plannotator_when_feedback_is_not_submitted -q` -> 修复前超时退出 `124`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_drive_blocks_revise_after_plannotator_when_feedback_is_not_submitted -q` -> `1 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_revise_requirements_after_plan_approved_preserves_approved_baseline_before_blocker workflow_controller/tests/test_rrc_controller.py::test_revise_requirements_after_plan_approved_reopens_requirements_change_request -q` -> `2 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `45 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `159 passed in 11.42s`
+  - `python -m pytest workflow_controller/tests -q` -> `374 passed in 48.61s`
+- 已重新打包：`bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.4_all.deb`。
+- 打包验证通过：`python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`；`dpkg-deb --field dist/waygate_0.5.4_all.deb Package Version Architecture Depends` -> `waygate / 0.5.4 / all / python3`；解包检查确认包内包含 `Approved Requirements Baseline (Preserve Unless Explicitly Changed)`、`不要把 Requirements 收缩为当前 unit`、`os.waitpid(pid, os.WNOHANG)` 和 `--reason`；解包后 `python3 -m workflow_controller.cli revise --help` 可显示 `--reason REASON`。
+
 ### Builder blocked 恢复与人工评审草稿清理
 - **状态：** complete
 - Builder `blocked` 后的 Unit Plan 修订入口已补齐：`waygate revise --gate unit-plan` 现在支持在 `PLAN_APPROVED` / `EXECUTE_UNIT` 且当前 unit 的 `builder-summary.json` 表示 blocked 时回到 Unit Plan revision。
 - Unit Plan revision prompt 会把 Builder `done_payload.summary` 放在最前面作为 blocker 上下文，并保留已有 Unit Plan gate / 人工反馈；Requirements approval 保留，Unit Plan approval hash 清除。
 - 人工评审防串聊提醒改为单行文本，避免在 Claude 输入框里制造多行草稿。
 - 正常 tmux dispatch 前的输入清理由 `C-u` 改为 `C-c C-u`：先取消未提交的多行草稿，再兜底清当前行；idle nudge 仍不清输入、不发送 `/clear`。
+- 8 号窗口现场复核：06:46:31 runner 已发送 `C-c C-u` 且 returncode=0，但 9ms 内立即 paste 新 dispatch，Claude TUI 未及时处理取消，导致旧人工评审提醒仍残留在输入区并作为新 dispatch 前缀。已修复为 `C-c` 与 `C-u` 分开发送，每次后默认等待 0.2s settle；可用 `WAYGATE_TMUX_CLEAR_INPUT_SETTLE_SECONDS` / `RRC_TMUX_CLEAR_INPUT_SETTLE_SECONDS` 调整。
 - 已验证 RED/GREEN：旧清理实现只发 `C-u C-u C-u` 时新增用例失败；改为 `C-c C-u` 后通过。
 - 已验证：
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_claude_runner_clears_input_without_clearing_session_by_default -q` -> 修复前失败于仍是单条 `send-keys ... C-c C-u`，修复后 `1 passed`
   - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `32 passed`
-  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `157 passed`
-  - `python -m pytest workflow_controller/tests/test_rrc_builder.py -q` -> `5 passed`
-  - `python -m pytest workflow_controller/tests -q` -> `370 passed in 49.38s`
+  - `python -m pytest workflow_controller/tests -q` -> `374 passed in 65.84s`
 - 已重新打包：`bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.4_all.deb`。
-- 打包验证通过：`python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`；`dpkg-deb --field dist/waygate_0.5.4_all.deb Package Version Architecture Depends` -> `waygate / 0.5.4 / all / python3`；解包检查确认包含 `DEFAULT_TMUX_CLEAR_INPUT_KEYS = ('C-c', 'C-u')`、单行人工评审提醒和 `Builder Blocked Summary`。
+- 打包验证通过：`python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`；`dpkg-deb --field dist/waygate_0.5.4_all.deb Package Version Architecture Depends` -> `waygate / 0.5.4 / all / python3`；解包检查确认包含 `DEFAULT_TMUX_CLEAR_INPUT_SETTLE_SECONDS = 0.2`、`WAYGATE_TMUX_CLEAR_INPUT_SETTLE_SECONDS`、分键 `send-keys ... key`、单行人工评审提醒和 `Builder Blocked Summary`。
 
 ## 会话：2026-05-12
 
