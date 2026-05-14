@@ -53,7 +53,39 @@ This roadmap describes the direction of Waygate as an AI coding workflow control
 
 ## Next Priorities
 
-### V0.6.0 - Strict Test Presence
+### V0.5.6 - Spec Intake & Dependency Documentation
+
+Goal: make local requirements intake auditable before expanding into external spec ecosystems.
+
+Planned work:
+
+- Document local runtime, pytest, tmux, Claude/Codex runner, Plannotator, skills, and Debian packaging dependencies.
+- Add `--spec <path>` for Waygate Markdown intake on `waygate init`, `waygate start`, and `waygate go`.
+- Store only `requirementsSpec.path`, `requirementsSpec.hash`, `requirementsSpec.sourceType`, and `requirementsSpec.importedAt` in `session.json`.
+- Inject spec metadata into the Requirements Dialogue Brief, Requirements Draft prompt, and draft summary artifact.
+- Keep Requirements approval and controller quality preflight in place; `--spec` is not an approval bypass.
+
+### V0.6.0 - Infrastructure Knowledge Base
+
+Goal: document operational and infrastructure knowledge without mixing it into V0.5.6 spec intake.
+
+Planned work:
+
+- Create an operations knowledge base for local infrastructure assumptions, service dependencies, and troubleshooting.
+- Separate environment/runbook facts from requirements and unit planning artifacts.
+- Keep infrastructure docs out of V0.5.6 until this version is explicitly active.
+
+### V0.6.1 - External Spec Intake
+
+Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable.
+
+Planned work:
+
+- Design import contracts for OpenSpec and Spec Kit.
+- Add parsers, validation, and conversion artifacts for supported external formats.
+- Preserve clear unsupported/deferred errors for formats that are detected but not enabled.
+
+### V0.6.2 - Strict Test Presence
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.
 
@@ -64,7 +96,7 @@ Planned work:
 - Require concrete fixture/setup, command, and expected assertion in Unit Plan test cases.
 - Ensure verifier and final acceptance evidence rows map back to test case IDs.
 
-### V0.6.1 - Per-Role Runner Configuration
+### V0.6.3 - Per-Role Runner Configuration
 
 Goal: make Builder, Refiner, Reviewer, Verifier, and Bug Fix Agent independently configurable.
 
@@ -74,7 +106,7 @@ Planned work:
 - Normalize role metadata in artifacts.
 - Keep secret values out of logs and artifacts.
 
-### V0.6.2 - OpenCode Runner
+### V0.6.4 - OpenCode Runner
 
 Goal: provide a first-class OpenCode runner implementation.
 
@@ -84,7 +116,7 @@ Planned work:
 - Align metadata and artifacts with existing runner contracts.
 - Add regression coverage for dispatch, completion, and failure modes.
 
-### V0.6.3 - Task Workspace and Branch Isolation
+### V0.6.5 - Task Workspace and Branch Isolation
 
 Goal: reduce cross-task mutation and stale state pollution.
 
@@ -94,7 +126,7 @@ Planned work:
 - Produce patch/checkpoint artifacts per unit.
 - Keep state transitions tied to the isolated execution context.
 
-### V0.6.4 - File and Tool Policy
+### V0.6.6 - File and Tool Policy
 
 Goal: move role restrictions from prompts toward enforceable policy.
 
@@ -104,7 +136,7 @@ Planned work:
 - Restrict approved requirements and acceptance files during implementation.
 - Record policy decisions in artifacts.
 
-### V0.6.5 - Clean Verification
+### V0.6.7 - Clean Verification
 
 Goal: make verifier results less dependent on local leftovers.
 

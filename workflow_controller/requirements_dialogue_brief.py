@@ -79,6 +79,7 @@ def _semantic_payload(state: dict[str, Any]) -> dict[str, Any]:
         _state_ref(state, 'targetContextFiles'),
         _state_ref(state, 'acceptanceObligations'),
         _state_ref(state, 'requirementsRevisionFeedback'),
+        _state_ref(state, 'requirementsSpec'),
     ]
     prompt_ref, prompt_excerpt = _optional_file_ref(state.get('promptPath'), fallback_ref='promptPath')
     source_refs.append(prompt_ref)
@@ -97,6 +98,7 @@ def _semantic_payload(state: dict[str, Any]) -> dict[str, Any]:
         _section('current_unit', 'Current Unit', _current_unit_summary(unit)),
         _section('source_prompt', 'Source Prompt Context', prompt_excerpt or 'Prompt path is missing or unavailable.'),
         _section('target_context_files', 'Target Context Files', _context_files_summary(context_refs, context_excerpts)),
+        _section('requirements_spec', 'Requirements Spec', _requirements_spec_summary(state)),
         _section('acceptance_obligations', 'Acceptance Obligation Ledger', _acceptance_obligations_summary(state)),
         _section('requirements_revision_feedback', 'Requirements Revision Feedback', _revision_feedback_summary(state)),
     ]
@@ -247,6 +249,19 @@ def _acceptance_obligations_summary(state: dict[str, Any]) -> str:
             lines.append(f"  {description}")
     lines.extend(['', 'Full ledger:', '', '```md', render_acceptance_obligations_markdown(state).rstrip(), '```'])
     return '\n'.join(lines)
+
+
+def _requirements_spec_summary(state: dict[str, Any]) -> str:
+    spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
+    if not spec:
+        return 'No requirements spec metadata recorded.'
+    return '\n'.join([
+        f"- Path: `{spec.get('path')}`",
+        f"- Hash: `{spec.get('hash')}`",
+        f"- Source type: `{spec.get('sourceType')}`",
+        f"- Imported at: `{spec.get('importedAt')}`",
+        '- Read the Waygate Markdown spec file during Requirements Draft; do not store spec full text in session.json.',
+    ])
 
 
 def _revision_feedback_summary(state: dict[str, Any]) -> str:

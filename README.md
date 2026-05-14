@@ -10,13 +10,15 @@ It is not another chat client and it is not a code generator. Waygate wraps AI c
 
 Direct AI coding sessions often fail in predictable ways:
 
-- scope drifts during a long conversation;
-- a model says "done" without durable evidence;
-- test results live only in chat history;
-- interrupted tasks cannot be resumed reliably;
-- final review issues have no clear route back to requirements, planning, implementation, or a bug-fix loop.
+- The AI takes shortcuts: it implements the easy slice and quietly leaves the rest undone.
+- It builds functions, but not the real user scenarios, journeys, edge cases, or acceptance paths.
+- Humans stay trapped in the loop, repeatedly typing "continue" because the process has no durable next step.
+- The final result looks different from the expectation, and there is no clear record of when the drift happened.
+- Across multiple projects, conversations, panes, and agents, the human operator gets pulled into context management instead of product judgment.
 
-Waygate makes those transitions explicit. State is written to disk, human gates are Markdown files, verification evidence is structured, and failures route to the right stage instead of being hidden in a transcript.
+Waygate exists to make AI coding work behave like a controlled delivery workflow instead of a long chat. It turns "please build this" into explicit gates: requirements, unit planning, implementation, refinement, review, verification, and final acceptance. Each gate writes durable files, every acceptance criterion is tied to evidence, and failures route back to the right stage instead of being buried in a transcript.
+
+The point is not to remove the human. The point is to move human attention to the decisions that matter: approving requirements, checking scope, accepting evidence, and choosing the right rework route. Waygate handles the repetitive controller work, keeps state on disk, and makes it harder for an agent to skip work while still claiming success.
 
 ## Current Capabilities
 
@@ -32,13 +34,64 @@ Waygate makes those transitions explicit. State is written to disk, human gates 
 | Bug-fix loop | Final acceptance defects can enter a dedicated bug-fix gate without rewriting requirements. |
 | Debian package | `packaging/debian/build-deb.sh` builds a `waygate` command package. |
 
+## Local Dependencies
+
+Waygate runs as Python 3 code. Local development and verification use `python -m pytest workflow_controller/tests -q`, so `pytest` must be available in the Python environment.
+
+Real agent execution depends on the selected runner:
+
+- `tmux-claude` requires `tmux` and Claude Code. Waygate can create a Claude Code pane in tmux when no pane is provided.
+- `tmux-codex` requires `tmux` and an existing Codex pane. Waygate can discover a matching Codex pane in the current tmux session.
+- Plannotator is optional but recommended for browser-assisted human gate review; configure it with `--plannotator-command` and `--plannotator-port`.
+- Project-specific agent skills are loaded by the agent runtime, not by the Debian package; keep required skills installed in the agent environment.
+- Debian package builds require standard shell tools and `dpkg-deb`.
+
+Waygate Markdown spec intake is available through `--spec <path>` on `init`, `start`, and `go`. In V0.5.6 this supports local Waygate Markdown spec files only; detected external formats are deferred rather than imported silently.
+
+## Skills Used by Waygate Agents
+
+Waygate does not install agent skills into Claude Code, Codex, or other agent runtimes. It assumes the selected agent environment already has the skills needed by the task. The controller makes the workflow auditable; skills make each agent role better at its specialized work.
+
+Recommended baseline skills:
+
+| Skill | Stage | Why it matters |
+| --- | --- | --- |
+| `planning-with-files` | Project setup, long-running work, recovery after `/clear` | Maintains `task_plan.md`, `progress.md`, and `findings.md` as persistent project memory so multi-step work does not depend on a single chat context. |
+| `superpowers:using-superpowers` | Agent startup | Forces the agent to check applicable skills before acting, reducing unstructured improvisation. |
+| `superpowers:brainstorming` | Requirements discovery and scope shaping | Helps turn vague goals into explicit requirements before implementation begins. |
+| `superpowers:writing-plans` | Unit Plan / implementation planning | Produces task-by-task implementation plans after requirements are clear. |
+| `superpowers:test-driven-development` | Builder and bug-fix work | Keeps behavior changes anchored in failing tests before implementation. |
+| `superpowers:systematic-debugging` | Failures, verifier issues, runner problems | Requires root-cause investigation before fixes, which is important when controller, runner, and agent state interact. |
+| `test-strategy` or `testing-strategy` | Requirements and Unit Plan test matrix | Helps define meaningful verification layers instead of relying on lint or typecheck alone. |
+| `code-simplifier` | Refiner stage after Builder | Reviews recent implementation for clarity and maintainability while preserving behavior. |
+| `superpowers:verification-before-completion` | Before DONE, review, release, or final acceptance | Prevents success claims without fresh evidence. |
+| `superpowers:requesting-code-review` and `superpowers:receiving-code-review` | Reviewer and rework loops | Keeps review findings concrete and prevents blind acceptance of weak feedback. |
+| `superpowers:executing-plans` or `superpowers:subagent-driven-development` | Executing approved multi-step plans | Runs a written plan task by task, with checkpoints and review boundaries. |
+| `webapp-testing` | Browser-visible UI or workflow verification | Uses Playwright-style checks and screenshots when user-facing browser behavior must be verified. |
+| `frontend-design` or `ui-ux-pro-max` | UI-heavy requirements | Guides interface design, interaction states, layout, and accessibility when the target includes frontend work. |
+| `pdf`, `docx`, `pptx` | Document-specific tasks | Used only when the project requirements involve those file types. |
+
+Typical mapping:
+
+```text
+Requirements Draft        -> brainstorming, planning-with-files
+Requirements Gate         -> test-strategy/testing-strategy when ACs need test design
+Unit Plan                 -> writing-plans, test-strategy/testing-strategy
+Builder                   -> test-driven-development, systematic-debugging when failures appear
+Refiner                   -> code-simplifier
+Reviewer                  -> requesting-code-review / receiving-code-review
+Verifier                  -> verification-before-completion, webapp-testing for browser flows
+Final Acceptance / Rework -> systematic-debugging, executing-plans or subagent-driven-development
+Long sessions             -> planning-with-files throughout
+```
+
 ## Installation
 
 Build and install the Debian package:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.5.4_all.deb
+sudo apt install ./dist/waygate_*_all.deb
 waygate --help
 ```
 

@@ -48,6 +48,7 @@ def run_requirements_drafter(
             'body_path': str(body_path),
             'requirements_dialogue_brief_path': dialogue_brief['artifact_paths']['markdown'],
             'requirements_dialogue_brief_hash': dialogue_brief['brief_hash'],
+            'requirements_spec': _requirements_spec_summary(state),
             'generated_at': _now_iso(),
         })
         return StepResult(
@@ -109,6 +110,7 @@ def run_requirements_drafter(
         'body_path': str(body_path),
         'requirements_dialogue_brief_path': dialogue_brief['artifact_paths']['markdown'],
         'requirements_dialogue_brief_hash': dialogue_brief['brief_hash'],
+        'requirements_spec': _requirements_spec_summary(state),
         'generated_at': _now_iso(),
     })
     if result.status in _PENDING_REQUIREMENTS_DRAFT_STATUSES:
@@ -205,6 +207,7 @@ def _resume_pending_requirements_draft_if_ready(
         'body_path': str(body_path),
         'requirements_dialogue_brief_path': dialogue_brief['artifact_paths']['markdown'],
         'requirements_dialogue_brief_hash': dialogue_brief['brief_hash'],
+        'requirements_spec': _requirements_spec_summary(state),
         'generated_at': _now_iso(),
     })
     return StepResult(
@@ -341,3 +344,15 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RuntimeError(f'{path} is not a JSON object')
     return payload
+
+
+def _requirements_spec_summary(state: dict[str, Any]) -> dict[str, Any] | None:
+    spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
+    if not spec:
+        return None
+    return {
+        'path': spec.get('path'),
+        'hash': spec.get('hash'),
+        'sourceType': spec.get('sourceType'),
+        'importedAt': spec.get('importedAt'),
+    }

@@ -76,3 +76,21 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     assert './usr/share/doc/waygate/ROADMAP.zh-CN.md' in contents
     assert './usr/share/doc/waygate/docs/architecture.md' in contents
     assert './usr/share/doc/waygate/docs/workflow.zh-CN.md' in contents
+
+    readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+    readme_zh = (ROOT / 'README.zh-CN.md').read_text(encoding='utf-8')
+    required_english = [
+        'Python 3',
+        'pytest',
+        'tmux',
+        'Claude Code',
+        'Codex',
+        'Plannotator',
+        'skills',
+        'dpkg-deb',
+        'Waygate Markdown spec',
+    ]
+    for expected in required_english:
+        assert expected in readme
+    for expected in ['Python 3', 'pytest', 'tmux', 'Claude Code', 'Codex', 'Plannotator', 'skills', 'dpkg-deb', 'Waygate Markdown spec']:
+        assert expected in readme_zh

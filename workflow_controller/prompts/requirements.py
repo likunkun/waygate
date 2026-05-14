@@ -54,8 +54,40 @@ Controller 会记录本轮 requirements revision diff artifact；请解决这些
 除非审阅意见本身属于最终需求内容，否则不要把审阅者评论原样带入正文。
 """
     dialogue_brief_section = render_requirements_dialogue_brief_prompt_section(state)
+    requirements_spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
+    spec_section = ''
+    clarification_section = """Agent-side requirements clarification:
+- 没有 `--spec` 时，写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题，并在当前 tmux agent pane 里等待用户回答。
+- 第一条回复只能包含澄清问题；不得先读取项目文件、检索代码、生成 Requirements 正文或写入 body_path。
+- 等待用户回答期间不得写 `DONE_FILE`；收到用户回答后，再继续生成 Requirements Gate，但该回答必须是具体澄清回答。
+- 如果用户只回复「继续」、「按你理解」、「你看着办」或类似非具体回答，不能视为有效澄清回答；必须继续追问或写 blocked DONE_FILE，不能靠保守假设直接生成。
+- 用户回答后，将澄清结果写入本 Requirements Gate 的 `## 4.8 已澄清事项、关键假设与待确认风险`，并同步反映到需求、范围外、验收标准和测试策略中。
+- 只有收到具体澄清回答后，才可以读取项目上下文并用保守假设补齐非阻断细节；这些假设必须写入 gate。
+- 不要因为一般不确定性反复提问；但未完成首次澄清前，不能进入 drafting。
+"""
+    if requirements_spec:
+        spec_section = f"""
+Supported Requirements Spec:
+- Path: `{requirements_spec.get('path')}`
+- Hash: `{requirements_spec.get('hash')}`
+- Source type: `{requirements_spec.get('sourceType')}`
+- Imported at: `{requirements_spec.get('importedAt')}`
+
+Read the Waygate Markdown spec file at the path above as a requirements fact source.
+Because a supported spec is available, do not perform the mandatory agent-side clarification before drafting.
+Instead, directly expand Requirements, AO, AC, Journey, Design/Architecture, and Test Strategy matrices from the spec and controller context.
+If the spec has ambiguity, record conservative assumptions and review risks in `## 4.8 已澄清事项、关键假设与待确认风险`; only ask a blocking question when no safe assumption exists.
+"""
+        clarification_section = """Spec-backed requirements drafting:
+- Read the Waygate Markdown spec file before writing the Requirements Gate.
+- Do not ask mandatory pre-draft clarification questions when the supported spec provides enough facts.
+- Directly expand Requirements, AO, AC, Journey, Design/Architecture, and Test Strategy matrices from the spec.
+- Record assumptions and review risks in `## 4.8 已澄清事项、关键假设与待确认风险`.
+"""
 
     return f"""为 workflow-controller 生成"需求与验收确认"Markdown 正文。
+
+{clarification_section}
 
 将 Markdown 正文写入这个精确文件：
 {body_path}
@@ -69,13 +101,6 @@ Write the Markdown body to this exact file:
 使用 `test-strategy` skill 将每条验收标准映射到适当验证层级、具体测试用例、命令、fixture、环境和人工证据。
 Requirements approval 会被 controller 预检：每条 AC 必须声明 verification layer；每个 active must AO 必须映射到 AC，或显式 deferred/rejected/out_of_scope 并写明原因。
 V0.3.4 还要求每条 covered AC 在 Design/Architecture Traceability Matrix 中同时映射 Product Design Ref 和 Technical Architecture Ref。
-
-Agent-side requirements clarification:
-- 写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题，并在当前 tmux agent pane 里等待用户回答。
-- 等待用户回答期间不得写 `DONE_FILE`；收到用户回答后，再继续生成 Requirements Gate。
-- 用户回答后，将澄清结果写入本 Requirements Gate 的 `## 4.8 已澄清事项、关键假设与待确认风险`，并同步反映到需求、范围外、验收标准和测试策略中。
-- 可用保守假设推进时必须推进，并在 gate 中写明关键假设和待确认风险。
-- 不要因为一般不确定性反复提问；只有没有安全假设且无法继续时，才按 runner 要求写 blocked DONE_FILE。
 
 目标：
 - 请求目标：`{state.get('requestedOutcome')}`
@@ -97,6 +122,8 @@ Agent-side requirements clarification:
 
 如存在，请读取这些上下文文件：
 {context_files or '- None'}
+
+{spec_section}
 
 {dialogue_brief_section}
 

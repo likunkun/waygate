@@ -53,7 +53,39 @@
 
 ## 下一步优先级
 
-### V0.6.0 - Strict Test Presence
+### V0.5.6 - Spec Intake & Dependency Documentation
+
+目标：先把本地需求 spec 输入和依赖文档做成可审计闭环，再扩展外部 spec 生态。
+
+计划：
+
+- 补齐本地运行、pytest、tmux、Claude/Codex runner、Plannotator、skills 和 Debian packaging 依赖说明。
+- 为 `waygate init`、`waygate start`、`waygate go` 增加 Waygate Markdown `--spec <path>` 输入。
+- `session.json` 只保存 `requirementsSpec.path`、`requirementsSpec.hash`、`requirementsSpec.sourceType`、`requirementsSpec.importedAt`。
+- 将 spec metadata 注入 Requirements Dialogue Brief、Requirements Draft prompt 和 draft summary artifact。
+- 保留 Requirements 人工审批和 controller quality preflight；`--spec` 不是审批绕过机制。
+
+### V0.6.0 - Infrastructure Knowledge Base
+
+目标：沉淀运维与基础设施知识，但不混入 V0.5.6 spec intake 范围。
+
+计划：
+
+- 建立 operations knowledge base，记录本地基础设施假设、服务依赖和排障路径。
+- 将环境/runbook 事实与 Requirements、Unit Plan artifact 分开。
+- 在该版本明确启动前，不把基础设施文档纳入 V0.5.6。
+
+### V0.6.1 - External Spec Intake
+
+目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径。
+
+计划：
+
+- 设计 OpenSpec 和 Spec Kit 的导入契约。
+- 为受支持外部格式增加 parser、validation 和 conversion artifacts。
+- 对已识别但未启用的格式继续给出清晰 unsupported/deferred 错误。
+
+### V0.6.2 - Strict Test Presence
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。
 
@@ -64,7 +96,7 @@
 - Unit Plan test case 必须包含 fixture/setup、command 和 expected assertion。
 - Verifier 和 Final Acceptance 的 evidence rows 必须能映射回 Test Case ID。
 
-### V0.6.1 - Per-Role Runner Configuration
+### V0.6.3 - Per-Role Runner Configuration
 
 目标：Builder、Refiner、Reviewer、Verifier 和 Bug Fix Agent 都可以独立配置。
 
@@ -74,7 +106,7 @@
 - 标准化 artifacts 中的 role metadata。
 - 避免 secrets value 出现在 logs 和 artifacts 中。
 
-### V0.6.2 - OpenCode Runner
+### V0.6.4 - OpenCode Runner
 
 目标：实现一等 OpenCode runner。
 
@@ -84,7 +116,7 @@
 - 统一 metadata 和 artifacts 契约。
 - 增加 dispatch、completion 和 failure mode 回归测试。
 
-### V0.6.3 - Task Workspace / Branch Isolation
+### V0.6.5 - Task Workspace / Branch Isolation
 
 目标：降低跨任务修改和旧状态污染。
 
@@ -94,7 +126,7 @@
 - 每个 unit 产出 patch/checkpoint artifacts。
 - 状态转移绑定到隔离执行上下文。
 
-### V0.6.4 - File and Tool Policy
+### V0.6.6 - File and Tool Policy
 
 目标：把 role 约束从 prompt 提升到可执行策略。
 
@@ -104,7 +136,7 @@
 - implementation 阶段禁止修改已批准 requirements / acceptance。
 - 将 policy decision 记录到 artifacts。
 
-### V0.6.5 - Clean Verification
+### V0.6.7 - Clean Verification
 
 目标：减少 verifier 结果对本地残留的依赖。
 

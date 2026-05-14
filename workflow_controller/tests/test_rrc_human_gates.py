@@ -312,7 +312,13 @@ def test_requirements_prompt_requires_clarification_before_gate(tmp_path: Path) 
     assert '写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题' in prompt
     assert '等待用户回答期间不得写 `DONE_FILE`' in prompt
     assert '收到用户回答后，再继续生成 Requirements Gate' in prompt
+    assert '第一条回复只能包含澄清问题' in prompt
+    assert '不得先读取项目文件、检索代码、生成 Requirements 正文或写入 body_path' in prompt
+    assert '「继续」' in prompt
+    assert '不能视为有效澄清回答' in prompt
     assert '如果信息足够，直接生成 Requirements Gate' not in prompt
+    assert '可用保守假设推进时必须推进' not in prompt
+    assert prompt.index('Agent-side requirements clarification') < prompt.index('将 Markdown 正文写入这个精确文件')
 
 
 def test_requirements_prompt_requires_clarification_results_in_section_4_8(tmp_path: Path) -> None:
@@ -337,6 +343,120 @@ def test_requirements_prompt_requires_clarification_results_in_section_4_8(tmp_p
     assert '## 4.8 已澄清事项、关键假设与待确认风险' in prompt
     assert '用户回答后，将澄清结果写入本 Requirements Gate 的 `## 4.8 已澄清事项、关键假设与待确认风险`' in prompt
     assert '同步反映到需求、范围外、验收标准和测试策略中' in prompt
+
+
+def test_requirements_dialogue_brief_includes_spec_metadata(tmp_path: Path, monkeypatch) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+    from workflow_controller.steps.requirements import run_requirements_drafter
+
+    spec_path = tmp_path / 'spec.md'
+    spec_path.write_text('# Waygate Markdown spec\n\n- Import this spec.\n', encoding='utf-8')
+    state = {
+        'task_id': 'target-v0-5-6',
+        'requestedOutcome': 'V0.5.6',
+        'feasibleOutcome': 'V0.5.6',
+        'currentUnitId': 'target-v0-5-6',
+        'workspacePath': str(tmp_path),
+        'agentRunner': 'tmux-claude',
+        'agentCommand': 'claude',
+        'tmuxTarget': '1.2',
+        'requirementsSpec': {
+            'path': str(spec_path),
+            'hash': 'sha256:abc123',
+            'sourceType': 'waygate-markdown',
+            'importedAt': '2026-05-14T00:00:00+00:00',
+        },
+        'units': [{'id': 'target-v0-5-6', 'name': 'Spec intake', 'passes': False}],
+    }
+    approvals_dir = tmp_path / 'approvals'
+    artifacts_dir = tmp_path / 'artifacts'
+
+    def fake_make_runner(_state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        body_path = artifacts_dir / 'requirements-draft' / 'requirements-body.md'
+        body_path.write_text('# 需求与验收确认\n\n## 1. 需求\n- Generated from spec.\n', encoding='utf-8')
+        return RunnerResult(
+            backend='tmux-claude',
+            status='done',
+            command=['fake-claude'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=artifacts_dir / 'requirements-draft' / 'run-1',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+
+    run_requirements_drafter(state, approvals_dir, artifacts_dir)
+
+    brief = (artifacts_dir / 'requirements-dialogue-brief' / 'requirements-dialogue-brief.md').read_text(encoding='utf-8')
+    prompt = (artifacts_dir / 'requirements-draft' / 'requirements-draft-prompt.md').read_text(encoding='utf-8')
+    summary = json.loads((artifacts_dir / 'requirements-draft' / 'requirements-draft-summary.json').read_text(encoding='utf-8'))
+
+    for content in (brief, prompt):
+        assert str(spec_path) in content
+        assert 'sha256:abc123' in content
+        assert 'waygate-markdown' in content
+        assert 'Read the Waygate Markdown spec file' in content
+    assert summary['requirements_spec']['path'] == str(spec_path)
+    assert summary['requirements_spec']['hash'] == 'sha256:abc123'
+    assert summary['requirements_spec']['sourceType'] == 'waygate-markdown'
+
+
+def test_requirements_prompt_with_spec_skips_mandatory_clarification_and_expands_matrices(tmp_path: Path) -> None:
+    spec_path = tmp_path / 'spec.md'
+    spec_path.write_text('# Spec\n\n## Requirements\n- Use spec facts.\n', encoding='utf-8')
+    state = {
+        'requestedOutcome': 'V0.5.6',
+        'feasibleOutcome': 'V0.5.6',
+        'currentUnitId': 'target-v0-5-6',
+        'requirementsSpec': {
+            'path': str(spec_path),
+            'hash': 'sha256:abc123',
+            'sourceType': 'waygate-markdown',
+            'importedAt': '2026-05-14T00:00:00+00:00',
+        },
+        'units': [{'id': 'target-v0-5-6', 'name': 'Spec intake', 'passes': False}],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert 'Read the Waygate Markdown spec file' in prompt
+    assert str(spec_path) in prompt
+    assert 'directly expand Requirements, AO, AC, Journey, Design/Architecture, and Test Strategy matrices' in prompt
+    assert '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）' in prompt
+    assert '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）' in prompt
+    assert '## 4.7 Journey Acceptance Matrix' in prompt
+    assert '写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题' not in prompt
+    assert '等待用户回答期间不得写 `DONE_FILE`' not in prompt
+
+
+def test_requirements_prompt_without_spec_keeps_agent_side_clarification(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': 'V0.5.6',
+        'feasibleOutcome': 'V0.5.6',
+        'currentUnitId': 'target-v0-5-6',
+        'units': [{'id': 'target-v0-5-6', 'name': 'No spec path', 'passes': False}],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert 'Agent-side requirements clarification' in prompt
+    assert '写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题' in prompt
+    assert '等待用户回答期间不得写 `DONE_FILE`' in prompt
+    assert '收到用户回答后，再继续生成 Requirements Gate' in prompt
+    assert '不得先读取项目文件、检索代码、生成 Requirements 正文或写入 body_path' in prompt
+    assert '如果用户只回复「继续」' in prompt
+    assert '必须继续追问或写 blocked DONE_FILE' in prompt
+    assert '## 4.8 已澄清事项、关键假设与待确认风险' in prompt
 
 
 def test_requirements_and_unit_plan_prompts_require_simplified_chinese(tmp_path: Path) -> None:

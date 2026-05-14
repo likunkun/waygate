@@ -13,6 +13,7 @@ from typing import Any
 
 import workflow_controller.rrc_controller as rrc_controller_module
 import workflow_controller.cli as cli_module
+from workflow_controller.gates import render_requirements_gate_body, write_gate_file
 from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
 from workflow_controller.steps.requirements import run_requirements_drafter
 from workflow_controller.steps._common import TestStrategistBlocked as StrategistBlocked
@@ -60,9 +61,11 @@ def _make_fake_tmux(
     pane_output: str = '',
     split_pane_id: str = '%42',
     list_panes_output: str = '',
+    stale_targets: list[str] | None = None,
 ) -> Path:
     tmux_log = tmp_path / 'tmux.log'
     fake_tmux = tmp_path / 'tmux'
+    stale_targets = stale_targets or []
     fake_tmux.write_text(
         f"""#!/usr/bin/env python3
 import json
@@ -70,8 +73,17 @@ import os
 import sys
 from pathlib import Path
 args = sys.argv[1:]
+stale_targets = set({stale_targets!r})
 with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
     log.write(json.dumps(args) + "\\n")
+target = ""
+if "-t" in args:
+    index = args.index("-t")
+    if index + 1 < len(args):
+        target = args[index + 1]
+if target in stale_targets:
+    print(f"can't find pane: {{target}}", file=sys.stderr)
+    sys.exit(1)
 if args[:2] == ["display-message", "-p"]:
     fmt = args[-1] if args else ""
     if "pane_current_command" in fmt:
@@ -110,6 +122,21 @@ print({output!r})
 def _prepend_path(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
     current_path = os.environ.get('PATH')
     monkeypatch.setenv('PATH', f"{directory}{os.pathsep}{current_path}" if current_path else str(directory))
+
+
+def _write_waygate_spec(path: Path, title: str = 'Spec Intake') -> Path:
+    path.write_text(
+        f"""# {title}
+
+## Requirements
+- Accept a local Waygate Markdown spec path.
+
+## Acceptance Criteria
+- AC-01 [verification: integration]: requirementsSpec metadata is recorded.
+""",
+        encoding='utf-8',
+    )
+    return path
 
 
 def test_init_creates_session_and_events_files(tmp_path: Path) -> None:
@@ -2265,6 +2292,53 @@ def test_rrc_go_dry_run_creates_and_resumes_inferred_state_dir(tmp_path: Path) -
     assert '[继续] 使用已有状态' in resume.stdout
 
 
+def test_revise_with_target_infers_go_style_state_dir(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = workspace / '.rrc-controller-v2.9'
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True)
+    state = {
+        'task_id': 'target-v2-9',
+        'currentUnitId': 'target-v2-9',
+        'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+        'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+        'status': 'active',
+        'requestedOutcome': 'V2.9',
+        'feasibleOutcome': 'V2.9',
+        'workspacePath': str(workspace),
+        'agentRunner': 'subprocess',
+        'humanGatesRequired': True,
+        'requirementsAccepted': False,
+        'requirementsDraftGenerated': True,
+        'objectiveCoverage': [
+            {'objective': 'V2.9 target', 'units': ['target-v2-9'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'target-v2-9', 'name': 'V2.9 target', 'passes': False},
+        ],
+    }
+    (state_dir / 'session.json').write_text(json.dumps(state), encoding='utf-8')
+    write_gate_file(approvals_dir / 'requirements-and-acceptance.md', render_requirements_gate_body(state))
+
+    result = run_rrc_with_pythonpath(
+        'revise',
+        'V2.9',
+        '--gate',
+        'requirements',
+        '--reason',
+        'Need real clarification first',
+        cwd=workspace,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'gate=requirements status=revised' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsRevisionCount'] == 1
+    assert (state_dir / 'artifacts' / 'requirements-revisions' / 'revision-1.json').exists()
+
+
 def test_rrc_go_inside_tmux_auto_creates_claude_pane(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2290,6 +2364,53 @@ def test_rrc_go_inside_tmux_auto_creates_claude_pane(
         json.loads(line)
         for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
     ]
+    assert [
+        'split-window',
+        '-h',
+        '-P',
+        '-F',
+        '#{pane_id}',
+        '-c',
+        str(workspace),
+        'claude',
+        '--permission-mode',
+        'bypassPermissions',
+    ] in tmux_calls
+
+
+def test_rrc_go_recreates_stale_auto_created_claude_pane_on_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    _make_fake_tmux(tmp_path, split_pane_id='%88')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+
+    initial = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+
+    assert initial.returncode == 0, initial.stderr
+    state_path = workspace / '.rrc-controller-v1.0' / 'session.json'
+    state = json.loads(state_path.read_text(encoding='utf-8'))
+    assert state['tmuxTarget'] == '%88'
+    assert state['tmuxTargetResolution']['source'] == 'auto-created'
+    _make_fake_tmux(tmp_path, split_pane_id='%89', stale_targets=['%88'])
+
+    resumed = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+
+    assert resumed.returncode == 0, resumed.stderr
+    state = json.loads(state_path.read_text(encoding='utf-8'))
+    assert state['agentRunner'] == 'tmux-claude'
+    assert state['tmuxTarget'] == '%89'
+    assert state['tmuxTargetResolution']['source'] == 'auto-created'
+    assert '[继续] 使用已有状态' in resumed.stdout
+    assert '[tmux] target=%89' in resumed.stdout
+    tmux_calls = [
+        json.loads(line)
+        for line in (tmp_path / 'tmux.log').read_text(encoding='utf-8').splitlines()
+    ]
+    assert ['display-message', '-p', '-t', '%88', '#{pane_current_command}'] in tmux_calls
     assert [
         'split-window',
         '-h',
@@ -8015,6 +8136,233 @@ def test_start_rejects_existing_state_when_target_differs_without_force(tmp_path
     assert 'Existing session does not match start arguments' in result.stderr
     assert '--target=1.2 but session requestedOutcome=1.1' in result.stderr
     assert 'Use --force to reinitialize' in result.stderr
+
+
+def test_roadmap_recuts_v056_and_v06_backlog() -> None:
+    roadmap = (ROOT / 'ROADMAP.md').read_text(encoding='utf-8')
+    roadmap_zh = (ROOT / 'ROADMAP.zh-CN.md').read_text(encoding='utf-8')
+
+    for content in (roadmap, roadmap_zh):
+        assert 'V0.5.6 - Spec Intake & Dependency Documentation' in content
+        assert 'V0.6.0 - Infrastructure Knowledge Base' in content
+        assert 'V0.6.1 - External Spec Intake' in content
+        v056 = content.index('V0.5.6 - Spec Intake & Dependency Documentation')
+        v060 = content.index('V0.6.0 - Infrastructure Knowledge Base')
+        v061 = content.index('V0.6.1 - External Spec Intake')
+        assert v056 < v060 < v061
+        v056_section = content[v056:v060]
+        v061_section = content[v061:]
+        assert 'Waygate Markdown' in v056_section
+        assert 'OpenSpec' not in v056_section
+        assert 'Spec Kit' not in v056_section
+        assert 'OpenSpec' in v061_section
+        assert 'Spec Kit' in v061_section
+
+
+def test_init_with_spec_records_spec_metadata(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    spec_path = _write_waygate_spec(tmp_path / 'spec.md')
+
+    result = run_rrc(
+        'init',
+        '--state-dir',
+        str(state_dir),
+        '--workspace-dir',
+        str(workspace),
+        '--target',
+        'V0.5.6',
+        '--runner',
+        'subprocess',
+        '--spec',
+        str(spec_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    spec = state['requirementsSpec']
+    assert spec['path'] == str(spec_path.resolve())
+    assert spec['sourceType'] == 'waygate-markdown'
+    assert len(spec['hash']) == 71
+    assert spec['hash'].startswith('sha256:')
+    assert spec['importedAt']
+    assert 'Accept a local Waygate Markdown spec path' not in json.dumps(state)
+
+    missing = run_rrc(
+        'init',
+        '--state-dir',
+        str(tmp_path / 'missing-state'),
+        '--target',
+        'V0.5.6',
+        '--runner',
+        'subprocess',
+        '--spec',
+        str(tmp_path / 'missing.md'),
+    )
+    assert missing.returncode == 1
+    assert 'spec path does not exist' in missing.stderr
+    assert not ((tmp_path / 'missing-state') / 'session.json').exists()
+
+    directory = run_rrc(
+        'init',
+        '--state-dir',
+        str(tmp_path / 'dir-state'),
+        '--target',
+        'V0.5.6',
+        '--runner',
+        'subprocess',
+        '--spec',
+        str(tmp_path),
+    )
+    assert directory.returncode == 1
+    assert 'spec path must be a readable Markdown file' in directory.stderr
+
+
+def test_start_and_go_with_spec_record_metadata_without_silent_reimport(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    spec_a = _write_waygate_spec(tmp_path / 'spec-a.md', 'Spec A')
+    spec_b = _write_waygate_spec(tmp_path / 'spec-b.md', 'Spec B')
+    state_dir = tmp_path / 'state'
+
+    start_result = run_rrc(
+        'start',
+        '--state-dir',
+        str(state_dir),
+        '--workspace-dir',
+        str(workspace),
+        '--target',
+        'V0.5.6',
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        '--spec',
+        str(spec_a),
+    )
+    assert start_result.returncode == 0, start_result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requirementsSpec']['path'] == str(spec_a.resolve())
+
+    same_spec = run_rrc(
+        'start',
+        '--state-dir',
+        str(state_dir),
+        '--target',
+        'V0.5.6',
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        '--spec',
+        str(spec_a),
+    )
+    assert same_spec.returncode == 0, same_spec.stderr
+
+    different_spec = run_rrc(
+        'start',
+        '--state-dir',
+        str(state_dir),
+        '--target',
+        'V0.5.6',
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        '--spec',
+        str(spec_b),
+    )
+    assert different_spec.returncode == 1
+    assert 'Existing session already has requirementsSpec.path' in different_spec.stderr
+
+    go_workspace = tmp_path / 'go-workspace'
+    go_workspace.mkdir()
+    go_result = run_rrc(
+        'go',
+        'V0.5.6',
+        '--workspace-dir',
+        str(go_workspace),
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        '--spec',
+        str(spec_a),
+    )
+    assert go_result.returncode == 0, go_result.stderr
+    go_state = json.loads((go_workspace / '.rrc-controller-v0.5.6' / 'session.json').read_text(encoding='utf-8'))
+    assert go_state['requirementsSpec']['sourceType'] == 'waygate-markdown'
+
+
+def test_spec_does_not_auto_approve_requirements_gate(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    spec_path = _write_waygate_spec(tmp_path / 'spec.md')
+
+    init_result = run_rrc(
+        'init',
+        '--state-dir',
+        str(state_dir),
+        '--workspace-dir',
+        str(workspace),
+        '--target',
+        'V0.5.6',
+        '--runner',
+        'subprocess',
+        '--spec',
+        str(spec_path),
+    )
+    assert init_result.returncode == 0, init_result.stderr
+
+    run_result = run_rrc('run', '--state-dir', str(state_dir), '--dry-run', '--auto-approve')
+    assert run_result.returncode == 0, run_result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requirementsAccepted'] is False
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    gate = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    assert gate.exists()
+    assert 'Status: pending' in gate.read_text(encoding='utf-8')
+
+
+def test_v056_does_not_create_infrastructure_doc_or_openspec_parser() -> None:
+    assert not (ROOT / 'docs' / 'operations' / 'infrastructure.md').exists()
+    source_files = list((ROOT / 'workflow_controller').rglob('*.py'))
+    suspicious = [path for path in source_files if re.search(r'(openspec|spec_kit).*parser|parser.*(openspec|spec_kit)', path.name, re.I)]
+    assert suspicious == []
+
+
+def test_spec_path_classifier_accepts_waygate_markdown_and_rejects_future_external_specs(tmp_path: Path) -> None:
+    waygate_spec = _write_waygate_spec(tmp_path / 'waygate-spec.md')
+    open_spec_dir = tmp_path / 'open-spec'
+    open_spec_dir.mkdir()
+    (open_spec_dir / 'openapi.yaml').write_text('openapi: 3.1.0\ninfo:\n  title: API\n  version: 1.0.0\n', encoding='utf-8')
+    spec_kit_dir = tmp_path / 'spec-kit'
+    spec_kit_dir.mkdir()
+    (spec_kit_dir / 'spec.md').write_text('# Spec Kit\n\n## Constitution\n', encoding='utf-8')
+    spec_kit_file = tmp_path / 'requirements.specify.md'
+    spec_kit_file.write_text('# Spec Kit Feature Specification\n', encoding='utf-8')
+
+    accepted = run_rrc('init', '--state-dir', str(tmp_path / 'ok'), '--target', 'V0.5.6', '--runner', 'subprocess', '--spec', str(waygate_spec))
+    assert accepted.returncode == 0, accepted.stderr
+    state = json.loads(((tmp_path / 'ok') / 'session.json').read_text(encoding='utf-8'))
+    assert state['requirementsSpec']['sourceType'] == 'waygate-markdown'
+
+    for unsupported_path in (open_spec_dir, spec_kit_dir, spec_kit_file):
+        state_dir = tmp_path / f'state-{unsupported_path.name}'
+        rejected = run_rrc('init', '--state-dir', str(state_dir), '--target', 'V0.5.6', '--runner', 'subprocess', '--spec', str(unsupported_path))
+        assert rejected.returncode == 1
+        assert 'unsupported in V0.5.6' in rejected.stderr or 'deferred to V0.6.1' in rejected.stderr
+        assert not (state_dir / 'session.json').exists()
+
+
+def test_requirements_preflight_runs_before_human_review_and_revises_invalid_body(tmp_path: Path, monkeypatch) -> None:
+    test_requirements_draft_auto_revises_controller_invalid_gate_before_human_review(tmp_path, monkeypatch)
 
 
 def test_unit_plan_drafter_emits_test_strategist_start_progress(tmp_path: Path, monkeypatch) -> None:

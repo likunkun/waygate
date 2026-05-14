@@ -10,13 +10,15 @@ Waygate 是一个面向 AI 编程交付的流程控制面。
 
 直接用 AI 聊天写代码，经常出现这些问题：
 
-- 长对话里需求逐渐漂移；
-- 模型用一句“完成了”结束，但没有持久证据；
-- 测试结果只存在聊天记录里；
-- 任务中断后无法可靠恢复；
-- 最终验收发现问题时，不知道该回需求、回计划、回实现，还是进入 bug 修复。
+- AI 偷懒：只做容易的一部分，剩下的默认跳过，还会说“完成了”。
+- 只做功能，不做场景：接口或页面看起来有了，但真实用户路径、边界条件、验收路径没有覆盖。
+- 全过程都需要人参与：人一直在回“继续”，因为流程没有稳定的下一步和完成信号。
+- 结果和预期不一样：最后看起来偏了，但很难追溯是需求、计划、实现还是验证阶段开始漂移。
+- 多项目并行时人会被绕晕：多个项目、多个 pane、多个 agent、多个上下文混在一起，人被迫承担流程记忆和状态管理。
 
-Waygate 把这些状态转移显式化。状态写入磁盘，人工 gate 是 Markdown 文件，验证证据是结构化 artifact，失败会路由回正确阶段，而不是藏在聊天上下文里。
+Waygate 的目标是把 AI 编程从长聊天变成受控交付流程。它把“帮我做这个”拆成明确 gate：需求、Unit Plan、实现、精修、评审、验证和最终验收。每个 gate 都落盘，每条验收标准都要对应证据，失败会回到正确阶段，而不是藏在聊天记录里。
+
+Waygate 不是要把人移出流程，而是把人的注意力放回真正重要的判断：确认需求、审查范围、接受证据、选择返工路线。重复的 controller 工作由 Waygate 处理，状态写在磁盘上，agent 想跳过工作但声称完成会更难。
 
 ## 当前能力
 
@@ -32,13 +34,64 @@ Waygate 把这些状态转移显式化。状态写入磁盘，人工 gate 是 Ma
 | Bug Fix Loop | 最终验收缺陷可以进入独立 bug-fix gate，不需要改写原需求。 |
 | Debian 包 | `packaging/debian/build-deb.sh` 可构建 `waygate` 命令包。 |
 
+## 本地依赖
+
+Waygate 以 Python 3 代码运行。本地开发和验证使用 `python -m pytest workflow_controller/tests -q`，因此 Python 环境中需要安装 `pytest`。
+
+真实 agent 执行依赖所选 runner：
+
+- `tmux-claude` 需要 `tmux` 和 Claude Code。未指定 pane 时，Waygate 可以在 tmux 中创建 Claude Code pane。
+- `tmux-codex` 需要 `tmux` 和已有 Codex pane。Waygate 可以在当前 tmux session 中发现匹配的 Codex pane。
+- Plannotator 是可选但推荐的浏览器人工 gate 审阅工具，可通过 `--plannotator-command` 和 `--plannotator-port` 配置。
+- 项目需要的 agent skills 由 agent runtime 加载，不由 Debian 包安装；请在 agent 环境中安装所需 skills。
+- Debian package 构建需要标准 shell 工具和 `dpkg-deb`。
+
+Waygate Markdown spec intake 可通过 `init`、`start`、`go` 的 `--spec <path>` 使用。V0.5.6 只支持本地 Waygate Markdown spec 文件；识别到的外部格式会明确 deferred，不会被静默导入。
+
+## Waygate Agent 使用的 Skills
+
+Waygate 不会把 skills 自动安装进 Claude Code、Codex 或其他 agent runtime。它假设你选择的 agent 环境已经安装了任务需要的 skills。Controller 负责让流程可审计，skills 负责让不同 agent 角色更擅长自己的工作。
+
+推荐基线 skills：
+
+| Skill | 阶段 | 作用 |
+| --- | --- | --- |
+| `planning-with-files` | 项目初始化、长任务、`/clear` 后恢复 | 用 `task_plan.md`、`progress.md`、`findings.md` 做持久项目记忆，避免多步骤工作依赖单次聊天上下文。 |
+| `superpowers:using-superpowers` | Agent 启动 | 要求 agent 行动前检查适用 skill，减少无结构的自由发挥。 |
+| `superpowers:brainstorming` | 需求发现和范围收敛 | 把模糊目标变成明确需求，再进入实现。 |
+| `superpowers:writing-plans` | Unit Plan / 实施计划 | 需求明确后生成可执行的逐步实施计划。 |
+| `superpowers:test-driven-development` | Builder 和 bug-fix | 行为变更先写失败测试，再实现。 |
+| `superpowers:systematic-debugging` | 测试失败、Verifier 失败、runner 异常 | 修复前先找根因，尤其适合 controller、runner、agent 状态交互的问题。 |
+| `test-strategy` 或 `testing-strategy` | Requirements 和 Unit Plan 测试矩阵 | 设计真正有意义的 verification layer，避免只靠 lint/typecheck 证明行为。 |
+| `code-simplifier` | Builder 后的 Refiner 阶段 | 在不改变行为的前提下检查最近实现的清晰度和可维护性。 |
+| `superpowers:verification-before-completion` | DONE、review、release、final acceptance 前 | 防止没有新鲜证据就声称完成。 |
+| `superpowers:requesting-code-review` 和 `superpowers:receiving-code-review` | Reviewer 和返工循环 | 让 review finding 更具体，也避免盲目接受不严谨反馈。 |
+| `superpowers:executing-plans` 或 `superpowers:subagent-driven-development` | 执行已批准的多步骤计划 | 按书面计划逐项执行，并保留 checkpoint 和 review 边界。 |
+| `webapp-testing` | 浏览器可见 UI 或流程验证 | 需要验证前端行为时，用 Playwright 类检查、截图和浏览器日志形成证据。 |
+| `frontend-design` 或 `ui-ux-pro-max` | UI 密集型需求 | 目标包含前端时，用于界面设计、交互状态、布局和可访问性。 |
+| `pdf`、`docx`、`pptx` | 文档类任务 | 只有项目需求涉及对应文件类型时才使用。 |
+
+常见阶段映射：
+
+```text
+Requirements Draft        -> brainstorming, planning-with-files
+Requirements Gate         -> test-strategy/testing-strategy when ACs need test design
+Unit Plan                 -> writing-plans, test-strategy/testing-strategy
+Builder                   -> test-driven-development, systematic-debugging when failures appear
+Refiner                   -> code-simplifier
+Reviewer                  -> requesting-code-review / receiving-code-review
+Verifier                  -> verification-before-completion, webapp-testing for browser flows
+Final Acceptance / Rework -> systematic-debugging, executing-plans or subagent-driven-development
+Long sessions             -> planning-with-files throughout
+```
+
 ## 安装
 
 构建并安装 Debian 包：
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.5.4_all.deb
+sudo apt install ./dist/waygate_*_all.deb
 waygate --help
 ```
 

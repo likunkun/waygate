@@ -61,6 +61,10 @@ from workflow_controller.scope_audit import (
     validate_final_scope_audit,
     write_final_scope_audit,
 )
+from workflow_controller.spec_sources import (
+    requirements_spec_metadata,
+    same_requirements_spec,
+)
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import (
     VerificationEnvironmentError,
@@ -274,6 +278,7 @@ class RalphRefinerController:
         plannotator_command: str = 'plannotator',
         plannotator_port: int | None = 20000,
         state_dir_explicit: bool = True,
+        spec_path: str | Path | None = None,
     ) -> None:
         self.state_dir = state_dir or Path('.plan-ralph')
         self.state_dir_explicit = state_dir_explicit
@@ -289,6 +294,7 @@ class RalphRefinerController:
         self.claude_md_enabled = claude_md_enabled
         self.plannotator_command = plannotator_command
         self.plannotator_port = plannotator_port
+        self.spec_path = Path(spec_path) if spec_path else None
         self.store = StateStore(
             session_path=self.state_dir / 'session.json',
             events_path=self.state_dir / 'events.jsonl',
@@ -342,6 +348,8 @@ class RalphRefinerController:
             })
         else:
             state = dict(initial_state or DEFAULT_INITIAL_STATE)
+        if self.spec_path:
+            state['requirementsSpec'] = requirements_spec_metadata(self.spec_path)
         state['autoApprove'] = self.auto_approve
         state.setdefault('testStrategistEnabled', False)
         state.setdefault('codeSimplifierEnabled', True)
@@ -1359,6 +1367,18 @@ class RalphRefinerController:
                 mismatches.append(
                     f"--workspace-dir={requested_workspace} but session workspacePath={session_workspace}"
                 )
+        if self.spec_path:
+            incoming_spec = requirements_spec_metadata(self.spec_path)
+            existing_spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
+            if existing_spec and not same_requirements_spec(existing_spec, incoming_spec):
+                mismatches.append(
+                    'Existing session already has requirementsSpec.path='
+                    f"{existing_spec.get('path')} but --spec={incoming_spec.get('path')}"
+                )
+            elif not existing_spec:
+                mismatches.append(
+                    'Existing session has no requirementsSpec; use --force to initialize with --spec'
+                )
         if mismatches:
             raise ValueError(
                 'Existing session does not match start arguments: '
@@ -1398,6 +1418,7 @@ class RalphRefinerController:
         state: dict[str, Any] | None,
         allow_auto_create: bool,
     ) -> tuple[str, str | None, dict[str, Any] | None]:
+        explicit_tmux_target = bool(self.tmux_target)
         tmux_target = self.tmux_target or (str(state.get('tmuxTarget')) if state and state.get('tmuxTarget') else None)
         explicit_runner = self.agent_runner
         state_runner = str(state.get('agentRunner')) if state and state.get('agentRunner') else None
@@ -1410,6 +1431,17 @@ class RalphRefinerController:
                 tmux_command=_tmux_command_for_controller(self.agent_command),
             )
             detected_backend = inspection.get('detectedBackend')
+            if (
+                allow_auto_create
+                and not explicit_tmux_target
+                and state
+                and _is_auto_created_tmux_claude_target(state, tmux_target)
+                and _tmux_target_inspection_is_missing(inspection)
+            ):
+                tmux_target = _create_tmux_claude_pane(workspace_dir)
+                self.agent_runner = 'tmux-claude'
+                self.tmux_target = tmux_target
+                return 'tmux-claude', tmux_target, _auto_created_tmux_target_resolution(tmux_target, workspace_dir)
             if detected_backend and explicit_runner and explicit_runner != detected_backend:
                 raise ValueError(
                     f'--runner={explicit_runner} conflicts with detected {detected_backend} '
@@ -1457,15 +1489,7 @@ class RalphRefinerController:
             tmux_target = _create_tmux_claude_pane(workspace_dir)
             self.agent_runner = 'tmux-claude'
             self.tmux_target = tmux_target
-            return 'tmux-claude', tmux_target, {
-                'target': tmux_target,
-                'runner': 'tmux-claude',
-                'detectedBackend': 'tmux-claude',
-                'detectedSource': 'auto-created',
-                'source': 'auto-created',
-                'paneCommand': shlex.join(_auto_claude_pane_command()),
-                'workspacePath': str(workspace_dir),
-            }
+            return 'tmux-claude', tmux_target, _auto_created_tmux_target_resolution(tmux_target, workspace_dir)
 
         self.agent_runner = agent_runner
         return agent_runner, None, None
@@ -1508,6 +1532,17 @@ class RalphRefinerController:
                 workspace_dir=workspace_dir,
                 state=state,
                 allow_auto_create=False,
+            )
+            state['agentRunner'] = agent_runner
+            state['tmuxTarget'] = tmux_target
+            _apply_tmux_target_resolution(state, tmux_resolution)
+            return state
+
+        if state.get('tmuxTarget') and _is_auto_created_tmux_claude_target(state, str(state.get('tmuxTarget'))):
+            agent_runner, tmux_target, tmux_resolution = self._resolve_target_agent_runner(
+                workspace_dir=workspace_dir,
+                state=state,
+                allow_auto_create=allow_auto_create,
             )
             state['agentRunner'] = agent_runner
             state['tmuxTarget'] = tmux_target
@@ -4250,6 +4285,40 @@ def _tmux_target_resolution(
     }
 
 
+def _auto_created_tmux_target_resolution(tmux_target: str, workspace_dir: Path) -> dict[str, Any]:
+    return {
+        'target': tmux_target,
+        'runner': 'tmux-claude',
+        'detectedBackend': 'tmux-claude',
+        'detectedSource': 'auto-created',
+        'source': 'auto-created',
+        'paneCommand': shlex.join(_auto_claude_pane_command()),
+        'workspacePath': str(workspace_dir),
+    }
+
+
+def _is_auto_created_tmux_claude_target(state: dict[str, Any], tmux_target: str) -> bool:
+    resolution = state.get('tmuxTargetResolution')
+    if not isinstance(resolution, dict):
+        return False
+    resolution_target = str(resolution.get('target') or state.get('tmuxTarget') or '')
+    if resolution_target and resolution_target != tmux_target:
+        return False
+    return (
+        str(state.get('agentRunner') or resolution.get('runner') or '') == 'tmux-claude'
+        and (resolution.get('source') == 'auto-created' or resolution.get('detectedSource') == 'auto-created')
+    )
+
+
+def _tmux_target_inspection_is_missing(inspection: dict[str, Any]) -> bool:
+    if inspection.get('detectedBackend'):
+        return False
+    for key in ('paneCommand', 'paneTitle', 'paneCurrentPath', 'panePid'):
+        if str(inspection.get(key) or '').strip():
+            return False
+    return True
+
+
 def _tmux_resolution_source(
     *,
     detected_backend: str | None,
@@ -4570,6 +4639,7 @@ def add_go_parser(subparsers: Any) -> argparse.ArgumentParser:
     go_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
     go_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     go_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
+    go_parser.add_argument('--spec', default=None, help='Path to a supported Waygate Markdown requirements spec')
     go_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     go_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     go_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout when start initializes state')
@@ -4589,6 +4659,24 @@ def add_go_parser(subparsers: Any) -> argparse.ArgumentParser:
 
 
 def normalize_go_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> argparse.Namespace:
+    if getattr(args, 'command', None) == 'revise':
+        state_dir_explicit = getattr(args, 'state_dir', None) is not None
+        args.state_dir_explicit = state_dir_explicit
+        positional_target = getattr(args, 'target_arg', None)
+        flag_target = getattr(args, 'target', None)
+        if positional_target and flag_target and positional_target != flag_target:
+            parser.error('TARGET conflicts with --target')
+        target = flag_target or positional_target
+        args.target = target
+        workspace_arg = getattr(args, 'workspace_dir', None)
+        if getattr(args, 'state_dir', None) is None:
+            args.state_dir = (
+                _go_state_dir_in_workspace(_go_state_dir_for_target(target), args.workspace_dir, workspace_arg is not None)
+                if target
+                else '.plan-ralph'
+            )
+        return args
+
     if getattr(args, 'command', None) != 'go':
         args.state_dir_explicit = True
         return args
@@ -4636,6 +4724,7 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
     init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     init_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
+    init_parser.add_argument('--spec', default=None, help='Path to a supported Waygate Markdown requirements spec')
     init_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     init_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout during init')
     init_parser.add_argument('--claude-md', action='store_true', default=False, help='Also generate a CLAUDE.md shim that points to AGENTS.md')
@@ -4674,7 +4763,10 @@ def parse_args() -> argparse.Namespace:
         help='Regenerate a Markdown gate from human feedback in the current draft',
         allow_abbrev=False,
     )
-    revise_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and approvals/')
+    revise_parser.add_argument('target_arg', nargs='?', metavar='TARGET', help='Target label used to infer .rrc-controller-<target>')
+    revise_parser.add_argument('--state-dir', default=None, help='Directory containing session.json and approvals/')
+    revise_parser.add_argument('--target', default=None, help='Target label used to infer .rrc-controller-<target>')
+    revise_parser.add_argument('--workspace-dir', default=None, help='Target project workspace directory')
     revise_parser.add_argument(
         '--gate',
         required=True,
@@ -4709,6 +4801,7 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
     start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     start_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
+    start_parser.add_argument('--spec', default=None, help='Path to a supported Waygate Markdown requirements spec')
     start_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     start_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     start_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout when start initializes state')
@@ -4851,6 +4944,7 @@ def main() -> None:
         plannotator_command=getattr(args, 'plannotator_command', 'plannotator'),
         plannotator_port=getattr(args, 'plannotator_port', 20000),
         state_dir_explicit=getattr(args, 'state_dir_explicit', True),
+        spec_path=getattr(args, 'spec', None),
     )
 
     if args.command == 'init':

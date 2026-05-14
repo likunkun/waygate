@@ -227,6 +227,58 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert marker_path.read_text(encoding='utf-8') == 'pending seen'
 
 
+def test_tmux_runner_request_env_can_disable_input_clear_for_auto_created_pane(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    monkeypatch.delenv('WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH', raising=False)
+    monkeypatch.delenv('RRC_TMUX_CLEAR_BEFORE_DISPATCH', raising=False)
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args) + "\\n")
+if args[:1] == ["send-keys"] and args[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({{"status": "done", "summary": "finished", "run_id": os.environ["RRC_RUN_ID"]}}),
+        encoding="utf-8",
+    )
+""",
+    )
+
+    result = run_agent_backend(RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='%24',
+        env={'WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH': '0'},
+        timeout_seconds=5,
+    ))
+
+    assert result.status == 'done'
+    commands = [json.loads(line) for line in tmux_log.read_text(encoding='utf-8').splitlines()]
+    assert ['send-keys', '-t', '%24', 'C-c'] not in commands
+    assert ['send-keys', '-t', '%24', 'C-u'] not in commands
+    assert commands[:3] == [
+        ['load-buffer', str(result.run_dir / 'dispatch.md')],
+        ['paste-buffer', '-t', '%24'],
+        ['send-keys', '-t', '%24', 'C-m'],
+    ]
+
+
 def test_tmux_dispatch_clears_input_before_submit_and_idle_nudge_does_not(
     tmp_path: Path,
     monkeypatch,
@@ -422,6 +474,8 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["Enter"]:
     assert result.status == 'done'
     assert result.runner_metadata['backend'] == 'tmux-codex'
     log = tmux_log.read_text(encoding='utf-8')
+    assert 'send-keys -t 1.2 C-c' not in log
+    assert 'send-keys -t 1.2 C-u' in log
     assert 'paste-buffer -t 1.2' in log
     assert 'send-keys -t 1.2 Enter' in log
     assert 'send-keys -t 1.2 C-m' not in log
@@ -434,7 +488,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["Enter"]:
     assert events[0]['backend'] == 'tmux-codex'
     submit_delay = next(event for event in events if event.get('event') == 'tmux_submit_delay')
     assert submit_delay['seconds'] == 2.0
-    assert sleep_calls == [0.2, 0.2, 2.0]
+    assert sleep_calls == [0.2, 2.0]
 
 
 def test_tmux_codex_submit_key_can_be_overridden(tmp_path: Path, monkeypatch) -> None:
@@ -534,7 +588,7 @@ if sys.argv[1:2] == ["capture-pane"]:
     ]
     retry_event = next(event for event in events if event.get('event') == 'tmux_codex_submit_retry')
     assert retry_event['reason'] == 'prompt_still_in_input'
-    assert sleep_calls == [0.2, 0.2, 2.0, 1.0]
+    assert sleep_calls == [0.2, 2.0, 1.0]
 
 
 def test_tmux_codex_retries_submit_when_codex_collapses_pasted_input(tmp_path: Path, monkeypatch) -> None:
@@ -585,7 +639,7 @@ if sys.argv[1:2] == ["capture-pane"]:
     assert result.status == 'done'
     log = tmux_log.read_text(encoding='utf-8')
     assert log.count('send-keys -t 1.2 Enter') == 2
-    assert sleep_calls == [0.2, 0.2, 2.0, 1.0]
+    assert sleep_calls == [0.2, 2.0, 1.0]
 
 
 def test_tmux_codex_retries_submit_when_agent_is_not_working_after_submit(tmp_path: Path, monkeypatch) -> None:
@@ -642,7 +696,7 @@ if sys.argv[1:2] == ["capture-pane"]:
     ]
     retry_event = next(event for event in events if event.get('event') == 'tmux_codex_submit_retry')
     assert retry_event['reason'] == 'agent_not_working_after_submit'
-    assert sleep_calls == [0.2, 0.2, 2.0, 1.0]
+    assert sleep_calls == [0.2, 2.0, 1.0]
 
 
 def test_tmux_codex_waits_for_pane_to_leave_working_state_after_done(
@@ -704,7 +758,7 @@ if sys.argv[1:2] == ["capture-pane"]:
     ]
     assert any(event.get('event') == 'tmux_agent_busy_after_done' for event in events)
     assert any(event.get('event') == 'tmux_agent_idle_after_done' for event in events)
-    assert sleep_calls == [0.2, 0.2, 2.0, 0.1]
+    assert sleep_calls == [0.2, 2.0, 0.1]
 
 
 def test_tmux_claude_runner_pastes_short_dispatch_that_points_to_full_prompt(tmp_path: Path) -> None:
@@ -1129,6 +1183,18 @@ def test_make_runner_maps_state_to_backend() -> None:
     assert make_runner({'agentRunner': 'tmux-codex'}).backend == 'tmux-codex'
     assert make_runner({'agentRunner': 'subprocess'}).backend == 'subprocess'
     assert make_runner({'agentCommand': 'claude'}).backend == 'subprocess'
+
+
+def test_make_runner_disables_initial_clear_for_auto_created_requirements_pane() -> None:
+    runner = make_runner({
+        'agentRunner': 'tmux-claude',
+        'tmuxTarget': '%24',
+        'currentStep': 'REQUIREMENTS_DRAFT',
+        'requirementsDraftGenerated': False,
+        'tmuxTargetResolution': {'source': 'auto-created'},
+    })
+
+    assert runner.env['WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH'] == '0'
 
 
 def test_make_runner_defaults_test_strategist_to_codex_subprocess() -> None:

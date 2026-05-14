@@ -38,6 +38,7 @@ def make_runner(state: dict[str, Any], role: str | None = None) -> RunnerConfig:
         agent_command=str(state.get('agentCommand') or ''),
         tmux_target=state.get('tmuxTarget') or state.get('tmuxPane'),
         role=role,
+        env=_initial_tmux_env(state),
     )
 
 
@@ -70,6 +71,18 @@ def _string_env(raw_env: Any) -> dict[str, str]:
         if key_text and value is not None:
             env[key_text] = str(value)
     return env
+
+
+def _initial_tmux_env(state: dict[str, Any]) -> dict[str, str]:
+    resolution = state.get('tmuxTargetResolution')
+    source = resolution.get('source') if isinstance(resolution, dict) else None
+    if (
+        source == 'auto-created'
+        and state.get('currentStep') == 'REQUIREMENTS_DRAFT'
+        and not state.get('requirementsDraftGenerated')
+    ):
+        return {'WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH': '0'}
+    return {}
 
 
 __all__ = [

@@ -67,6 +67,9 @@ waygate go V1.0 --runner subprocess --dry-run --max-steps 20
 
 # Run from outside the target project.
 waygate go V1.0 --workspace-dir /path/to/target-project
+
+# Start from a supported Waygate Markdown requirements spec.
+waygate go V1.0 --spec ./requirements.md
 ```
 
 ## Two-Step Mode
@@ -78,6 +81,7 @@ waygate init \
   --state-dir .rrc-controller-v1.0 \
   --workspace-dir . \
   --target V1.0 \
+  --spec ./requirements.md \
   --runner tmux-claude \
   --tmux-target 1.2
 
@@ -91,15 +95,17 @@ waygate drive --state-dir .rrc-controller-v1.0
 Create `session.json`, `approvals/`, `artifacts/`, and initial target state.
 
 ```bash
-waygate init --target V1.0 --workspace-dir .
+waygate init --target V1.0 --workspace-dir . --spec ./requirements.md
 ```
+
+`--spec <path>` currently imports only a readable local Waygate Markdown spec file. Waygate stores path, SHA-256 hash, source type, and import time in `session.json`; it does not store the full spec text. OpenSpec and Spec Kit paths are detected as future external spec intake and rejected/deferred in this version.
 
 ### `start`
 
 Initialize if needed, then continuously drive the workflow.
 
 ```bash
-waygate start --state-dir .rrc-controller-v1.0
+waygate start --state-dir .rrc-controller-v1.0 --spec ./requirements.md
 ```
 
 ### `drive`

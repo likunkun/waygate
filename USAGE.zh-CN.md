@@ -67,6 +67,9 @@ waygate go V1.0 --runner subprocess --dry-run --max-steps 20
 
 # 从目标项目外部启动。
 waygate go V1.0 --workspace-dir /path/to/target-project
+
+# 从受支持的 Waygate Markdown requirements spec 启动。
+waygate go V1.0 --spec ./requirements.md
 ```
 
 ## 两步模式
@@ -78,6 +81,7 @@ waygate init \
   --state-dir .rrc-controller-v1.0 \
   --workspace-dir . \
   --target V1.0 \
+  --spec ./requirements.md \
   --runner tmux-claude \
   --tmux-target 1.2
 
@@ -91,15 +95,17 @@ waygate drive --state-dir .rrc-controller-v1.0
 创建 `session.json`、`approvals/`、`artifacts/` 和初始 target state。
 
 ```bash
-waygate init --target V1.0 --workspace-dir .
+waygate init --target V1.0 --workspace-dir . --spec ./requirements.md
 ```
+
+`--spec <path>` 当前只导入可读的本地 Waygate Markdown spec 文件。Waygate 会在 `session.json` 中保存 path、SHA-256 hash、source type 和 import time，不保存 spec 全文。OpenSpec 和 Spec Kit 路径会被识别为后续 external spec intake，并在当前版本明确拒绝或 deferred。
 
 ### `start`
 
 如有需要先初始化，然后持续驱动 workflow。
 
 ```bash
-waygate start --state-dir .rrc-controller-v1.0
+waygate start --state-dir .rrc-controller-v1.0 --spec ./requirements.md
 ```
 
 ### `drive`

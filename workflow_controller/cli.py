@@ -104,6 +104,7 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
     init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     init_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
+    init_parser.add_argument('--spec', default=None, help='Path to a supported Waygate Markdown requirements spec')
     init_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     init_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout during init')
     init_parser.add_argument('--claude-md', action='store_true', default=False, help='Also generate a CLAUDE.md shim that points to AGENTS.md')
@@ -184,6 +185,7 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
     start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     start_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
+    start_parser.add_argument('--spec', default=None, help='Path to a supported Waygate Markdown requirements spec')
     start_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     start_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     start_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout when start initializes state')
@@ -260,6 +262,7 @@ def main() -> None:
         plannotator_command=getattr(args, 'plannotator_command', 'plannotator'),
         plannotator_port=getattr(args, 'plannotator_port', 20000),
         state_dir_explicit=getattr(args, 'state_dir_explicit', True),
+        spec_path=getattr(args, 'spec', None),
     )
 
     if args.command == 'init':

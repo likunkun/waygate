@@ -24,7 +24,8 @@ DEFAULT_TMUX_CODEX_SUBMIT_KEY = 'Enter'
 DEFAULT_TMUX_CODEX_SUBMIT_RETRY_DELAY_SECONDS = 1.0
 DEFAULT_TMUX_SUBMIT_RETRY_DELAY_SECONDS = 0.2
 DEFAULT_TMUX_POST_DONE_IDLE_POLL_SECONDS = 0.5
-DEFAULT_TMUX_CLEAR_INPUT_KEYS = ('C-c', 'C-u')
+DEFAULT_TMUX_CLAUDE_CLEAR_INPUT_KEYS = ('C-c', 'C-u')
+DEFAULT_TMUX_CODEX_CLEAR_INPUT_KEYS = ('C-u',)
 DEFAULT_TMUX_CLEAR_INPUT_SETTLE_SECONDS = 0.2
 
 
@@ -94,10 +95,10 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     }
     submit_key = _tmux_submit_key(backend)
     clear_commands = []
-    if _tmux_clear_before_dispatch_enabled():
+    if _tmux_clear_before_dispatch_enabled(env):
         clear_commands = [
             [*tmux_command, 'send-keys', '-t', request.tmux_target, key]
-            for key in _tmux_clear_input_keys()
+            for key in _tmux_clear_input_keys(backend)
         ]
     dispatch_commands = [
         [*tmux_command, 'load-buffer', str(dispatch_prompt_path)],
@@ -449,8 +450,12 @@ def _tmux_submit_key(backend: str) -> str:
     return os.environ.get('RRC_TMUX_CLAUDE_SUBMIT_KEY', DEFAULT_TMUX_CLAUDE_SUBMIT_KEY).strip() or DEFAULT_TMUX_CLAUDE_SUBMIT_KEY
 
 
-def _tmux_clear_before_dispatch_enabled() -> bool:
-    raw_value = os.environ.get('WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH')
+def _tmux_clear_before_dispatch_enabled(env: dict[str, str] | None = None) -> bool:
+    raw_value = (env or {}).get('WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH')
+    if raw_value is None:
+        raw_value = os.environ.get('WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH')
+    if raw_value is None:
+        raw_value = (env or {}).get('RRC_TMUX_CLEAR_BEFORE_DISPATCH')
     if raw_value is None:
         raw_value = os.environ.get('RRC_TMUX_CLEAR_BEFORE_DISPATCH')
     if raw_value is None:
@@ -458,8 +463,10 @@ def _tmux_clear_before_dispatch_enabled() -> bool:
     return raw_value.strip().lower() not in {'0', 'false', 'no', 'off', 'disabled'}
 
 
-def _tmux_clear_input_keys() -> tuple[str, ...]:
-    return DEFAULT_TMUX_CLEAR_INPUT_KEYS
+def _tmux_clear_input_keys(backend: str) -> tuple[str, ...]:
+    if backend == 'tmux-codex':
+        return DEFAULT_TMUX_CODEX_CLEAR_INPUT_KEYS
+    return DEFAULT_TMUX_CLAUDE_CLEAR_INPUT_KEYS
 
 
 def _tmux_clear_input_settle_seconds() -> float:

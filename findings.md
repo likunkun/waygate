@@ -1,5 +1,32 @@
 # 发现与决策
 
+## 2026-05-14 tmux-codex 清输入自退出
+
+- `C-c` 在 Claude Code 和 Codex TUI 中不是等价的安全清理动作：Claude Code 中可用于取消未提交草稿，Codex TUI 中可能中断或退出当前 Codex 进程。
+- tmux dispatch 前清理输入框必须按 backend 区分；不能把 Claude 的 `C-c` / `C-u` 组合泛化到 Codex。
+- Codex 路径应默认只发送 `C-u` 清当前输入，并继续依赖 paste 后 submit delay 与 submit retry 处理 Codex 折叠 pasted content 或首次 Enter 未生效的情况。
+- idle nudge 仍不能清输入；对正在运行的 agent 发送 `C-c` 会打断任务，对 Codex 风险更高。
+
+## 2026-05-14 auto-created Claude pane 初次清输入退出
+
+- `waygate go V2.9 --auto-approve` 现场失败不是 auto-created pane 没创建成功；`tmux send-keys -t %24 C-c` 返回码为 0 证明 pane 当时存在。
+- 根因是 auto-created Claude pane 刚启动后立即进入通用 dispatch 前清输入流程，`C-c` 会中断或关闭尚未稳定的 Claude pane；随后 `C-u` 返回 `can't find pane: %24`，Requirements drafter 以 runner exit code 1 失败。
+- 新建 pane 本来没有人工草稿需要清理；清输入只应默认用于复用既有 pane。auto-created pane 的首次 Requirements Draft dispatch 应跳过清输入，后续已有 pane 仍保留清输入保护。
+
+## 2026-05-14 auto-created Claude pane stale state 恢复
+
+- 第二次 `waygate go V2.9 --auto-approve` 现场失败的 stderr 仍是 `can't find pane: %24`，但 events 已经没有 dispatch 前 `C-c` / `C-u`，说明初次清输入修复生效，剩余问题是旧 state 中保存的 auto-created pane 已经不存在。
+- `start()` 恢复已有 `session.json` 时，如果 state 同时已有 `agentRunner` 和 `tmuxTarget`，旧逻辑不会重新探测 target；因此 stale `%24` 会直接进入 runner dispatch，直到 `tmux send-keys` 才失败。
+- 修复边界必须限于 controller 自动创建的 Claude pane：当 `tmuxTargetResolution.source` 或 `detectedSource` 为 `auto-created` 且 runner 为 `tmux-claude`，恢复时探测为空才重新创建 pane 并更新 state。用户显式指定的 tmux target 不应被静默替换。
+
+## 2026-05-14 Requirements 无 spec 澄清被绕过
+
+- 现场 V2.9 无 `--spec` 时，Requirements Draft agent 没有在 pane 中展示可见澄清问题，而是直接检索项目、读取 roadmap 和源码并写出 Requirements Gate。
+- 旧回归测试只断言 prompt 中出现“必须澄清”和“不得写 DONE_FILE”，没有断言第一轮必须只问问题、不能先读项目/写 body，也没有断言「继续」「你看着办」这类非具体回复不能算澄清完成。
+- prompt 旧文案还存在直接冲突：前面要求先澄清，后面又说“可用保守假设推进时必须推进”；并且写 body_path 的指令位于澄清协议之前，agent 容易优先执行写文件任务。
+- 无 `--spec` 的 Requirements Draft 必须把澄清协议放在写文件指令之前，并明确：第一条回复只能是澄清问题；收到具体澄清回答前不得读项目文件、检索代码、生成正文或写 body；「继续」「按你理解」「你看着办」不是有效澄清回答。
+- `waygate revise --gate requirements` 不会像 `waygate go V2.9` 一样自动推导目标 state-dir；在多 controller state 的 workspace 中容易误读默认 state。`revise` 应支持 positional target / `--target`，按同一 slug 规则推导 `.rrc-controller-<target>`。
+
 ## 2026-05-13 Approved Unit Plan 后 Requirements Change
 
 - Requirements 是 Unit Plan 和 Builder 的上游约束源；当 approved Requirements 写死某个不可执行策略时，Unit Plan revision 不能合法绕过它，必须先创建 Requirements change request。

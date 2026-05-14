@@ -1,5 +1,79 @@
 # 进度日志
 
+## 会话：2026-05-14
+
+### V0.5.6 Spec Intake & Dependency Documentation 终验同步
+- **状态：** complete
+- Controller Final Acceptance 已批准：`finalAcceptanceAccepted=true`，确认人为 human，hash 为 `sha256:570ca6ba96be0984d317a316a9b19faebeaf445988598be28b9eac8fbf4c0a7e`。
+- 当前目标 `Complete V0.5.6 development acceptance using current planning progress` 已标记为 `covered`；单元 `v0-5-6-u1-spec-intake-dependency-docs` 已 `passes=true`。
+- Final Acceptance evidence matrix 中 AC-01 到 AC-12 均 passed；Final Scope Audit 显示 AO coverage `4/4`、AC coverage `12/12`、Journey coverage `6/6`、unexplained changed files `0`。
+- 本次状态同步更新了 `task_plan.md` 和 `progress.md`；未发现新的 workflow decision、defect 或 risk，因此 `findings.md` 未新增终验记录。
+
+### auto-created Claude pane 初次 dispatch 清输入修复
+- **状态：** complete
+- 现场 `waygate go V2.9 --auto-approve` 失败于 Requirements drafter，summary 显示 tmux stderr 为 `can't find pane: %24`。
+- 复盘 run events：`send-keys -t %24 C-c` 成功，0.2 秒后 `send-keys -t %24 C-u` 失败，说明 auto-created Claude pane 被初次 dispatch 前的 `C-c` 清输入动作中断/关闭。
+- 修复：`make_runner()` 在 auto-created pane 的首次 Requirements Draft dispatch 中通过 request env 关闭清输入；tmux runner 现在优先读取 request env 的清输入开关。复用既有 pane、tmux-claude 正常清输入、tmux-codex 只发 `C-u` 的行为保持不变。
+- 已验证 RED/GREEN：新增 `test_tmux_runner_request_env_can_disable_input_clear_for_auto_created_pane` 和 `test_make_runner_disables_initial_clear_for_auto_created_requirements_pane`，修复前均失败，修复后通过。
+- 已验证：
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_runner_request_env_can_disable_input_clear_for_auto_created_pane workflow_controller/tests/test_rrc_agent_runners.py::test_make_runner_disables_initial_clear_for_auto_created_requirements_pane -q` -> `2 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_dispatch_clears_input_before_submit_and_idle_nudge_does_not workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_claude_runner_clears_input_without_clearing_session_by_default workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_codex_runner_reuses_tmux_dispatch_and_records_backend -q` -> `3 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `34 passed in 16.99s`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_init_without_tmux_target_inside_tmux_creates_claude_pane workflow_controller/tests/test_rrc_controller.py::test_rrc_go_inside_tmux_auto_creates_claude_pane workflow_controller/tests/test_rrc_controller.py::test_auto_created_claude_pane_permission_mode_can_be_overridden workflow_controller/tests/test_rrc_controller.py::test_auto_created_claude_pane_command_can_be_overridden -q` -> `4 passed`
+  - `python -m pytest workflow_controller/tests -q` -> `386 passed in 70.54s`
+
+### auto-created Claude pane stale state 恢复
+- **状态：** complete
+- 用户复测 `waygate go V2.9 --auto-approve` 后仍失败；新的 `requirements-draft-summary.json` 显示 runner dispatch 到 `%24` 时 `tmux send-keys` 返回 `can't find pane: %24`。
+- 复盘确认这次不再是 `C-c` 清输入杀 pane：runner metadata 已携带 `WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH`，events 没有 dispatch 前 `C-c` / `C-u`，失败发生在复用旧 state 的 stale `%24`。
+- 已按 TDD 新增回归 `test_rrc_go_recreates_stale_auto_created_claude_pane_on_resume`：修复前失败于 resume 后仍保留 `%88`，修复后在 stale old target 时自动创建 `%89` 并更新 state。
+- 修复：恢复已有 target acceptance state 时，对 controller 自动创建的 `tmux-claude` pane 重新探测；如果探测结果完全为空，调用 auto-create 路径重建 Claude pane。显式用户 target 不做静默替换。
+- 已验证：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_rrc_go_recreates_stale_auto_created_claude_pane_on_resume -q` -> `1 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_rrc_go_inside_tmux_auto_creates_claude_pane workflow_controller/tests/test_rrc_controller.py::test_rrc_go_recreates_stale_auto_created_claude_pane_on_resume workflow_controller/tests/test_rrc_controller.py::test_rrc_go_with_tmux_target_detects_codex_pane workflow_controller/tests/test_rrc_controller.py::test_rrc_go_with_tmux_codex_runner_auto_discovers_codex_pane workflow_controller/tests/test_rrc_agent_runners.py::test_make_runner_disables_initial_clear_for_auto_created_requirements_pane -q` -> `5 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `167 passed in 13.98s`
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `34 passed in 16.79s`
+  - `python -m pytest workflow_controller/tests -q` -> `387 passed in 69.69s`
+- 已重新打包：`WAYGATE_VERSION=0.5.6 bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.6_all.deb`。
+- 打包验证通过：`python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`；`dpkg-deb --field dist/waygate_0.5.6_all.deb Package Version Architecture Depends` -> `waygate / 0.5.6 / all / python3`；解包检查确认包内 `rrc_controller.py` 包含 `_is_auto_created_tmux_claude_target`、`_tmux_target_inspection_is_missing` 和 `_auto_created_tmux_target_resolution`。
+
+### Requirements 无 spec 强制澄清修复
+- **状态：** complete
+- 用户现场复测 V2.9 后指出：没有 `--spec` 时预期应该在 Agent pane 中一起问答澄清，但实际没有可见澄清问题，agent 直接读取项目、生成 Requirements。
+- 根因：旧回归只检查 prompt 包含“必须澄清/不得写 DONE_FILE”，没有覆盖“第一轮只能问问题、不得先读项目/写 body、继续不是有效回答”；同时 prompt 中写 body_path 的指令排在澄清协议之前，且“可用保守假设推进时必须推进”与强制澄清冲突。
+- 修复：无 `--spec` 的 Requirements Draft prompt 现在把澄清协议提到写文件指令之前，明确第一条回复只能包含澄清问题；收到具体澄清回答前不得读取项目文件、检索代码、生成 Requirements 正文或写入 body_path；「继续」「按你理解」「你看着办」不算有效澄清回答，必须继续追问或 blocked。
+- 已验证 RED/GREEN：
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_requires_clarification_before_gate workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_without_spec_keeps_agent_side_clarification -q` -> 修复前 `2 failed`，修复后 `2 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_requires_clarification_before_gate -q` -> 顺序断言修复前失败于澄清协议晚于写文件指令，修复后通过
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_requires_clarification_before_gate workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_without_spec_keeps_agent_side_clarification workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_with_spec_skips_mandatory_clarification_and_expands_matrices -q` -> `3 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `48 passed in 25.24s`
+  - `python -m pytest workflow_controller/tests -q` -> `387 passed in 70.59s`
+- 已重新打包：`WAYGATE_VERSION=0.5.6 bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.6_all.deb`。
+- 打包验证通过：`python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`；`dpkg-deb --field dist/waygate_0.5.6_all.deb Package Version Architecture Depends` -> `waygate / 0.5.6 / all / python3`；解包检查确认包内 prompt 包含“第一条回复只能包含澄清问题”、“不得先读取项目文件”和“不能视为有效澄清回答”，且不包含旧的“可用保守假设推进时必须推进”绕过语句。
+
+### revise target state-dir 推导修复
+- **状态：** complete
+- 用户按建议在 `courses` 目录执行 `waygate revise --gate requirements --reason ...` 失败，错误为 Requirements 当前阶段不允许 revision。
+- 现场 state 扫描确认 `.rrc-controller-v2.9/session.json` 实际位于 `WAITING_REQUIREMENTS_ACCEPTANCE`，可 revision；失败原因是 `revise` 默认读取 `.plan-ralph`，不像 `go V2.9` 自动推导 `.rrc-controller-v2.9`。
+- 修复：`revise` 支持 positional target 和 `--target` / `--workspace-dir`，按 `go` 相同 slug 规则推导 `.rrc-controller-<target>`；仍保留无 target 时的 `.plan-ralph` 兼容默认。
+- 已验证 RED/GREEN：
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_revise_with_target_infers_go_style_state_dir -q` -> 修复前失败于 `unrecognized arguments: V2.9`，修复后 `1 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py::test_revise_with_target_infers_go_style_state_dir workflow_controller/tests/test_rrc_human_gates.py::test_revise_requirements_gate_reruns_tmux_drafter_with_human_feedback workflow_controller/tests/test_rrc_human_gates.py::test_revise_requirements_gate_can_rewind_from_unit_plan_approval workflow_controller/tests/test_rrc_human_gates.py::test_revise_requirements_gate_can_rewind_from_plan_approved_with_reason -q` -> `4 passed`
+  - `python -m pytest workflow_controller/tests -q` -> `388 passed in 70.43s`
+- 已重新打包：`WAYGATE_VERSION=0.5.6 bash packaging/debian/build-deb.sh` -> `dist/waygate_0.5.6_all.deb`。
+- 打包验证通过：`python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`；`dpkg-deb --field dist/waygate_0.5.6_all.deb Package Version Architecture Depends` -> `waygate / 0.5.6 / all / python3`；解包后 `python3 -m workflow_controller.rrc_controller revise --help` 显示 positional `TARGET`、`--target` 和 `--workspace-dir`，并确认包内保留无 spec 强制澄清 prompt。
+
+### tmux-codex 派发前清输入避免自退出
+- **状态：** complete
+- 复现并定位：tmux runner 默认清输入键 `C-c, C-u` 同时用于 `tmux-claude` 和 `tmux-codex`；Claude Code 可用 `C-c` 取消未提交草稿，但 Codex TUI 会把 `C-c` 解释为中断/退出当前 Codex，会在发送新 prompt 前把 agent 自己结束掉。
+- 已改为 backend-specific 清理键：`tmux-claude` 继续使用 `C-c` 后 `C-u`，`tmux-codex` 默认只使用 `C-u` 清当前输入，不发送 `C-c`。
+- 保留既有行为：正常 dispatch 前仍会清输入；idle nudge 不会清输入；Codex submit key、submit delay 和 submit retry 逻辑不变。
+- 已验证 RED/GREEN：新增 Codex runner 回归断言，修复前失败于 `send-keys ... C-c` 仍出现，修复后通过。
+- 已验证：
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_codex_runner_reuses_tmux_dispatch_and_records_backend workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_claude_runner_clears_input_without_clearing_session_by_default workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_dispatch_clears_input_before_submit_and_idle_nudge_does_not -q` -> `3 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `32 passed in 16.37s`
+  - `python -m pytest workflow_controller/tests -q` -> `374 passed in 67.06s`
+
 ## 会话：2026-05-13
 
 ### Requirements Change 回退入口
