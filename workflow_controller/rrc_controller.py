@@ -376,9 +376,15 @@ class RalphRefinerController:
         state = self._apply_agent_target_overrides(state, allow_auto_create=False)
         agent_target_changed = before_agent_target != (state.get('agentRunner'), state.get('tmuxTarget'))
         state = reconcile_state(state, self.artifacts_dir)
+        before_requirements_validation = _requirements_validation_state_key(state)
         before_validation = _unit_plan_validation_state_key(state)
+        state = self._refresh_requirements_gate_validation(state)
         state = self._refresh_unit_plan_gate_validation(state)
-        if agent_target_changed or _unit_plan_validation_state_key(state) != before_validation:
+        if (
+            agent_target_changed
+            or _requirements_validation_state_key(state) != before_requirements_validation
+            or _unit_plan_validation_state_key(state) != before_validation
+        ):
             self._save_state(state)
         state['nextAction'] = compute_next_allowed_action(state)
         return state
@@ -461,6 +467,22 @@ class RalphRefinerController:
             state['blockedReason'] = reason
             return state
         if str(state.get('blockedReason') or '').startswith('unit plan gate invalid:'):
+            state['blockedReason'] = None
+        return state
+
+    def _refresh_requirements_gate_validation(self, state: dict[str, Any]) -> dict[str, Any]:
+        if state.get('currentStep') != 'WAITING_REQUIREMENTS_ACCEPTANCE':
+            return state
+        gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
+        if not gate_path.exists():
+            return state
+        reason = self._requirements_gate_invalid_reason(state, gate_path)
+        if reason:
+            state['requirementsAccepted'] = False
+            state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+            state['blockedReason'] = reason
+            return state
+        if str(state.get('blockedReason') or '').startswith('requirements gate invalid:'):
             state['blockedReason'] = None
         return state
 
@@ -2194,6 +2216,7 @@ class RalphRefinerController:
             else:
                 compact_reporter.print_status(state)
 
+            state = self._auto_revise_invalid_requirements_draft(state)
             state = self._auto_revise_invalid_unit_plan_draft(state)
             gate_info = self._pending_gate_info(state)
             if gate_info:
@@ -2642,6 +2665,9 @@ class RalphRefinerController:
             return state
 
         gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
+        if state.get('currentStep') != 'WAITING_REQUIREMENTS_ACCEPTANCE' or not gate_path.exists():
+            return state
+
         max_revisions = int(
             state.get('requirementsAutoRevisionMax')
             or DEFAULT_MAX_REQUIREMENTS_AUTO_REVISIONS
@@ -3846,11 +3872,21 @@ def _automatic_progress_key(state: dict[str, Any], action: str | None) -> tuple[
 
 def _approved_gate_invalid_reason(gate: str, state: dict[str, Any]) -> str | None:
     reason = str(state.get('blockedReason') or '')
+    if gate == 'requirements' and reason.startswith('requirements gate invalid:'):
+        return reason
     if gate == 'unit-plan' and reason.startswith('unit plan gate invalid:'):
         return reason
     if gate == 'final-acceptance' and reason.startswith('final acceptance gate invalid:'):
         return reason
     return None
+
+
+def _requirements_validation_state_key(state: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return (
+        state.get('currentStep'),
+        state.get('requirementsAccepted'),
+        state.get('blockedReason'),
+    )
 
 
 def _unit_plan_validation_state_key(state: dict[str, Any]) -> tuple[Any, Any, Any]:

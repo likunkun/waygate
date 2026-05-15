@@ -290,6 +290,112 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert 'E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言' in unit_plan_body
 
 
+def _v0_6_0_requirements_prompt(tmp_path: Path) -> str:
+    return _render_requirements_draft_prompt(
+        {
+            'requestedOutcome': 'V0.6.0',
+            'feasibleOutcome': 'V0.6.0',
+            'currentUnitId': 'target-v0-6-0',
+            'units': [
+                {
+                    'id': 'target-v0-6-0',
+                    'name': 'V0.6.0 development acceptance',
+                    'passes': False,
+                }
+            ],
+        },
+        tmp_path / 'requirements-body.md',
+    )
+
+
+def _v0_6_0_requirements_body() -> str:
+    return render_requirements_gate_body(
+        {
+            'requestedOutcome': 'V0.6.0',
+            'feasibleOutcome': 'V0.6.0',
+            'currentUnitId': 'target-v0-6-0',
+        }
+    )
+
+
+def test_v0_6_0_requirements_prompt_uses_target_project_infrastructure_scope(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+    body = _v0_6_0_requirements_body()
+
+    assert '目标项目基础设施信息' in prompt
+    assert '不是为 `workflow-controller` 自身补一组运维文档' in prompt
+    assert '目标项目基础设施信息' in body
+    assert '不是只整理 `workflow-controller` 当前仓库' in body
+
+
+def test_v0_6_0_requirements_prompt_requires_seven_infrastructure_categories(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+    body = _v0_6_0_requirements_body()
+
+    for expected in [
+        '代码仓库',
+        '项目部署运行时环境',
+        '调试分析方法',
+        '参考环境',
+        '文档地址',
+        '架构、交互逻辑、接口说明',
+        '依赖信息',
+    ]:
+        assert expected in prompt
+        assert expected in body
+
+
+def test_v0_6_0_repository_context_supports_multi_repo_targets(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+
+    for expected in ['当前项目涉及哪些代码库', '主仓库', '相关仓库', '工作区边界', '生成物', 'state-dir']:
+        assert expected in prompt
+
+
+def test_v0_6_0_runtime_environment_covers_non_local_deployments(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+
+    for expected in ['本地', '测试', '预发', '生产', '启动方式', '服务依赖', '外部 API', '验证运行时']:
+        assert expected in prompt
+
+
+def test_v0_6_0_debugging_runbook_requires_logs_and_triage_path(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+
+    for expected in ['日志在哪里', '基本排查', '状态文件', '运行事件', 'monitor', 'trace']:
+        assert expected in prompt
+
+
+def test_v0_6_0_reference_environment_preserves_uiux_style_context(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+
+    for expected in ['竞品', '同类产品', '历史项目', 'UI/UX', '风格样式', '交互参考']:
+        assert expected in prompt
+
+
+def test_v0_6_0_document_sources_allow_wiki_url_and_history_projects(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+
+    for expected in ['本地 `docs/`', 'wiki', '外部网址', '历史项目', '设计稿', 'API 文档', '部署文档', '排障文档']:
+        assert expected in prompt
+
+
+def test_v0_6_0_architecture_interfaces_and_dependencies_feed_unit_plan(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+
+    for expected in ['模块边界', '数据流', '用户交互', '状态流转', 'API/CLI/事件接口', '错误语义', '系统依赖', '验证依赖', 'Unit Plan']:
+        assert expected in prompt
+
+
+def test_v0_6_0_environment_facts_do_not_replace_unit_plan_artifacts(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+
+    assert 'environment/runbook facts' in prompt
+    assert 'Requirements Gate 负责明确目标项目需要梳理哪些基础设施事实' in prompt
+    assert 'Unit Plan 负责决定如何实现' in prompt
+    assert 'wiki 或外部链接只作为事实来源或落点' in prompt
+
+
 def test_requirements_prompt_requires_clarification_before_gate(tmp_path: Path) -> None:
     state = {
         'requestedOutcome': 'V0.5.4',

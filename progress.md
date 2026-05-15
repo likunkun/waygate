@@ -1,6 +1,27 @@
 # 进度日志
 
+## 会话：2026-05-15
+
+### V0.6.0a Prototype Review Bundle 路线图命名
+- **状态：** complete
+- 已将 Plannotator 原型审阅联动能力命名为 `V0.6.0a - Prototype Review Bundle for Plannotator`，并写入 `ROADMAP.md` 与 `ROADMAP.zh-CN.md`。
+- 该版本定位为 V0.6.0 的体验补丁：Requirements 人工确认前生成 prototype manifest 和 Plannotator review bundle，让原型图、本地 HTML 原型、外部原型 URL 与 AC/Journey 映射能在 Plannotator 中直接审阅。
+- 本次只固化路线图命名和范围，未修改 controller 实现代码。
+
+### 测试用例契约强化路线图
+- **状态：** complete
+- 已将测试策略/测试用例质量治理规划写入 `ROADMAP.md` 和 `ROADMAP.zh-CN.md` 的 V0.6.2 Strict Test Presence 下。
+- 新增 TC1–TC7 路线：Test Case Contract v1、`test_cases[]` 事实源收敛、旧格式迁移、严格 Unit Plan 预检、Test Case Review Agent、Verifier evidence 对齐和 Final Acceptance 矩阵升级。
+- 本次只更新路线图与进度/发现记录，未修改 controller 实现代码。
+
 ## 会话：2026-05-14
+
+### V0.6.0 Infrastructure Knowledge Base 终验同步
+- **状态：** complete
+- Controller Final Acceptance 已批准：`finalAcceptanceAccepted=true`，确认人为 human，hash 为 `sha256:515efa8ca6c7b92d6f2ad9e56096157cd466a49027e37fadafeea4dc882178ae`。
+- 当前目标 `Complete V0.6.0 development acceptance using current planning progress` 已标记为 `covered`；单元 `v0-6-0-u1-infrastructure-intake-gate` 已 `passes=true`。
+- Final Acceptance evidence matrix 中 AC-01 到 AC-13 均 passed；Final Scope Audit 显示 AO coverage `9/9`、AC coverage `13/13`、Journey coverage `6/6`、unexplained changed files `0`。
+- 本次状态同步更新了 `task_plan.md` 和 `progress.md`；未发现新的 workflow decision、defect 或 risk，因此 `findings.md` 未新增终验记录。
 
 ### V0.5.6 Spec Intake & Dependency Documentation 终验同步
 - **状态：** complete

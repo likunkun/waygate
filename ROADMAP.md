@@ -75,6 +75,19 @@ Planned work:
 - Separate environment/runbook facts from requirements and unit planning artifacts.
 - Keep infrastructure docs out of V0.5.6 until this version is explicitly active.
 
+### V0.6.0a - Prototype Review Bundle for Plannotator
+
+Goal: make V0.6.0 prototype evidence directly reviewable in Plannotator before Requirements human confirmation.
+
+Planned work:
+
+- Generate a structured prototype manifest under the Requirements draft artifacts with prototype id, type, path or URL, title, linked ACs, linked journeys, page state, click path, thumbnail or preview hint, and review guidance.
+- Render a Requirements Plannotator review bundle that embeds or links generated prototype images, local HTML prototypes, external prototype URLs, and the AC/Journey mapping table.
+- Route Requirements Plannotator review to the review bundle when it exists, while keeping `approvals/requirements-and-acceptance.md` as the approval gate and source of approval status.
+- Normalize local prototype asset paths into the controller artifact tree so Plannotator can open stable relative links instead of arbitrary agent-generated filesystem paths.
+- Add Requirements preflight checks for missing prototype files, incomplete clickable prototype access method, missing page states, missing click path, and missing AC mapping.
+- Keep approval semantics unchanged: Plannotator Approve still cannot bypass the Requirements quality gate.
+
 ### V0.6.1 - External Spec Intake
 
 Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable.
@@ -95,6 +108,16 @@ Planned work:
 - Require executable test cases for non-manual ACs.
 - Require concrete fixture/setup, command, and expected assertion in Unit Plan test cases.
 - Ensure verifier and final acceptance evidence rows map back to test case IDs.
+
+Test case contract hardening sequence:
+
+- TC1 - Test Case Contract v1: define a stable Unit Plan `test_cases[]` contract with `acceptance_criteria[]`, `covers_obligations[]`, `covers_journeys[]`, `layer`, `path_type`, `golden_path`, `setup[]`, `entrypoint`, optional `cleanup[]`, `command_id`, `manual_evidence`, and `assertions[]`.
+- TC2 - Source of truth cleanup: make `test_cases[]` in the Controller State Patch the authoritative source; render the Markdown Test Case Matrix from that structured data instead of treating prose and JSON as separate facts.
+- TC3 - Backward compatibility and migration: continue reading older fields such as `acceptance_criterion`, `fixture`, `command`, `evidence`, `expected`, `journey_refs`, and `journeyRefs`, but normalize them into the v1 contract and surface migration warnings.
+- TC4 - Strict Unit Plan preflight: block missing or unknown AC/AO/Journey references, unresolved `command_id`, static-only behavior coverage, weak assertions, missing E2E `user_steps`, missing setup/entrypoint, and manual evidence masquerading as automated proof.
+- TC5 - Pre-human Test Case Review Agent: before Unit Plan human confirmation, run a non-approving reviewer that annotates shallow assertions, fake fixtures, over-broad commands, happy-path-only E2E coverage, AO name-only coverage, and test cases that do not prove their mapped AC.
+- TC6 - Verifier evidence alignment: emit one evidence row per planned test case, include command IDs and structured assertions, mark unexecuted planned test cases as `missing`, and keep manual evidence separate from automated `passed` results.
+- TC7 - Final Acceptance matrix upgrade: show the full chain from Requirement / Use Case / Journey / AC / AO to Test Case and Evidence so humans review traceable proof instead of agent summaries.
 
 ### V0.6.3 - Per-Role Runner Configuration
 

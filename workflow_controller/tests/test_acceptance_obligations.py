@@ -456,6 +456,126 @@ def test_requirements_approval_accepts_out_of_scope_with_blank_ac_and_reason(tmp
     validate_requirements_acceptance_quality(gate, state)
 
 
+def test_v0_6_0_uiux_project_requires_prototype_before_requirements_human_confirmation(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 1. 需求\n'
+        '目标项目需要 UI/UX 设计，但尚未提供原型证据。\n\n'
+        '## 3. 验收标准\n'
+        '- AC-10 [verification: functional]: UI/UX 项目必须在人工确认前提供 prototype 证据。\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-10 | PD-INFRA-10 | TA-UIDESIGN-01, TA-PREFLIGHT-01 | UI 原型预检。 |\n',
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='UI/UX.*prototype'):
+        validate_requirements_acceptance_quality(gate, {'currentUnitNeedsUiDesign': True})
+
+    gate.write_text(
+        gate.read_text(encoding='utf-8')
+        + '\n## 7. 产品设计概要\n'
+        + '- Prototype Evidence: `docs/product/prototype.md` 记录页面、状态和 AC 映射。\n',
+        encoding='utf-8',
+    )
+    validate_requirements_acceptance_quality(gate, {'currentUnitNeedsUiDesign': True})
+
+
+def test_v0_6_0_web_system_requires_clickable_webpage_prototype(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    base = (
+        '# 需求与验收确认\n\n'
+        '## 1. 需求\n'
+        '目标项目是 Web 系统，需要浏览器可见体验。\n\n'
+        '## 3. 验收标准\n'
+        '- AC-11 [verification: functional]: Web 系统必须提供可点击网页原型。\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-11 | PD-INFRA-11 | TA-WEBPROTO-01, TA-PREFLIGHT-01 | Web 原型预检。 |\n'
+    )
+    gate.write_text(
+        base
+        + '\n## 7. 产品设计概要\n'
+        + '- Prototype Evidence: 静态截图 `prototype.png` 和文字说明。\n',
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='clickable webpage prototype'):
+        validate_requirements_acceptance_quality(gate, {'currentUnitIsWebSystem': True})
+
+    gate.write_text(
+        base
+        + '\n## 7. 产品设计概要\n'
+        + '- Web Prototype Evidence: clickable webpage prototype at `http://localhost:4173/prototype`; '
+        + 'start command `python -m http.server 4173`; pages `Dashboard`, `Settings`, `Preview`; '
+        + 'click path `Dashboard -> Settings -> Preview`; maps to AC-11.\n',
+        encoding='utf-8',
+    )
+    validate_requirements_acceptance_quality(gate, {'currentUnitIsWebSystem': True})
+
+
+def test_v0_6_0_web_prototype_manual_evidence_maps_to_ac(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 1. 需求\n'
+        '目标项目是 Web 系统。\n\n'
+        '## 3. 验收标准\n'
+        '- AC-12 [verification: manual]: Web 系统网页原型必须记录人工点击证据。\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-12 | PD-INFRA-12 | TA-WEBPROTO-02 | 人工点击证据。 |\n\n'
+        '## 7. 产品设计概要\n'
+        '- Web Prototype Evidence: clickable webpage prototype at `http://localhost:4173/prototype`; '
+        + 'start command `python -m http.server 4173`; pages `Dashboard`, `Settings`, `Preview`; '
+        + 'click path `Dashboard -> Settings -> Preview`; maps to AC-12.\n'
+        '- Manual Click Evidence: reviewer opened `http://localhost:4173/prototype`, '
+        + 'clicked `Dashboard -> Settings -> Preview`, observed page states `Dashboard`, `Settings`, `Preview`, '
+        + 'and mapped evidence to AC-12.\n',
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(gate, {'currentUnitIsWebSystem': True})
+
+
+def test_v0_6_0_policy_gate_does_not_require_its_own_web_prototype(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 1. 需求\n'
+        'V0.6.0 让 Waygate 在处理目标项目时梳理基础设施信息。\n'
+        '当目标项目是 Web 系统时，Requirements Gate 必须要求网页原型。\n\n'
+        '## 3. 验收标准\n'
+        '- AC-10 [verification: functional]: 当目标项目需要 UI/UX 时，Requirements Gate 要求 prototype evidence。\n'
+        '- AC-11 [verification: functional]: 当目标项目是 Web 系统时，Requirements Gate 要求 clickable webpage prototype。\n'
+        '- AC-12 [verification: manual]: Web 系统网页原型人工证据记录访问方式和 AC 映射。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AO-004 | AC-10, AC-11, AC-12 | covered | functional | Web/UI policy coverage. |\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-10 | PD-INFRA-10 | TA-UIDESIGN-01, TA-PREFLIGHT-01 | UI/UX 原型预检。 |\n'
+        '| AC-11 | PD-INFRA-11 | TA-WEBPROTO-01, TA-PREFLIGHT-01 | Web 原型预检。 |\n'
+        '| AC-12 | PD-INFRA-12 | TA-WEBPROTO-02 | 人工点击证据。 |\n',
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(
+        gate,
+        {
+            'requestedOutcome': 'V0.6.0',
+            'currentUnitId': 'v0-6-0-u1-infrastructure-intake-gate',
+            'currentUnitNeedsUiDesign': False,
+        },
+    )
+
+
 def test_requirements_approval_requires_design_and_architecture_refs_for_each_ac(tmp_path: Path) -> None:
     gate = tmp_path / 'requirements-and-acceptance.md'
     gate.write_text(

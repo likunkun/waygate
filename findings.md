@@ -1,5 +1,21 @@
 # 发现与决策
 
+## 2026-05-15 V0.6.0a Prototype Review Bundle
+
+- V0.6.0 已要求 Requirements 阶段提供 prototype evidence，但当前 Plannotator 默认审阅 approval Markdown；原型路径只是普通文本，无法保证图片、HTML 或 URL 在浏览器审阅中顺滑打开。
+- Requirements 审阅对象和 approval gate 应继续分离：Plannotator 可以打开专用 review bundle，但批准状态仍落在 `approvals/requirements-and-acceptance.md`。
+- 原型证据需要结构化 manifest 承载 prototype id、类型、路径或 URL、AC/Journey 映射、页面状态和点击路径；Markdown review bundle 只作为人工审阅视图。
+- Controller 预检应在人工确认前检查原型资产路径、可点击访问方式、页面状态、点击路径和 AC 映射，避免无效原型进入人工确认。
+- `V0.6.0a` 定位为 V0.6.0 的体验补丁，不改变 Requirements / Unit Plan / Final Acceptance 的审批语义。
+
+## 2026-05-15 测试用例契约强化路线
+
+- 仅要求 test case 有 `id`、`acceptance_criterion`、`layer`、`fixture`、`command` 和 `expected` 不足以防止 AI 生成看似完整但证明力不足的测试计划。
+- 后续测试治理应优先收敛结构化事实源：Controller State Patch 的 `test_cases[]` 应成为权威来源，Markdown Test Case Matrix 只作为 review view。
+- Test Case Contract v1 应从自由文本字段升级为可审计字段：`acceptance_criteria[]`、`covers_obligations[]`、`covers_journeys[]`、`path_type`、`setup[]`、`entrypoint`、`command_id`、`manual_evidence` 和 `assertions[]`。
+- Controller 负责硬性阻断缺失映射、弱断言、static-only 冒充行为测试、E2E 缺少用户步骤和人工证据冒充自动化；Test Case Review Agent 只做人工确认前批注，不自动批准。
+- Verifier 和 Final Acceptance 需要按 test case 逐条产生和展示 evidence，未执行的计划测试必须明确标为 `missing`，不能由 agent 总结代替证据。
+
 ## 2026-05-14 tmux-codex 清输入自退出
 
 - `C-c` 在 Claude Code 和 Codex TUI 中不是等价的安全清理动作：Claude Code 中可用于取消未提交草稿，Codex TUI 中可能中断或退出当前 Codex 进程。

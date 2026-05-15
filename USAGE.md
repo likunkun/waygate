@@ -19,7 +19,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.5.4_all.deb
+sudo apt install ./dist/waygate_0.6.0_all.deb
 waygate --help
 ```
 

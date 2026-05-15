@@ -320,6 +320,18 @@ def validate_requirements_acceptance_quality(
                 + '; add Product Design Ref and Technical Architecture Ref for every AC'
             )
 
+    if _requirements_need_uiux_prototype(state) and not _requirements_has_uiux_prototype_evidence(content):
+        issues.append(
+            'UI/UX target requires prototype evidence before Requirements human confirmation; '
+            'add prototype evidence or reviewable design evidence mapped to Product Design Ref'
+        )
+
+    if _requirements_need_clickable_web_prototype(state) and not _requirements_has_clickable_web_prototype_evidence(content):
+        issues.append(
+            'Web system requires clickable webpage prototype evidence before Requirements human confirmation; '
+            'record access method or URL/start command, page states, click path, and AC mapping'
+        )
+
     if issues:
         raise ValueError('; '.join(issues))
 
@@ -557,6 +569,111 @@ def _normalize_patch_coverage(
 
 
 _REQUIREMENTS_RESOLUTION_STATUSES = {'deferred', 'rejected', 'out_of_scope'}
+
+
+def _requirements_need_uiux_prototype(state: dict[str, Any]) -> bool:
+    return bool(state.get('currentUnitNeedsUiDesign')) or _state_declares_target_uiux(state)
+
+
+def _requirements_need_clickable_web_prototype(state: dict[str, Any]) -> bool:
+    return bool(state.get('currentUnitIsWebSystem')) or _state_declares_target_web_system(state)
+
+
+def _requirements_has_uiux_prototype_evidence(content: str) -> bool:
+    for line in content.splitlines():
+        normalized = _normalized_requirements_text(line)
+        if not _requirements_line_is_evidence_candidate(normalized):
+            continue
+        if any(keyword in normalized for keyword in ['prototype', '原型', 'design evidence', '设计说明']):
+            return True
+    return False
+
+
+def _requirements_has_clickable_web_prototype_evidence(content: str) -> bool:
+    evidence_lines = [
+        _normalized_requirements_text(line)
+        for line in content.splitlines()
+        if _requirements_line_is_evidence_candidate(_normalized_requirements_text(line))
+    ]
+    if not evidence_lines:
+        return False
+    evidence = '\n'.join(evidence_lines)
+    if not any(keyword in evidence for keyword in ['clickable webpage prototype', '可点击网页原型', 'web prototype evidence']):
+        return False
+    if any(keyword in evidence for keyword in ['静态截图', 'text-only', '纯文字', '不可点击', 'non-clickable', 'wireframe']):
+        return False
+
+    has_access_method = bool(
+        re.search(r'https?://', evidence)
+        or any(keyword in evidence for keyword in ['start command', '启动命令', '访问方式', 'prototype url', 'local html'])
+    )
+    has_page_states = any(keyword in evidence for keyword in ['page states', 'pages ', '页面状态', '关键页面', 'observed page states'])
+    has_click_path = any(keyword in evidence for keyword in ['click path', 'clicked ', '点击路径', '核心点击路径'])
+    has_ac_mapping = bool(_requirements_ac_ids_in_text(evidence)) and any(
+        keyword in evidence for keyword in ['maps to', 'mapped evidence', '映射', '关联 ac']
+    )
+    return has_access_method and has_page_states and has_click_path and has_ac_mapping
+
+
+def _requirements_line_is_evidence_candidate(normalized_line: str) -> bool:
+    if not normalized_line:
+        return False
+    evidence_markers = [
+        'prototype evidence',
+        'web prototype evidence',
+        'manual click evidence',
+        'design evidence',
+        '原型证据',
+        '人工点击证据',
+        '可审阅设计说明',
+    ]
+    if not any(marker in normalized_line for marker in evidence_markers):
+        return False
+    requirement_only_markers = [
+        '必须',
+        '要求',
+        '缺少',
+        '尚未提供',
+        '不接受',
+        '不得',
+        'should',
+        'must',
+        'requires',
+        'required',
+        'missing',
+    ]
+    return not any(marker in normalized_line for marker in requirement_only_markers)
+
+
+def _normalized_requirements_text(text: str) -> str:
+    return re.sub(r'\s+', ' ', text.strip().lower())
+
+
+def _state_declares_target_uiux(state: dict[str, Any]) -> bool:
+    return _state_target_context_has_any(state, ['ui/ux', 'uiux', 'browser ui', 'web ui', 'frontend', '页面', '工作台'])
+
+
+def _state_declares_target_web_system(state: dict[str, Any]) -> bool:
+    return _state_target_context_has_any(state, ['web system', 'web系统', 'web 系统', 'web app', 'webapp', '网页系统'])
+
+
+def _state_target_context_has_any(state: dict[str, Any], indicators: list[str]) -> bool:
+    context_keys = [
+        'targetProjectType',
+        'target_project_type',
+        'targetProjectKind',
+        'target_project_kind',
+        'targetProjectContext',
+        'target_project_context',
+        'requirementsTargetType',
+        'requirements_target_type',
+    ]
+    values = [
+        _normalized_requirements_text(str(state.get(key) or ''))
+        for key in context_keys
+        if state.get(key)
+    ]
+    return any(indicator in value for value in values for indicator in indicators)
 
 
 def _requirements_has_design_architecture_matrix(content: str) -> bool:

@@ -4876,6 +4876,171 @@ def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_re
     assert '## Journey Acceptance Matrix' in gate_content
 
 
+def test_drive_auto_revises_pending_requirements_gate_before_human_review(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.gates.parsers import write_gate_file
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'acceptanceObligations': [
+                {'id': 'AO-001', 'title': 'six-step UX unclear', 'priority': 'must', 'status': 'open'},
+                {'id': 'AO-002', 'title': 'materials missing coverage', 'priority': 'must', 'status': 'open'},
+            ],
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: integration]: Delivery behavior covers only AO-001.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+""",
+    )
+    captured_prompts: list[str] = []
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        captured_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        body_path = request.artifact_dir / 'requirements-body.md'
+        body_path.write_text(
+            """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: integration]: Delivery behavior covers AO-001 and AO-002.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+| AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+""",
+            encoding='utf-8',
+        )
+        return RunnerResult(
+            backend='tmux-claude',
+            status='done',
+            command=['fake-claude'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=request.artifact_dir / f'run-{len(captured_prompts)}',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+    output: list[str] = []
+
+    controller.drive(
+        input_func=lambda _prompt: (_ for _ in ()).throw(EOFError),
+        output_func=output.append,
+        timestamp_output=False,
+    )
+    rendered = '\n'.join(output)
+
+    assert captured_prompts
+    assert '## Controller Validation Error' in captured_prompts[0]
+    assert '[修订] Requirements 草案未通过 controller 预检，自动打回：' in rendered
+    assert rendered.index('[修订] Requirements 草案未通过 controller 预检') < rendered.index('[人工确认] 需求与验收')
+    assert '[Plannotator] 已打开辅助审阅。' not in rendered
+    revision = json.loads(
+        (state_dir / 'artifacts' / 'requirements-revisions' / 'revision-1.json').read_text(encoding='utf-8')
+    )
+    assert revision['controller_validation_error'].startswith('requirements gate invalid:')
+    assert 'AO-002' in revision['controller_validation_error']
+
+
+def test_drive_refreshes_pending_requirements_invalid_reason_from_current_gate(tmp_path: Path) -> None:
+    from workflow_controller.gates.parsers import write_gate_file
+
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        """# 需求与验收确认
+
+## 3. 验收标准
+- AC-1: User completes the delivery journey.
+""",
+    )
+    output: list[str] = []
+
+    controller.drive(
+        input_func=lambda _prompt: 'q',
+        output_func=output.append,
+        timestamp_output=False,
+    )
+    rendered = '\n'.join(output)
+
+    assert 'requirements gate invalid:' in rendered
+    assert 'verification layer' in rendered
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requirementsAccepted'] is False
+    assert state['blockedReason'].startswith('requirements gate invalid:')
+
+
 def test_unit_plan_draft_auto_revises_controller_invalid_gate_before_human_review(
     tmp_path: Path,
     monkeypatch,

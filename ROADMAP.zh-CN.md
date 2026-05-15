@@ -75,6 +75,19 @@
 - 将环境/runbook 事实与 Requirements、Unit Plan artifact 分开。
 - 在该版本明确启动前，不把基础设施文档纳入 V0.5.6。
 
+### V0.6.0a - Prototype Review Bundle for Plannotator
+
+目标：让 V0.6.0 生成的 prototype evidence 在 Requirements 人工确认前可以被 Plannotator 直接、顺滑审阅。
+
+计划：
+
+- 在 Requirements draft artifacts 下生成结构化 prototype manifest，记录 prototype id、类型、路径或 URL、标题、关联 AC、关联 Journey、页面状态、点击路径、缩略图或预览提示，以及审阅重点。
+- 渲染 Requirements 专用 Plannotator review bundle，把生成的原型图、本地 HTML 原型、外部原型 URL、AC/Journey 映射表组合成可审阅视图。
+- Requirements gate 在存在 review bundle 时让 Plannotator 打开该 bundle；`approvals/requirements-and-acceptance.md` 仍作为 approval gate 和确认状态事实源。
+- 将本地原型资产路径规范化到 controller artifact tree，避免 Plannotator 依赖 agent 随手写出的任意文件系统路径。
+- Requirements 预检增加原型文件缺失、可点击原型访问方式不完整、页面状态缺失、点击路径缺失和 AC 映射缺失的阻断。
+- 保持审批语义不变：Plannotator Approve 仍不能绕过 Requirements quality gate。
+
 ### V0.6.1 - External Spec Intake
 
 目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径。
@@ -95,6 +108,16 @@
 - 要求每条非 manual AC 都有可执行测试用例。
 - Unit Plan test case 必须包含 fixture/setup、command 和 expected assertion。
 - Verifier 和 Final Acceptance 的 evidence rows 必须能映射回 Test Case ID。
+
+测试用例契约强化路线：
+
+- TC1 - Test Case Contract v1：定义稳定的 Unit Plan `test_cases[]` 契约，包含 `acceptance_criteria[]`、`covers_obligations[]`、`covers_journeys[]`、`layer`、`path_type`、`golden_path`、`setup[]`、`entrypoint`、可选 `cleanup[]`、`command_id`、`manual_evidence` 和 `assertions[]`。
+- TC2 - 事实源收敛：以 Controller State Patch 中的 `test_cases[]` 作为权威事实源；Markdown Test Case Matrix 只从结构化数据渲染，不再让 prose 和 JSON 各自成为事实源。
+- TC3 - 旧格式兼容与迁移：继续读取 `acceptance_criterion`、`fixture`、`command`、`evidence`、`expected`、`journey_refs`、`journeyRefs` 等旧字段，但归一化到 v1 契约，并输出迁移 warning。
+- TC4 - 严格 Unit Plan 预检：阻断缺失或未知 AC/AO/Journey 引用、无法解析的 `command_id`、static-only 冒充行为覆盖、弱断言、E2E 缺少 `user_steps`、缺少 setup/entrypoint，以及 manual evidence 冒充自动化通过。
+- TC5 - 人工确认前 Test Case Review Agent：在 Unit Plan 人工确认前运行不具备批准权的审阅 agent，标注浅断言、假 fixture、过宽命令、只覆盖 happy path 的 E2E、AO 只挂名覆盖，以及不能证明所映射 AC 的测试用例。
+- TC6 - Verifier evidence 对齐：每个计划中的 test case 都产出 evidence row，包含 command ID 和结构化 assertions；未执行的计划 test case 明确标记为 `missing`；manual evidence 与自动化 `passed` 结果分开。
+- TC7 - Final Acceptance 矩阵升级：展示从 Requirement / Use Case / Journey / AC / AO 到 Test Case 和 Evidence 的完整链路，让人工审的是可追踪证据而不是 agent 总结。
 
 ### V0.6.3 - Per-Role Runner Configuration
 

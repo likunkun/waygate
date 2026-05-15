@@ -240,6 +240,8 @@ def _unit_plan_summary_lines(state: dict[str, Any]) -> list[str]:
 
 
 def _requirements_body(state: dict[str, Any]) -> str:
+    if _is_v0_6_0_target(state):
+        return _v0_6_0_requirements_body(state)
     unit = _current_unit(state)
     commands = unit.get('verification_commands') or state.get('verificationCommands') or []
     lines = [
@@ -350,6 +352,170 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '- [ ] 架构概要足以帮助评审者理解模块边界、数据流和主要风险。',
     ])
     return '\n'.join(lines) + '\n'
+
+
+def _v0_6_0_requirements_body(state: dict[str, Any]) -> str:
+    obligations = active_must_obligations(state)
+    trace_rows = []
+    if obligations:
+        for obligation in obligations:
+            trace_rows.append(
+                f"| {obligation.get('id')} | AC-01, AC-02 | covered | functional | V0.6.0 要求从目标项目视角澄清基础设施信息：{obligation.get('title', '')} |"
+            )
+    else:
+        trace_rows.append('| 无 active must AO | AC-01 | covered | functional | 当前没有 active must AO。 |')
+
+    lines = [
+        '# 需求与验收确认',
+        '',
+        '## 1. 需求',
+        '',
+        'V0.6.0 的目标不是为 `workflow-controller` 自身补一组运维文档，而是让 Waygate 在处理任意目标项目时具备梳理目标项目基础设施信息的能力；不是只整理 `workflow-controller` 当前仓库。',
+        '',
+        '目标项目基础设施信息必须覆盖：代码仓库、项目部署运行时环境、调试分析方法、参考环境、文档地址、架构、交互逻辑、接口说明、依赖信息。',
+        '',
+        '- 代码仓库：当前项目涉及哪些代码库、主仓库、相关仓库、工作区边界、文档目录、生成物和 state-dir 边界。',
+        '- 项目部署运行时环境：本地、测试、预发、生产或等价环境、启动方式、服务依赖、外部 API、数据存储、agent runner 和验证运行时前置条件。',
+        '- 调试分析方法：日志在哪里、如何查看、基本排查思路、状态文件、运行事件、错误输出、monitor 或 trace 入口。',
+        '- 参考环境：竞品、同类产品、历史项目、UI/UX 风格样式、交互参考和访问方式。',
+        '- 文档地址：本地 `docs/`、wiki、外部网址、历史项目、设计稿、API 文档、部署文档和排障文档，并说明用途或可信度。',
+        '- 架构、交互逻辑、接口说明：模块边界、数据流、用户交互、状态流转、API/CLI/事件接口和错误语义。',
+        '- 依赖信息：系统依赖、服务依赖、第三方 API、部署依赖、验证依赖和 agent runtime 依赖。',
+        '',
+        '当目标项目需要 UI/UX 或 `currentUnitNeedsUiDesign=true` 时，Requirements Gate 在人工确认前必须包含 prototype evidence。若目标项目是 Web 系统，必须包含 clickable webpage prototype，并记录访问方式、页面状态、核心点击路径和 AC 映射；静态截图、纯文字描述或不可点击线框不满足要求。',
+        '',
+        '必须保持 environment/runbook facts、Requirements 和 Unit Plan artifacts 的边界：Requirements Gate 负责明确目标项目需要梳理哪些基础设施事实；Unit Plan 负责决定如何实现；`docs/operations/`、wiki 或外部链接只作为事实来源或落点。',
+        '',
+        '## 2. 用户旅程',
+        '',
+        '- J-01 目标项目基础设施信息进入需求评审：用户启动目标项目 Requirements -> agent 澄清目标项目基础设施信息 -> Requirements Gate 生成 7 类清单 -> controller 预检通过。',
+        '- J-02 多仓库和外部文档被正确梳理：agent 识别主仓库和相关仓库 -> 记录 wiki/外部网址/历史项目文档 -> Unit Plan 可引用这些事实。',
+        '- J-03 调试和运行环境事实支持后续排障：agent 记录运行环境 -> 记录日志位置和排查入口 -> Builder/Verifier 失败时可回查 Requirements。',
+        '- J-04 UI/UX 项目在预检前完成原型设计：目标项目标记需要 UI/UX -> Requirements Gate 要求 prototype -> 原型映射 Product Design Ref -> controller 预检前可审阅。',
+        '- J-05 Web 系统网页原型可点击使用：目标项目是 Web 系统 -> Requirements Gate 要求 clickable webpage prototype -> reviewer 打开并点击核心路径 -> 页面状态映射 AC。',
+        '- J-06 既有控制平面能力不退化：新增基础设施引导 -> 保留 AO/AC/Traceability/Journey/Test Strategy 结构 -> 运行全量回归。',
+        '',
+        '## 3. 验收标准',
+        '',
+        '- AC-01 [verification: functional]: Requirements Gate 明确是让 Waygate 具备梳理目标项目基础设施信息的能力，不是只整理 `workflow-controller` 当前仓库。',
+        '- AC-02 [verification: functional]: Requirements Gate 覆盖 7 类基础设施信息：代码仓库、项目部署运行时环境、调试分析方法、参考环境、文档地址、架构/交互逻辑/接口说明、依赖信息。',
+        '- AC-03 [verification: functional]: 代码仓库信息要求说明当前项目涉及哪些代码库、主仓库、相关仓库、工作区边界、文档目录、生成物和 state-dir 边界。',
+        '- AC-04 [verification: functional]: 项目部署运行时环境要求说明本地、测试、预发、生产或等价环境、启动方式、服务依赖、外部 API 和验证运行时。',
+        '- AC-05 [verification: functional]: 调试分析方法要求说明日志在哪里、基本排查思路、状态文件、运行事件、monitor 或 trace 入口。',
+        '- AC-06 [verification: functional]: 参考环境要求记录竞品、同类产品、历史项目、UI/UX 风格样式和交互参考。',
+        '- AC-07 [verification: functional]: 文档地址支持本地 `docs/`、wiki、外部网址、历史项目、设计稿、API 文档、部署文档和排障文档。',
+        '- AC-08 [verification: functional]: 架构、交互逻辑、接口说明和依赖信息能被 Unit Plan 消费。',
+        '- AC-09 [verification: manual]: environment/runbook facts、Requirements 和 Unit Plan artifacts 边界清楚。',
+        '- AC-10 [verification: functional]: UI/UX 目标项目缺少 prototype evidence 时在 Requirements 人工确认前被 preflight 阻断。',
+        '- AC-11 [verification: functional]: Web 系统缺少 clickable webpage prototype，或只提供静态截图、纯文字、不可点击线框时在 Requirements 人工确认前被 preflight 阻断。',
+        '- AC-12 [verification: manual]: Web 系统网页原型人工证据记录 prototype URL 或启动命令、点击路径、页面状态和 AC 映射。',
+        '- AC-13 [verification: integration]: `python -m pytest workflow_controller/tests -q` 通过，既有控制平面不退化。',
+        '',
+        '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）',
+        '',
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |',
+        '| --- | --- | --- | --- | --- |',
+        *trace_rows,
+        '',
+        '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）',
+        '',
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |',
+        '| --- | --- | --- | --- |',
+        '| AC-01 | PD-INFRA-01 | TA-REQ-01 | 目标项目视角。 |',
+        '| AC-02 | PD-INFRA-02 | TA-GATE-01 | 7 类基础设施信息。 |',
+        '| AC-03 | PD-INFRA-03 | TA-PROMPT-01 | 多仓库与工作区边界。 |',
+        '| AC-04 | PD-INFRA-04 | TA-PROMPT-01, TA-UNITPLAN-01 | 运行时环境。 |',
+        '| AC-05 | PD-INFRA-05 | TA-RUNBOOK-01 | 日志和排查。 |',
+        '| AC-06 | PD-INFRA-06 | TA-UIDESIGN-01 | UI/UX 参考环境。 |',
+        '| AC-07 | PD-INFRA-07 | TA-DOCSOURCE-01 | 外部文档来源。 |',
+        '| AC-08 | PD-INFRA-08 | TA-ARCH-01, TA-DEPS-01 | 架构与依赖。 |',
+        '| AC-09 | PD-INFRA-09 | TA-GATE-02 | artifact 边界。 |',
+        '| AC-10 | PD-INFRA-10 | TA-UIDESIGN-01, TA-PREFLIGHT-01 | UI/UX 原型预检。 |',
+        '| AC-11 | PD-INFRA-11 | TA-WEBPROTO-01, TA-PREFLIGHT-01 | Web clickable prototype。 |',
+        '| AC-12 | PD-INFRA-12 | TA-WEBPROTO-02 | 人工点击证据。 |',
+        '| AC-13 | PD-INFRA-13 | TA-REGRESSION-01 | 回归验证。 |',
+        '',
+        '## 4.7 Journey Acceptance Matrix',
+        '',
+        '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| J-01 | 目标项目基础设施信息进入需求评审 | active | 用户启动目标项目 Requirements -> agent 澄清目标项目基础设施信息 -> Requirements Gate 生成 7 类清单 -> controller 预检通过 | AC-01, AC-02, AC-09 | functional | focused Requirements prompt/gate tests | TC-V060-INFRA-01 | target-v0-6-0 |',
+        '| J-02 | 多仓库和外部文档被正确梳理 | active | agent 识别主仓库和相关仓库 -> 记录 wiki/外部网址/历史项目文档 -> Unit Plan 可引用这些事实 | AC-03, AC-07 | functional | focused prompt/template tests | TC-V060-REPOS-DOCS-01 | target-v0-6-0 |',
+        '| J-03 | 调试和运行环境事实支持后续排障 | active | agent 记录运行环境 -> 记录日志位置和排查入口 -> Builder/Verifier 失败时可回查 Requirements | AC-04, AC-05, AC-08 | functional | focused prompt/template tests | TC-V060-RUNBOOK-01 | target-v0-6-0 |',
+        '| J-04 | UI/UX 项目在预检前完成原型设计 | active | 目标项目标记需要 UI/UX -> Requirements Gate 要求 prototype -> 原型映射 Product Design Ref -> controller 预检前可审阅 | AC-06, AC-10 | manual | 人工审阅加 focused UI/UX Requirements test | TC-V060-UIUX-PROTOTYPE-01 | target-v0-6-0 |',
+        '| J-05 | Web 系统网页原型可点击使用 | active | 目标项目是 Web 系统 -> agent 生成或引用 webpage prototype -> reviewer 点击核心路径 -> 页面状态映射 AC | AC-11, AC-12 | manual | 人工点击验证网页原型 | TC-V060-WEB-PROTOTYPE-01 | target-v0-6-0 |',
+        '| J-06 | 既有控制平面能力不退化 | active | 新增基础设施引导 -> 保留 AO/AC/Traceability/Journey/Test Strategy -> 运行全量回归 | AC-13 | integration | `python -m pytest workflow_controller/tests -q` | TC-V060-REGRESSION-01 | target-v0-6-0 |',
+        '',
+        '## 4.8 已澄清事项、关键假设与待确认风险',
+        '',
+        '- 已澄清事项：V0.6.0 服务于目标项目基础设施信息梳理，不是当前仓库自述文档。',
+        '- 已澄清事项：Web 系统必须产出可点击使用的网页原型。',
+        '- 关键假设：Web 系统识别结合用户需求、spec、目标项目上下文和 `currentUnitNeedsUiDesign`。',
+        '- 待确认风险：外部 wiki、设计稿或 prototype 链接可能需要权限。',
+        '',
+        '## 5. 测试策略（Test Strategy）',
+        '',
+        '- functional: focused Requirements prompt/gate/preflight tests 覆盖 AC-01 到 AC-11。',
+        '- manual: 人工审阅 Requirements/Unit Plan/runbook 边界和 Web prototype 点击证据。',
+        '- integration: `python -m pytest workflow_controller/tests -q` 覆盖 AC-13。',
+        '',
+        '## 6. 范围外',
+        '',
+        '- 不实现 V0.6.1+、V0.7 或未来 backlog。',
+        '- 不强制非 Web 项目创建 clickable webpage prototype。',
+        '- 不存储 secret、token、数据库 URL 或私有凭据。',
+        '',
+        '## 7. 产品设计概要',
+        '',
+        '- PD-INFRA-01 目标项目视角：reviewer 能看到本能力服务于被 Waygate 管理的目标项目。',
+        '- PD-INFRA-02 七类信息清单：Requirements review 提供稳定清单。',
+        '- PD-INFRA-03 代码仓库梳理：目标项目涉及哪些仓库、路径、分支或工作区。',
+        '- PD-INFRA-04 运行环境梳理：目标项目在哪些环境运行、如何启动、依赖哪些服务和工具。',
+        '- PD-INFRA-05 调试分析梳理：日志位置和排查问题路径。',
+        '- PD-INFRA-06 参考环境梳理：竞品、同类产品、历史系统和设计风格参考。',
+        '- PD-INFRA-07 文档地址梳理：本地文档、wiki、历史项目和外部网址。',
+        '- PD-INFRA-08 架构与依赖梳理：模块、接口、交互、数据流和依赖边界。',
+        '- PD-INFRA-09 边界说明：Requirements 记录目标和事实，Unit Plan 记录实施计划，runbook 记录长期事实。',
+        '- PD-INFRA-10 UI/UX 原型预检：需要 UI/UX 的项目在 controller preflight 前已有 prototype evidence。',
+        '- PD-INFRA-11 Web 网页原型：Web 系统原型可打开、点击和使用。',
+        '- PD-INFRA-12 Web 原型人工证据：记录访问方式、点击路径、页面状态和 AC 映射。',
+        '- PD-INFRA-13 回归体验：既有 workflow 不退化。',
+        '',
+        '## 8. 架构概要',
+        '',
+        '- TA-REQ-01 Requirements Draft Prompt：引导 agent 澄清目标项目基础设施信息。',
+        '- TA-GATE-01 Requirements Gate Template：提供 7 类基础设施信息结构。',
+        '- TA-PROMPT-01 Target Context Intake：支持多仓库、外部文档、wiki、历史项目、运行环境和排障入口。',
+        '- TA-UNITPLAN-01 Unit Plan Consumption：Unit Plan 从 Requirements 读取基础设施事实。',
+        '- TA-RUNBOOK-01 Debug Facts：日志位置、状态文件、事件、monitor 和 trace 属于 runbook facts。',
+        '- TA-UIDESIGN-01 UI/UX Design Requirement：UI/UX 项目产生 prototype evidence。',
+        '- TA-WEBPROTO-01 Web Prototype Requirement：Web 系统要求 clickable webpage prototype。',
+        '- TA-WEBPROTO-02 Web Prototype Evidence：人工点击证据映射 Journey、AC 和 Product Design Ref。',
+        '- TA-DOCSOURCE-01 External Documentation Sources：支持本地路径和外部 URL。',
+        '- TA-ARCH-01 Architecture Facts：架构、交互逻辑和接口说明进入 Requirements。',
+        '- TA-DEPS-01 Dependency Facts：依赖信息区分开发、运行、服务、部署和验证依赖。',
+        '- TA-GATE-02 Artifact Boundary：Requirements、Unit Plan 和 runbook facts 边界。',
+        '- TA-PREFLIGHT-01 Controller Preflight：人工确认前识别缺失的 UI/UX prototype 或 Web clickable prototype。',
+        '- TA-REGRESSION-01 Regression Boundary：focused tests 和全量回归保护既有行为。',
+        '',
+        '## 9. 人工审阅清单',
+        '',
+        '- [ ] 需求明确是让 Waygate 具备梳理目标项目基础设施信息的能力，不是只整理 `workflow-controller` 当前仓库。',
+        '- [ ] 7 类基础设施信息都已进入需求、AC、AO 映射和测试策略。',
+        '- [ ] Web 系统必须产出可点击使用的网页原型。',
+        '- [ ] Requirements、Unit Plan、operations/runbook facts 的边界清楚。',
+    ]
+    return '\n'.join(lines) + '\n'
+
+
+def _is_v0_6_0_target(state: dict[str, Any]) -> bool:
+    candidates = [
+        state.get('requestedOutcome'),
+        state.get('feasibleOutcome'),
+        state.get('currentUnitId'),
+        state.get('task_id'),
+    ]
+    return any('v0.6.0' in str(item).lower() or 'v0-6-0' in str(item).lower() for item in candidates if item)
 
 
 def _unit_plan_body(state: dict[str, Any]) -> str:
