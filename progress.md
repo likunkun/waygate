@@ -2,6 +2,23 @@
 
 ## 会话：2026-05-15
 
+### V0.6.0a Prototype Review Bundle 实施
+- **状态：** complete
+- 已先提交 V0.6.0 基线：`dc3cd0b chore: finalize v0.6.0 baseline`。
+- 新增 `workflow_controller/prototype_review.py`：读取 `artifacts/requirements-draft/prototype-manifest.json`，校验原型 id/type/path-or-URL/title/AC/Journey/page states/click path，复制本地图片/HTML 到 `artifacts/requirements-draft/prototypes/`，生成 `prototype-review-manifest.json` 和 `plannotator-review.md`。
+- Requirements Plannotator 审阅现在在存在 bundle 时打开 `plannotator-review.md`，approval gate 仍是 `approvals/requirements-and-acceptance.md`；Plannotator summary/event 记录 review path、approval gate path、manifest path 和 localhost preview URL。
+- 新增只读 localhost preview server，仅服务 review bundle、normalized manifest、`prototypes/` 和 approval gate，并在 Plannotator 决策结束后关闭。
+- Requirements preflight 强化为 UI/UX 或 Web 系统必须有合法 prototype manifest，并阻断缺文件、未知 AC、缺 page states、缺 click path、缺 AC 映射和敏感 URL query。
+- `workflow_controller.__version__` 更新为 `0.6.0a`，双语 USAGE/CHANGELOG/ROADMAP 及 Requirements prompt/template 已同步。
+- 已完成验证：
+  - `python -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `3 passed`
+  - `python -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `24 passed`
+  - `python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `170 passed`
+  - `python -m pytest workflow_controller/tests/test_packaging.py -q` -> `2 passed`
+  - `python -m pytest workflow_controller/tests -q` -> `407 passed in 70.72s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0a_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0a / all / python3`
+
 ### V0.6.0a Prototype Review Bundle 路线图命名
 - **状态：** complete
 - 已将 Plannotator 原型审阅联动能力命名为 `V0.6.0a - Prototype Review Bundle for Plannotator`，并写入 `ROADMAP.md` 与 `ROADMAP.zh-CN.md`。

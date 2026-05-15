@@ -19,7 +19,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.0_all.deb
+sudo apt install ./dist/waygate_0.6.0a_all.deb
 waygate --help
 ```
 
@@ -71,6 +71,12 @@ waygate go V1.0 --workspace-dir /path/to/target-project
 # Start from a supported Waygate Markdown requirements spec.
 waygate go V1.0 --spec ./requirements.md
 ```
+
+## Prototype Review Bundle
+
+For UI/UX or Web-system requirements, the Requirements drafter must write `artifacts/requirements-draft/prototype-manifest.json`. Waygate validates it, copies local image/HTML prototypes into `artifacts/requirements-draft/prototypes/`, renders `plannotator-review.md`, and opens that review bundle in Plannotator. Approval status still belongs to `approvals/requirements-and-acceptance.md`.
+
+The manifest must map each prototype to real AC IDs and include page states plus click paths. URLs with sensitive query keys such as `token`, `password`, `secret`, `api_key`, or `signature` are rejected.
 
 ## Two-Step Mode
 

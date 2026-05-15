@@ -3997,7 +3997,7 @@ print('{"decision":"dismissed"}')
     assert any(event['type'] == 'plannotator_review_requested' for event in events)
 
 
-def test_drive_plannotator_reviews_requirements_approval_markdown_when_body_artifact_exists(
+def test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_approval_gate_separate(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -4033,6 +4033,33 @@ def test_drive_plannotator_reviews_requirements_approval_markdown_when_body_arti
     body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
     body_path.parent.mkdir(parents=True, exist_ok=True)
     body_path.write_text('# Requirements & Acceptance Confirmation\n\nClaude body\n', encoding='utf-8')
+    review_path = body_path.parent / 'plannotator-review.md'
+    manifest_path = body_path.parent / 'prototype-review-manifest.json'
+    prototypes_dir = body_path.parent / 'prototypes'
+    (prototypes_dir / 'checkout').mkdir(parents=True, exist_ok=True)
+    (prototypes_dir / 'checkout' / 'index.html').write_text('<button>Checkout</button>\n', encoding='utf-8')
+    review_path.write_text('# Prototype Review Bundle for Plannotator\n\n[Checkout](prototypes/checkout/index.html)\n', encoding='utf-8')
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'version': 'v0.6.0a',
+                'review_bundle_path': str(review_path),
+                'prototypes_dir': str(prototypes_dir),
+                'prototypes': [
+                    {
+                        'id': 'checkout',
+                        'type': 'html',
+                        'title': 'Checkout',
+                        'review_href': 'prototypes/checkout/index.html',
+                        'linked_acceptance_criteria': ['AC-01'],
+                        'page_states': ['Cart'],
+                        'click_path': ['Open cart'],
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
     plannotator_log = tmp_path / 'plannotator-args.json'
     fake_plannotator = tmp_path / 'fake-plannotator'
     fake_plannotator.write_text(
@@ -4063,18 +4090,21 @@ print('{"decision":"dismissed"}')
     )
 
     assert result.returncode == 0, result.stderr
-    assert f'审阅文件：{body_path}' not in result.stdout
-    assert f'确认文件：{approval_path}' not in result.stdout
+    assert f'审阅文件：{review_path}' in result.stdout
+    assert f'确认文件：{approval_path}' in result.stdout
+    assert '原型预览：http://127.0.0.1:' in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
         'annotate',
-        str(approval_path),
+        str(review_path),
         '--gate',
         '--json',
     ]
     summary = json.loads((state_dir / 'plannotator' / 'requirements-last-review.json').read_text(encoding='utf-8'))
-    assert summary['gate_path'] == str(approval_path)
-    assert summary['review_path'] == str(approval_path)
+    assert summary['gate_path'] == str(review_path)
+    assert summary['review_path'] == str(review_path)
     assert summary['approval_gate_path'] == str(approval_path)
+    assert summary['prototype_review_manifest_path'] == str(manifest_path)
+    assert summary['prototype_review_preview_url'].startswith('http://127.0.0.1:')
 
 
 def test_drive_auto_approves_gate_when_plannotator_approves(

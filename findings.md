@@ -1,5 +1,13 @@
 # 发现与决策
 
+## 2026-05-15 V0.6.0a Prototype Review Bundle 实施决策
+
+- 原型审阅需要和 approval gate 分离：Plannotator 可审阅 `artifacts/requirements-draft/plannotator-review.md`，但 Requirements 批准状态仍只写入 `approvals/requirements-and-acceptance.md`，避免 review view 成为审批事实源。
+- `prototype-manifest.json` 是 agent 输出事实源，`prototype-review-manifest.json` 是 controller 规范化后的审阅事实源；本地图片/HTML 必须复制进 `artifacts/requirements-draft/prototypes/`，避免 Plannotator 依赖任意工作区路径。
+- Web 系统的原型不能只靠 prose 通过预检；必须有结构化 manifest，并且每个 prototype 必须映射真实 AC、包含 page states 和 click path。Web manifest 还必须至少包含可点击 HTML 或 URL，不接受 image-only。
+- 外部 prototype URL 允许用于审阅，但 query key 中出现 token、password、secret、api_key、signature 等敏感字段时必须阻断，避免把带凭据 URL 写入 artifact 或日志。
+- localhost preview server 只在 Requirements bundle 审阅期间启动，绑定 `127.0.0.1` 随机端口，只服务 review bundle、normalized manifest、`prototypes/` 和 approval gate；决策结束后关闭，降低意外暴露范围。
+
 ## 2026-05-15 V0.6.0a Prototype Review Bundle
 
 - V0.6.0 已要求 Requirements 阶段提供 prototype evidence，但当前 Plannotator 默认审阅 approval Markdown；原型路径只是普通文本，无法保证图片、HTML 或 URL 在浏览器审阅中顺滑打开。

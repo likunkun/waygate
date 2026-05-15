@@ -2,6 +2,13 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0a
+
+- Added Requirements prototype review bundles for Plannotator.
+- Added `prototype-manifest.json` validation, normalized review manifests, copied local prototype assets, and read-only localhost preview links.
+- Routed Requirements Plannotator review to the review bundle while keeping approval on `approvals/requirements-and-acceptance.md`.
+- Hardened UI/UX and Web prototype preflight for missing files, unknown ACs, missing page states/click paths/AC mappings, and sensitive URL query parameters.
+
 ## 0.6.0
 
 - Added `__version__` to the Python package and `--version` flag to the CLI.

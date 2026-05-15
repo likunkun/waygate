@@ -20,6 +20,10 @@ from workflow_controller.gates.parsers import (
     gate_body,
     write_gate_file,
 )
+from workflow_controller.prototype_review import (
+    source_prototype_manifest_path_for_requirements,
+    validate_prototype_review_manifest,
+)
 
 
 VERIFICATION_EVIDENCE_SCHEMA_VERSION = 'v0.3.5'
@@ -331,6 +335,28 @@ def validate_requirements_acceptance_quality(
             'Web system requires clickable webpage prototype evidence before Requirements human confirmation; '
             'record access method or URL/start command, page states, click path, and AC mapping'
         )
+
+    prototype_manifest_required = (
+        _requirements_need_uiux_prototype(state)
+        or _requirements_need_clickable_web_prototype(state)
+    )
+    if prototype_manifest_required:
+        manifest_path, artifacts_dir = source_prototype_manifest_path_for_requirements(requirements_path)
+        if not manifest_path.exists():
+            issues.append(
+                'UI/UX or Web target requires a valid prototype manifest before Requirements human confirmation; '
+                f'write artifacts/requirements-draft/{manifest_path.name}'
+            )
+        else:
+            try:
+                validate_prototype_review_manifest(
+                    manifest_path,
+                    requirements_path=requirements_path,
+                    artifacts_dir=artifacts_dir,
+                    require_clickable=_requirements_need_clickable_web_prototype(state),
+                )
+            except ValueError as exc:
+                issues.append(str(exc))
 
     if issues:
         raise ValueError('; '.join(issues))

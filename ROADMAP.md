@@ -79,13 +79,15 @@ Planned work:
 
 Goal: make V0.6.0 prototype evidence directly reviewable in Plannotator before Requirements human confirmation.
 
-Planned work:
+Status: implemented in package `0.6.0a`.
+
+Delivered work:
 
 - Generate a structured prototype manifest under the Requirements draft artifacts with prototype id, type, path or URL, title, linked ACs, linked journeys, page state, click path, thumbnail or preview hint, and review guidance.
 - Render a Requirements Plannotator review bundle that embeds or links generated prototype images, local HTML prototypes, external prototype URLs, and the AC/Journey mapping table.
 - Route Requirements Plannotator review to the review bundle when it exists, while keeping `approvals/requirements-and-acceptance.md` as the approval gate and source of approval status.
 - Normalize local prototype asset paths into the controller artifact tree so Plannotator can open stable relative links instead of arbitrary agent-generated filesystem paths.
-- Add Requirements preflight checks for missing prototype files, incomplete clickable prototype access method, missing page states, missing click path, and missing AC mapping.
+- Add Requirements preflight checks for missing prototype files, incomplete clickable prototype access method, missing page states, missing click path, missing AC mapping, unknown AC references, and sensitive URL query parameters.
 - Keep approval semantics unchanged: Plannotator Approve still cannot bypass the Requirements quality gate.
 
 ### V0.6.1 - External Spec Intake

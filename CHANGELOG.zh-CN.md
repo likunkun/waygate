@@ -2,6 +2,13 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.0a
+
+- 新增 Requirements prototype review bundle，供 Plannotator 审阅原型证据。
+- 新增 `prototype-manifest.json` 校验、规范化 review manifest、本地原型资产复制和只读 localhost 预览链接。
+- Requirements 的 Plannotator 审阅对象改为 review bundle，同时 approval 仍落在 `approvals/requirements-and-acceptance.md`。
+- 强化 UI/UX 和 Web 原型预检：阻断缺文件、未知 AC、缺页面状态、缺点击路径、缺 AC 映射和敏感 URL query。
+
 ## 0.6.0
 
 - Python 包新增 `__version__`，CLI 新增 `--version` flag。

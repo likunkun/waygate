@@ -328,6 +328,15 @@ def test_v0_6_0_requirements_prompt_uses_target_project_infrastructure_scope(tmp
     assert '不是只整理 `workflow-controller` 当前仓库' in body
 
 
+def test_v0_6_0a_requirements_prompt_requires_prototype_manifest_for_review_bundle(tmp_path: Path) -> None:
+    prompt = _v0_6_0_requirements_prompt(tmp_path)
+
+    assert 'prototype-manifest.json' in prompt
+    assert 'artifacts/requirements-draft/prototype-manifest.json' in prompt
+    assert 'prototype id, type, path or URL, title, linked ACs, linked journeys, page states, click path' in prompt
+    assert 'sensitive URL query' in prompt
+
+
 def test_v0_6_0_requirements_prompt_requires_seven_infrastructure_categories(tmp_path: Path) -> None:
     prompt = _v0_6_0_requirements_prompt(tmp_path)
     body = _v0_6_0_requirements_body()

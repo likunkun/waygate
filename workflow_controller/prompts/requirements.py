@@ -238,6 +238,8 @@ def _v0_6_0_infrastructure_intake_prompt_section(state: dict[str, Any]) -> str:
 - 架构、交互逻辑、接口说明和依赖信息必须覆盖：模块边界、数据流、用户交互、状态流转、API/CLI/事件接口、错误语义、系统依赖、服务依赖和验证依赖，并能被 Unit Plan 消费。
 - 当目标项目需要 UI/UX、包含浏览器可见界面或 `currentUnitNeedsUiDesign=true` 时，Requirements Gate 必须在人工确认前包含 prototype evidence 或可审阅设计说明。
 - 当目标项目是 Web 系统时，必须包含可点击、可操作、可在浏览器中使用的 clickable webpage prototype，不接受静态截图、纯文字描述或不可点击线框；必须记录访问方式、页面状态、核心点击路径和 AC 映射。
+- 当目标项目需要 UI/UX、包含浏览器可见界面或是 Web 系统时，必须额外写出 `artifacts/requirements-draft/prototype-manifest.json`。该 JSON 必须包含 prototypes 列表；每个条目必须包含 prototype id, type, path or URL, title, linked ACs, linked journeys, page states, click path, thumbnail or preview hint, and review guidance。
+- `prototype-manifest.json` 中的本地图片或 HTML 原型路径必须是真实文件；外部 URL 不能带 token、password、secret、api_key、signature 等 sensitive URL query；linked ACs 必须引用本 Requirements Gate 中存在的 AC。
 - 必须保持 environment/runbook facts、Requirements 和 Unit Plan artifacts 的边界：Requirements Gate 负责明确目标项目需要梳理哪些基础设施事实；Unit Plan 负责决定如何实现；`docs/operations/`、wiki 或外部链接只作为事实来源或落点。
 """
 

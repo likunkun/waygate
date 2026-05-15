@@ -65,6 +65,11 @@ from workflow_controller.spec_sources import (
     requirements_spec_metadata,
     same_requirements_spec,
 )
+from workflow_controller.prototype_review import (
+    prepare_prototype_review_bundle,
+    prototype_review_paths,
+    start_prototype_review_preview_server,
+)
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import (
     VerificationEnvironmentError,
@@ -524,6 +529,45 @@ class RalphRefinerController:
         except ValueError as exc:
             return f'requirements gate invalid: {exc}'
         return None
+
+    def _prepare_requirements_prototype_review_bundle(self, state: dict[str, Any]) -> None:
+        try:
+            bundle = prepare_prototype_review_bundle(
+                artifacts_dir=self.artifacts_dir,
+                requirements_path=self.approvals_dir / 'requirements-and-acceptance.md',
+                state=state,
+            )
+        except ValueError as exc:
+            error_path = self.artifacts_dir / 'requirements-draft' / 'prototype-review-error.json'
+            error_path.parent.mkdir(parents=True, exist_ok=True)
+            error_path.write_text(
+                json.dumps(
+                    {
+                        'status': 'invalid',
+                        'error': str(exc),
+                        'generated_at': datetime.now(timezone.utc).isoformat(),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            self.store.append_event('prototype_review_bundle_invalid', {
+                'task_id': state.get('task_id'),
+                'error': str(exc),
+                'error_path': str(error_path),
+            })
+            return
+        if bundle is None:
+            return
+        self.store.append_event('prototype_review_bundle_generated', {
+            'task_id': state.get('task_id'),
+            'review_path': str(bundle.review_path),
+            'manifest_path': str(bundle.manifest_path),
+            'source_manifest_path': str(bundle.source_manifest_path),
+            'prototypes_dir': str(bundle.prototypes_dir),
+        })
 
     def _write_final_scope_audit(self, state: dict[str, Any]) -> dict[str, Any]:
         return write_final_scope_audit(
@@ -1019,6 +1063,7 @@ class RalphRefinerController:
             ['requirements-draft-summary.json', 'requirements-body.md'],
         )
         validate_required_artifacts(self.approvals_dir, ['requirements-and-acceptance.md'])
+        self._prepare_requirements_prototype_review_bundle(state)
         after_body = gate_body(gate_path.read_text(encoding='utf-8'))
         change_request = self._append_requirements_change_request(
             state,
@@ -1178,6 +1223,7 @@ class RalphRefinerController:
             ['requirements-draft-summary.json', 'requirements-body.md'],
         )
         validate_required_artifacts(self.approvals_dir, ['requirements-and-acceptance.md'])
+        self._prepare_requirements_prototype_review_bundle(state)
         after_body = gate_body(gate_path.read_text(encoding='utf-8'))
         revision_artifact = self._write_requirements_revision_artifact(
             revision_count=revision_count,
@@ -1660,6 +1706,7 @@ class RalphRefinerController:
             run_requirements_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)
             validate_required_artifacts(self.artifacts_dir / 'requirements-draft', ['requirements-draft-summary.json', 'requirements-body.md'])
             validate_required_artifacts(self.approvals_dir, ['requirements-and-acceptance.md'])
+            self._prepare_requirements_prototype_review_bundle(state)
             state['requirementsDraftGenerated'] = True
             state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
             self.store.append_event('requirements_draft_generated', {
@@ -2364,116 +2411,147 @@ class RalphRefinerController:
                 return False
 
             if choice in {'v', 'view', 'plannotator'}:
+                prototype_preview_server = None
+                prototype_review_manifest_path = None
+                prototype_review_preview_url = None
+                if str(gate_info['gate']) == 'requirements' and review_path != approval_gate_path:
+                    expected_review_path, expected_manifest_path, prototypes_dir = prototype_review_paths(self.artifacts_dir)
+                    if review_path == expected_review_path and expected_manifest_path.exists():
+                        try:
+                            prototype_preview_server = start_prototype_review_preview_server(
+                                review_path=review_path,
+                                manifest_path=expected_manifest_path,
+                                prototypes_dir=prototypes_dir,
+                                approval_gate_path=approval_gate_path,
+                            )
+                        except Exception as exc:
+                            output_func(f'[原型预览] 启动失败：{exc}')
+                            continue
+                        prototype_review_manifest_path = expected_manifest_path
+                        prototype_review_preview_url = prototype_preview_server.preview_url
                 try:
-                    result = run_plannotator_gate_review(
-                        gate=str(gate_info['gate']),
-                        label=str(gate_info['label']),
-                        gate_path=review_path,
-                        state_dir=self.state_dir,
-                        command=self.plannotator_command,
-                        port=self.plannotator_port,
-                    )
-                except Exception as exc:
-                    output_func(f'[Plannotator] 启动失败：{exc}')
-                    continue
-                _record_plannotator_review_paths(
-                    result.summary_path,
-                    approval_gate_path=approval_gate_path,
-                    review_path=review_path,
-                )
-                self.store.append_event('plannotator_review_requested', {
-                    'gate': gate_info['gate'],
-                    'path': str(gate_info['path']),
-                    'review_path': str(review_path),
-                    'approval_gate_path': str(approval_gate_path),
-                    'command': result.command,
-                    'summary_path': str(result.summary_path),
-                    'stdout_path': str(result.summary_path.with_suffix('.stdout.log')),
-                })
-                output_func('[Plannotator] 已打开辅助审阅。')
-                if self.plannotator_port is not None:
-                    output_func(f'  打开网址：http://localhost:{self.plannotator_port}')
-                output_func(f'  审阅记录：{result.summary_path}')
-                _print_plannotator_output(result.stdout, output_func)
-                if result.stderr.strip():
-                    _print_plannotator_output(result.stderr, output_func)
-                output_func('  请在 Plannotator 浏览器里选择 Approve 或 Close。Approve 会自动继续。')
-                decision = _wait_for_plannotator_gate_decision(
-                    self.state_dir,
-                    str(gate_info['gate']),
-                    Path(gate_info['path']),
-                    output_func,
-                )
-                status = decision.get('status')
-                if status == 'approved':
                     try:
-                        self.approve_human_gate(str(gate_info['gate']), actor=actor)
-                    except ValueError as exc:
-                        output_func(f"[确认] {gate_info['label']} 无法确认：{_gate_reason_label(str(exc))}")
-                        if self._auto_revise_gate_after_validation_error(gate_info, exc, output_func):
-                            return True
-                        continue
-                    output_func('[Plannotator] 已收到 Approve，等同于人工确认通过。')
-                    return True
-                if status == 'feedback' and gate_info.get('can_revise'):
-                    output_func(f"[Plannotator] 已收到修改意见，开始重新生成 {gate_info['label']}。")
-                    feedback_summary = _plannotator_feedback_summary(decision)
-                    if feedback_summary:
-                        output_func(f'  修改意见：{feedback_summary}')
-                    feedback_preview = _plannotator_feedback_preview(decision)
-                    if feedback_preview:
-                        output_func(f'  预览：{feedback_preview}')
-                    self.store.append_event('plannotator_feedback_received', {
-                        'gate': gate_info['gate'],
-                        'path': str(gate_info['path']),
-                        'feedback_count': _plannotator_feedback_count(decision),
-                        'feedback_preview': feedback_preview,
-                    })
-                    self._print_compact_revision_status(gate_info, source='plannotator')
-                    try:
-                        self.revise_human_gate(str(gate_info['gate']))
+                        result = run_plannotator_gate_review(
+                            gate=str(gate_info['gate']),
+                            label=str(gate_info['label']),
+                            gate_path=review_path,
+                            state_dir=self.state_dir,
+                            command=self.plannotator_command,
+                            port=self.plannotator_port,
+                        )
                     except Exception as exc:
-                        output_func(f'[修订] 无法返工：{exc}')
+                        output_func(f'[Plannotator] 启动失败：{exc}')
                         continue
-                    output_func(f"[修订] 已根据 Plannotator 反馈重新生成 {gate_info['label']}。")
-                    return True
-                if status == 'feedback' and gate_info.get('can_rework'):
-                    output_func('[Plannotator] 已收到最终验收修改意见，请先选择返工流向。')
-                    feedback_summary = _plannotator_feedback_summary(decision)
-                    if feedback_summary:
-                        output_func(f'  修改意见：{feedback_summary}')
-                    feedback_preview = _plannotator_feedback_preview(decision)
-                    if feedback_preview:
-                        output_func(f'  预览：{feedback_preview}')
-                    self.store.append_event('plannotator_feedback_received', {
+                    _record_plannotator_review_paths(
+                        result.summary_path,
+                        approval_gate_path=approval_gate_path,
+                        review_path=review_path,
+                        prototype_review_manifest_path=prototype_review_manifest_path,
+                        prototype_review_preview_url=prototype_review_preview_url,
+                    )
+                    event_payload = {
                         'gate': gate_info['gate'],
                         'path': str(gate_info['path']),
-                        'feedback_count': _plannotator_feedback_count(decision),
-                        'feedback_preview': feedback_preview,
-                    })
-                    if not _ensure_final_acceptance_rejection_route_from_prompt(
+                        'review_path': str(review_path),
+                        'approval_gate_path': str(approval_gate_path),
+                        'command': result.command,
+                        'summary_path': str(result.summary_path),
+                        'stdout_path': str(result.summary_path.with_suffix('.stdout.log')),
+                    }
+                    if prototype_review_manifest_path is not None:
+                        event_payload['prototype_review_manifest_path'] = str(prototype_review_manifest_path)
+                    if prototype_review_preview_url:
+                        event_payload['prototype_review_preview_url'] = prototype_review_preview_url
+                    self.store.append_event('plannotator_review_requested', event_payload)
+                    output_func('[Plannotator] 已打开辅助审阅。')
+                    if self.plannotator_port is not None:
+                        output_func(f'  打开网址：http://localhost:{self.plannotator_port}')
+                    if prototype_review_preview_url:
+                        output_func(f'  原型预览：{prototype_review_preview_url}')
+                    output_func(f'  审阅记录：{result.summary_path}')
+                    _print_plannotator_output(result.stdout, output_func)
+                    if result.stderr.strip():
+                        _print_plannotator_output(result.stderr, output_func)
+                    output_func('  请在 Plannotator 浏览器里选择 Approve 或 Close。Approve 会自动继续。')
+                    decision = _wait_for_plannotator_gate_decision(
+                        self.state_dir,
+                        str(gate_info['gate']),
                         Path(gate_info['path']),
-                        input_func,
                         output_func,
-                    ):
-                        return False
-                    try:
-                        self.reject_final_acceptance_gate()
-                    except Exception as exc:
-                        output_func(f'[返工] 无法返工：{exc}')
-                        continue
-                    route = self.store.load_state().get('finalAcceptanceRejectionRoute')
-                    message = FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES.get(
-                        str(route),
-                        '最终验收未通过，已按人工路由处理。',
                     )
-                    output_func(f'[返工] {message}')
-                    return True
-                if status == 'closed':
-                    output_func('[Plannotator] 已关闭，未批准；仍停在人工确认点。')
+                    status = decision.get('status')
+                    if status == 'approved':
+                        try:
+                            self.approve_human_gate(str(gate_info['gate']), actor=actor)
+                        except ValueError as exc:
+                            output_func(f"[确认] {gate_info['label']} 无法确认：{_gate_reason_label(str(exc))}")
+                            if self._auto_revise_gate_after_validation_error(gate_info, exc, output_func):
+                                return True
+                            continue
+                        output_func('[Plannotator] 已收到 Approve，等同于人工确认通过。')
+                        return True
+                    if status == 'feedback' and gate_info.get('can_revise'):
+                        output_func(f"[Plannotator] 已收到修改意见，开始重新生成 {gate_info['label']}。")
+                        feedback_summary = _plannotator_feedback_summary(decision)
+                        if feedback_summary:
+                            output_func(f'  修改意见：{feedback_summary}')
+                        feedback_preview = _plannotator_feedback_preview(decision)
+                        if feedback_preview:
+                            output_func(f'  预览：{feedback_preview}')
+                        self.store.append_event('plannotator_feedback_received', {
+                            'gate': gate_info['gate'],
+                            'path': str(gate_info['path']),
+                            'feedback_count': _plannotator_feedback_count(decision),
+                            'feedback_preview': feedback_preview,
+                        })
+                        self._print_compact_revision_status(gate_info, source='plannotator')
+                        try:
+                            self.revise_human_gate(str(gate_info['gate']))
+                        except Exception as exc:
+                            output_func(f'[修订] 无法返工：{exc}')
+                            continue
+                        output_func(f"[修订] 已根据 Plannotator 反馈重新生成 {gate_info['label']}。")
+                        return True
+                    if status == 'feedback' and gate_info.get('can_rework'):
+                        output_func('[Plannotator] 已收到最终验收修改意见，请先选择返工流向。')
+                        feedback_summary = _plannotator_feedback_summary(decision)
+                        if feedback_summary:
+                            output_func(f'  修改意见：{feedback_summary}')
+                        feedback_preview = _plannotator_feedback_preview(decision)
+                        if feedback_preview:
+                            output_func(f'  预览：{feedback_preview}')
+                        self.store.append_event('plannotator_feedback_received', {
+                            'gate': gate_info['gate'],
+                            'path': str(gate_info['path']),
+                            'feedback_count': _plannotator_feedback_count(decision),
+                            'feedback_preview': feedback_preview,
+                        })
+                        if not _ensure_final_acceptance_rejection_route_from_prompt(
+                            Path(gate_info['path']),
+                            input_func,
+                            output_func,
+                        ):
+                            return False
+                        try:
+                            self.reject_final_acceptance_gate()
+                        except Exception as exc:
+                            output_func(f'[返工] 无法返工：{exc}')
+                            continue
+                        route = self.store.load_state().get('finalAcceptanceRejectionRoute')
+                        message = FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES.get(
+                            str(route),
+                            '最终验收未通过，已按人工路由处理。',
+                        )
+                        output_func(f'[返工] {message}')
+                        return True
+                    if status == 'closed':
+                        output_func('[Plannotator] 已关闭，未批准；仍停在人工确认点。')
+                        continue
+                    output_func('[Plannotator] 未返回可执行决策；仍停在人工确认点。')
                     continue
-                output_func('[Plannotator] 未返回可执行决策；仍停在人工确认点。')
-                continue
+                finally:
+                    if prototype_preview_server is not None:
+                        prototype_preview_server.close()
 
             if choice in {'a', 'approve'}:
                 try:
@@ -3927,7 +4005,10 @@ def _should_hide_plannotator_output_line(line: str) -> bool:
 
 
 def _plannotator_review_path_for_gate(artifacts_dir: Path, gate: str, approval_gate_path: Path) -> Path:
-    del artifacts_dir, gate
+    if gate == 'requirements':
+        review_path, manifest_path, _ = prototype_review_paths(artifacts_dir)
+        if review_path.exists() and manifest_path.exists():
+            return review_path
     return approval_gate_path
 
 
@@ -3936,6 +4017,8 @@ def _record_plannotator_review_paths(
     *,
     approval_gate_path: Path,
     review_path: Path,
+    prototype_review_manifest_path: Path | None = None,
+    prototype_review_preview_url: str | None = None,
 ) -> None:
     try:
         summary = json.loads(summary_path.read_text(encoding='utf-8'))
@@ -3946,6 +4029,10 @@ def _record_plannotator_review_paths(
     summary['review_path'] = str(review_path)
     summary['approval_gate_path'] = str(approval_gate_path)
     summary['full_path'] = str(review_path)
+    if prototype_review_manifest_path is not None:
+        summary['prototype_review_manifest_path'] = str(prototype_review_manifest_path)
+    if prototype_review_preview_url:
+        summary['prototype_review_preview_url'] = prototype_review_preview_url
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
 
 

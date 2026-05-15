@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,48 @@ from workflow_controller.acceptance_obligations import (
 from workflow_controller.gates.validators import validate_unit_plan_acceptance_obligation_coverage
 from workflow_controller.gates.validators import validate_requirements_acceptance_quality
 from workflow_controller.gates.validators import validate_unit_plan_design_architecture_traceability
+
+
+def _write_prototype_manifest_for_gate(
+    gate: Path,
+    *,
+    prototype_type: str = 'html',
+    ac: str = 'AC-10',
+    url: str = 'http://localhost:4173/prototype',
+) -> Path:
+    state_root = gate.parent.parent if gate.parent.name == 'approvals' else gate.parent
+    draft_dir = state_root / 'artifacts' / 'requirements-draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    prototype_entry = {
+        'id': 'requirements-prototype',
+        'type': prototype_type,
+        'title': 'Requirements prototype',
+        'linked_acceptance_criteria': [ac],
+        'linked_journeys': ['J-01'],
+        'page_states': ['Dashboard', 'Preview'],
+        'click_path': ['Open dashboard', 'Click preview'],
+        'review_guidance': 'Review the mapped prototype before approving Requirements.',
+    }
+    if prototype_type == 'url':
+        prototype_entry['url'] = url
+    else:
+        extension = 'html' if prototype_type == 'html' else 'png'
+        prototype_path = draft_dir / f'requirements-prototype.{extension}'
+        if prototype_type == 'html':
+            prototype_path.write_text('<button>Preview</button>\n', encoding='utf-8')
+        else:
+            prototype_path.write_bytes(b'\x89PNG\r\n\x1a\n')
+        prototype_entry['path'] = str(prototype_path)
+    manifest_path = draft_dir / 'prototype-manifest.json'
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'prototypes': [prototype_entry]
+            }
+        ),
+        encoding='utf-8',
+    )
+    return manifest_path
 
 
 def test_plannotator_annotations_become_distinct_acceptance_obligations() -> None:
@@ -480,6 +523,10 @@ def test_v0_6_0_uiux_project_requires_prototype_before_requirements_human_confir
         + '- Prototype Evidence: `docs/product/prototype.md` 记录页面、状态和 AC 映射。\n',
         encoding='utf-8',
     )
+    with pytest.raises(ValueError, match='valid prototype manifest'):
+        validate_requirements_acceptance_quality(gate, {'currentUnitNeedsUiDesign': True})
+
+    _write_prototype_manifest_for_gate(gate, prototype_type='url', ac='AC-10')
     validate_requirements_acceptance_quality(gate, {'currentUnitNeedsUiDesign': True})
 
 
@@ -514,6 +561,10 @@ def test_v0_6_0_web_system_requires_clickable_webpage_prototype(tmp_path: Path) 
         + 'click path `Dashboard -> Settings -> Preview`; maps to AC-11.\n',
         encoding='utf-8',
     )
+    with pytest.raises(ValueError, match='valid prototype manifest'):
+        validate_requirements_acceptance_quality(gate, {'currentUnitIsWebSystem': True})
+
+    _write_prototype_manifest_for_gate(gate, prototype_type='html', ac='AC-11')
     validate_requirements_acceptance_quality(gate, {'currentUnitIsWebSystem': True})
 
 
@@ -539,6 +590,7 @@ def test_v0_6_0_web_prototype_manual_evidence_maps_to_ac(tmp_path: Path) -> None
         encoding='utf-8',
     )
 
+    _write_prototype_manifest_for_gate(gate, prototype_type='html', ac='AC-12')
     validate_requirements_acceptance_quality(gate, {'currentUnitIsWebSystem': True})
 
 

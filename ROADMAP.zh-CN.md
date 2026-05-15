@@ -79,13 +79,15 @@
 
 目标：让 V0.6.0 生成的 prototype evidence 在 Requirements 人工确认前可以被 Plannotator 直接、顺滑审阅。
 
-计划：
+状态：已在 package `0.6.0a` 实现。
+
+已交付：
 
 - 在 Requirements draft artifacts 下生成结构化 prototype manifest，记录 prototype id、类型、路径或 URL、标题、关联 AC、关联 Journey、页面状态、点击路径、缩略图或预览提示，以及审阅重点。
 - 渲染 Requirements 专用 Plannotator review bundle，把生成的原型图、本地 HTML 原型、外部原型 URL、AC/Journey 映射表组合成可审阅视图。
 - Requirements gate 在存在 review bundle 时让 Plannotator 打开该 bundle；`approvals/requirements-and-acceptance.md` 仍作为 approval gate 和确认状态事实源。
 - 将本地原型资产路径规范化到 controller artifact tree，避免 Plannotator 依赖 agent 随手写出的任意文件系统路径。
-- Requirements 预检增加原型文件缺失、可点击原型访问方式不完整、页面状态缺失、点击路径缺失和 AC 映射缺失的阻断。
+- Requirements 预检增加原型文件缺失、可点击原型访问方式不完整、页面状态缺失、点击路径缺失、AC 映射缺失、未知 AC 引用和敏感 URL query 的阻断。
 - 保持审批语义不变：Plannotator Approve 仍不能绕过 Requirements quality gate。
 
 ### V0.6.1 - External Spec Intake
