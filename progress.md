@@ -1,5 +1,96 @@
 # 进度日志
 
+## 会话：2026-05-16
+
+### Requirements 自动打回连续原因计数修复
+- **状态：** complete
+- 修复 Requirements 草案 controller 预检自动打回预算：默认 `requirementsAutoRevisionMax=2` 现在表示“连续相同 invalid reason 最多自动修订 2 次”，而不是整轮 Requirements 草案总共只能修订 2 次。
+- 当本次预检错误与上一次不同，例如从缺 `prototype-manifest.json` 变为缺 `surface_contracts[]`，再变为 Journey verification layer 缺失，会视为新的有效打回并重置连续计数。
+- 相同 reason 连续重复失败仍会阻塞，避免 agent 在同一个错误上无限自动修订。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_requirements_auto_revision_budget_resets_when_invalid_reason_changes workflow_controller/tests/test_rrc_controller.py::test_requirements_auto_revision_budget_still_blocks_repeated_same_reason -q` -> `2 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_drive_auto_revises_pending_requirements_gate_before_human_review workflow_controller/tests/test_rrc_controller.py::test_drive_auto_revises_requirements_when_plannotator_approve_fails_controller_validation workflow_controller/tests/test_rrc_controller.py::test_drive_refreshes_pending_requirements_invalid_reason_from_current_gate -q` -> `3 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `176 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `428 passed in 58.04s`
+
+### Prototype Surface Conformance 流程修复
+- **状态：** complete
+- `prototype-manifest.json` 现在支持 `surface_contracts[]`，并兼容 `ui_surfaces[]` / `page_state_targets[]`；每个 required surface 必须声明 id/title/kind/page_states/click_path/entrypoints/implementation_targets/linked_acceptance_criteria/required。
+- HTML/URL 原型出现弹窗、抽屉、选择器、管理面板等多 surface 信号但未声明 `surface_contracts` 时，Requirements preflight 会阻断；legacy 单 route/page manifest 继续按 prototype-level `implementation_targets` 兼容。
+- Plannotator review bundle 新增 `Prototype Surface Coverage Matrix`，人工确认 Requirements 时可看到每个 surface、真实入口和生产目标。
+- Unit Plan prototype conformance 校验改为按 `prototype + surface + production target` 分组；相邻弹窗测试不能代替当前 surface，真实浏览器 surface 要求 E2E、`prototype_surfaces`、`production_targets`、`user_steps` 和具体 expected。
+- Final Acceptance `Prototype Conformance Matrix` 新增 Surface 和 Entry Point 列；终验阻断逻辑按 `test_case_id` 对齐 verifier evidence，避免同一 command 误覆盖相邻 surface。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `7 passed`
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `30 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `62 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `174 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `426 passed in 57.98s`
+
+### Plannotator 原型审阅可达性增强
+- **状态：** complete
+- Requirements 人工确认选择 Plannotator 审阅后，controller 现在同时打印两个显眼入口：`▶ Plannotator 审批页: http://localhost:<port>` 和 `▶ 原型渲染预览页: http://127.0.0.1:<port>/plannotator-review.html`。
+- `--color always` / `auto` 有色输出会高亮这两条入口；`--color never` 保持纯文本格式。
+- `plannotator-review.html` 新增 `Prototype Links` 表格，并在各 prototype preview 卡片内提供明确 source 链接：本地 HTML 使用 `Open rendered source`，本地 Markdown 使用 `Open markdown/source doc`，图片使用 `Open image`，外部 URL 保留链接和 iframe。
+- 本地 HTML prototype 继续以内嵌 `iframe srcdoc` 渲染；source 链接只出现在 controller preview server 提供的 HTML review 页面内，不生成 `localhost:20000/prototypes/...` 链接。
+- Preview server 明确返回 `.md` 为 `text/markdown; charset=utf-8`、`.html` 为 `text/html; charset=utf-8`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `4 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_approval_gate_separate -q` -> `1 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `415 passed in 57.78s`
+  - `PATH="/tmp/waygate-test-bin:$PATH" bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0b_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0b_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0b / all / python3`
+
+### Plannotator 原型 HTML 纯文本预览修复
+- **状态：** complete
+- 现场 2 号窗口 V2.9.1 复现：Requirements 人工确认中 Plannotator 打开 `plannotator-review.md`，其中 HTML 原型只是相对链接，点击后在 Plannotator 中按文档文本查看，无法看到浏览器渲染效果。
+- 根因：V0.6.0a/b 已有只读 preview server 且 standalone HTML 的 `Content-Type` 正确为 `text/html`，但 controller 仍把 Markdown bundle 传给 Plannotator；Plannotator 对 Markdown 链接目标不承担浏览器渲染语义。
+- 修复：prototype review bundle 现在同时生成 `plannotator-review.md` 和 `plannotator-review.html`；HTML bundle 内嵌本地 HTML prototype 的 `iframe srcdoc` 渲染预览，并保留 AC/Journey/Production Target 矩阵。
+- Controller 在 Requirements prototype bundle 存在时优先把 `plannotator-review.html` 交给 Plannotator，preview server 的 `prototype_review_preview_url` 也指向 HTML bundle；Markdown bundle 继续保留作审计/兼容 artifact。
+- 二次现场复现：用户点击 `http://localhost:20000/prototypes/.../v29-course-ops-clickable-prototype.html` 时仍看到 Plannotator 文本/SPA 视图；该地址属于 Plannotator 自身路由，不是 controller 临时 preview server。
+- 二次修复：HTML review 中本地 HTML prototype 只以内嵌 `iframe srcdoc` 呈现，不再输出 `href="prototypes/..."` 的 standalone 相对链接，避免人工审阅时被引导到 Plannotator `/prototypes/...` 路由。
+- 已用修复后的代码重建现场 V2.9.1 bundle：`/home/lichangkun/courses/.rrc-controller-v2.9.1/artifacts/requirements-draft/plannotator-review.html`，文件内已包含 V2.9.1 原型的 `iframe srcdoc` 渲染预览。
+- 已再次重建现场 V2.9.1 bundle，确认 `plannotator-review.html` 内 `srcdoc=` 存在且 `href="prototypes/` 不再存在。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py::test_prototype_review_bundle_normalizes_manifest_copies_assets_and_renders_markdown_and_html -q` -> 二次回归新增 `href="prototypes/"` 断言，修复前 failed，修复后 passed。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_approval_gate_separate -q` -> 修复前 failed，修复后 passed。
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `4 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `60 passed`。
+  - `PATH="/tmp/waygate-test-bin:$PATH" python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `171 passed`。
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `415 passed in 57.15s`。
+- 已重新打包当前修复：`PATH="/tmp/waygate-test-bin:$PATH" bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0b_all.deb`；`dpkg-deb --field` 确认为 `waygate / 0.6.0b / all / python3`，解包检查确认包内包含 `Standalone source` 修复。
+
+### Requirements 预检修订重复澄清修复
+- **状态：** complete
+- 现场 2 号窗口 V2.9.1 复现：Requirements 预检第一次打回后，后续自动修订只剩 Journey layer 错误，但 prompt 仍执行无 `--spec` 首次澄清协议，导致 agent 重复询问 `## 4.8` 已经记录的范围、像素级一致性和真实页面 Playwright 验收问题。
+- 根因定位在 `_render_requirements_draft_prompt()`：旧逻辑只根据 `requirementsSpec` 区分首次 intake 与 spec-backed drafting，没有识别 `requirementsRevisionFeedback` 表示已有 Requirements gate 和已澄清事实。
+- 修复：当存在 `requirementsRevisionFeedback` 时，Requirements prompt 切换为 revision drafting 协议，要求复用已有 gate、Requirements Dialogue Brief、controller validation error 和 `## 4.8`，只在当前错误无法从既有事实解决时再问新的阻断澄清。
+- 已新增回归 `test_requirements_revision_prompt_reuses_prior_clarifications`，覆盖预检自动打回后不得重复询问已澄清问题；初次无 spec 强制澄清和 spec-backed drafting 行为保持不变。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_requirements_revision_prompt_reuses_prior_clarifications -q` -> 修复前 `1 failed`，修复后 passed。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_requirements_revision_prompt_reuses_prior_clarifications workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_without_spec_keeps_agent_side_clarification workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_with_spec_skips_mandatory_clarification_and_expands_matrices -q` -> `3 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `60 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_requirements_revision_feedback_includes_controller_validation_error workflow_controller/tests/test_rrc_controller.py::test_drive_auto_revises_requirements_when_plannotator_approve_fails_controller_validation -q` -> `2 passed`。
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `415 passed in 57.20s`。
+
+### V0.6.0b Prototype Conformance Gate 实施
+- **状态：** complete
+- 新增 prototype manifest 合约：`implementation_targets` 必须把每个 UI/Web prototype 映射到真实生产目标，兼容 `production_targets` / `real_targets`，并在 Plannotator review bundle 中展示 Production Targets。
+- Requirements 预检现在会从正文识别 prototype / clickable webpage prototype / UI contract 等原型义务；即使 `currentUnitNeedsUiDesign` 没打开，也会要求合法 `prototype-manifest.json` 和真实实现目标映射。V0.6.0/V0.6.0a/V0.6.0b controller policy work 保持例外，不要求 controller 自己提供业务原型。
+- Unit Plan 预检新增 prototype conformance 校验：每个 implementation target 必须有真实生产 UI 测试；测试用例需要 `prototype_conformance`、`production_targets`、具体 command 和非弱 expected，浏览器 route/page 必须是 E2E；只打开 `requirements-draft/prototypes`、`prototype-review` 或 `file://...prototype` 的测试会被拒绝。
+- Final Acceptance 新增 `Prototype Conformance Matrix`，展示 Prototype、Linked AC、Production Target、Test Case、Command、Status；缺失或未 passed 的 required row 会阻断终验。
+- Controller State Patch 支持并保留 `currentUnitIsWebSystem`；Requirements/Unit Plan prompt 和 gate template 已同步。
+- `workflow_controller.__version__` 更新为 `0.6.0b`，双语 USAGE/CHANGELOG/ROADMAP、`task_plan.md` 和 `findings.md` 已同步。
+- 当前环境没有 `python` 命令，验证时使用临时 PATH shim `python -> python3` 运行既有会执行 `python -c` 的回归用例。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `4 passed`
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `27 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `59 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `171 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `414 passed in 57.66s`
+  - `PATH="/tmp/waygate-test-bin:$PATH" bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0b_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0b_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0b / all / python3`
+
 ## 会话：2026-05-15
 
 ### V0.6.0a Prototype Review Bundle 实施

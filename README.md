@@ -52,6 +52,12 @@ Waygate Markdown spec intake is available through `--spec <path>` on `init`, `st
 
 Waygate does not install agent skills into Claude Code, Codex, or other agent runtimes. It assumes the selected agent environment already has the skills needed by the task. The controller makes the workflow auditable; skills make each agent role better at its specialized work.
 
+The `test-strategy` skill is a less-common external skill, not something installed by the Waygate Debian package. Install it in each agent runtime environment that will need it:
+
+```bash
+npx skills add AbsolutelySkilled/AbsolutelySkilled --skill test-strategy
+```
+
 Recommended baseline skills:
 
 | Skill | Stage | Why it matters |

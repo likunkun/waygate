@@ -176,6 +176,19 @@ class TestValidatorsLayer:
         new_state = apply_unit_plan_state_patch(state, patch)
         assert new_state['currentUnitId'] == 'u1'
 
+    def test_apply_unit_plan_state_patch_preserves_web_system_flag(self) -> None:
+        state = _minimal_state()
+        patch = {
+            'currentUnitId': 'u1',
+            'objectiveCoverage': [{'objective': 'obj', 'units': ['u1'], 'status': 'partial'}],
+            'units': [{'id': 'u1', 'name': 'Unit 1', 'passes': False, 'verification_commands': []}],
+            'currentUnitIsWebSystem': True,
+        }
+
+        new_state = apply_unit_plan_state_patch(state, patch)
+
+        assert new_state['currentUnitIsWebSystem'] is True
+
     def test_validate_unit_plan_test_case_coverage_no_cases(self, tmp_path: Path) -> None:
         state = {
             'units': [

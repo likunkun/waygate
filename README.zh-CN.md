@@ -52,6 +52,12 @@ Waygate Markdown spec intake 可通过 `init`、`start`、`go` 的 `--spec <path
 
 Waygate 不会把 skills 自动安装进 Claude Code、Codex 或其他 agent runtime。它假设你选择的 agent 环境已经安装了任务需要的 skills。Controller 负责让流程可审计，skills 负责让不同 agent 角色更擅长自己的工作。
 
+`test-strategy` 是比较小众的外部 skill，不随 Waygate Debian 包内置安装。需要在每个会使用它的 agent runtime 环境中单独安装，来源为 `AbsolutelySkilled/AbsolutelySkilled`：
+
+```bash
+npx skills add AbsolutelySkilled/AbsolutelySkilled --skill test-strategy
+```
+
 推荐基线 skills：
 
 | Skill | 阶段 | 作用 |

@@ -434,4 +434,6 @@ def _controller_state_patch(state: dict[str, Any]) -> dict[str, Any]:
     }
     if 'currentUnitNeedsUiDesign' in state:
         patch['currentUnitNeedsUiDesign'] = bool(state.get('currentUnitNeedsUiDesign'))
+    if 'currentUnitIsWebSystem' in state:
+        patch['currentUnitIsWebSystem'] = bool(state.get('currentUnitIsWebSystem'))
     return patch

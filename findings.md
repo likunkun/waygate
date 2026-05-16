@@ -1,5 +1,51 @@
 # 发现与决策
 
+## 2026-05-16 Requirements 自动打回连续原因计数
+
+- Requirements 草案预检自动修订预算的核心风险不是“总共修订几次”，而是“同一个 controller invalid reason 被 agent 反复修不掉”。不同 invalid reason 表示 gate 已向前推进，应视为新的有效打回。
+- `requirementsAutoRevisionMax` 继续保留为默认 2，但语义调整为连续相同 reason 的最大自动修订次数；reason 变化时连续计数重置。
+- 自动修订事件继续保留 `attempt` 字段表示当前 reason 的连续 attempt，同时新增 `total_attempt` 便于排查一轮 Requirements 草案内实际发生了多少次自动打回。
+- 相同 reason 连续超过上限仍会进入 `requirements_draft_auto_revision_blocked`，避免 Requirements drafter 在同一错误上无限循环。
+
+## 2026-05-16 Prototype Surface Conformance 流程修复
+
+- 只把整张 prototype 映射到 route/page 仍会漏掉真实交互入口；`AssignManageDialog` 这类弹窗、抽屉、管理面板和单项操作入口必须作为独立 surface contract 进入 Requirements、Unit Plan 和 Final Acceptance。
+- `surface_contracts[]` 是新的细粒度验收事实源；`ui_surfaces[]` / `page_state_targets[]` 仅作为输入别名，归一化后统一落到 `surface_contracts`。
+- 如果 prototype 已声明 required surface，后续 conformance 不再用 prototype-level `implementation_targets` 代替 surface targets；prototype-level target 只保留 legacy/汇总兼容。
+- Unit Plan 的匹配键必须包含 `prototype + surface + production target`，否则 `PublishTargetDialog` 这类相邻 surface 测试会误覆盖 `AssignManageDialog`。
+- Final Acceptance verifier evidence 必须优先按 `test_case_id` 对齐；同一个 Playwright command 可能覆盖多个 test case，不能用 command fallback 证明未执行的 surface test。
+
+## 2026-05-16 Plannotator 原型审阅可达性增强
+
+- Requirements 人工确认选择 Plannotator 后，终端必须同时暴露审批入口和 controller preview server 的渲染入口；Plannotator 审批事实源仍是 `approvals/requirements-and-acceptance.md`，`plannotator-review.html` 只是审阅视图。
+- 本地 HTML prototype 的主审阅体验仍应是 `iframe srcdoc`，这样 Plannotator 打开 HTML review 后可直接看到渲染效果。
+- 后续可达性需求允许在 controller preview server 提供的 `plannotator-review.html` 内放置本地 source 相对链接，方便人工打开独立页面或文档；禁止的是诱导点击 Plannotator 自身 `localhost:20000/prototypes/...` 路由。
+- Markdown prototype 是本地 source/documentation artifact，应作为 path-backed prototype 复制到 `requirements-draft/prototypes/`，并由 preview server 以 `text/markdown; charset=utf-8` 提供。
+
+## 2026-05-16 Plannotator 原型 HTML 纯文本预览
+
+- Preview server 直接访问 HTML prototype 时已返回 `Content-Type: text/html; charset=utf-8`，所以问题不在静态服务 MIME。
+- Plannotator 当前审阅入口拿到的是 `plannotator-review.md`；Markdown 中的本地 HTML prototype 是相对链接，Plannotator 对该链接目标按文档查看，导致用户看到 HTML 源码/纯文本，而不是浏览器渲染结果。
+- Prototype review bundle 需要一个真正的 HTML 审阅入口，而不是只靠 Markdown 链接。HTML bundle 应内嵌本地 HTML prototype 的 `iframe srcdoc`，让 Plannotator 打开的首屏就能看到渲染效果，同时保留 AC/Journey/Production Target 映射。
+- Markdown bundle 仍应保留作为审计和兼容 artifact；Requirements 人工确认的审批事实源仍是 `approvals/requirements-and-acceptance.md`，HTML bundle 只是 review view。
+- `http://localhost:20000/prototypes/...` 是 Plannotator 自身 Web app 的路由，不等同于 controller 临时 preview server 的 `/prototypes/...` 静态服务；review HTML 中不能放会引导用户点击该路径的相对 prototype 链接。
+- 对本地 HTML prototype，HTML review 应以内嵌 `iframe srcdoc` 作为唯一渲染入口；standalone prototype 路径可以作为不可点击 source path 展示，避免人审误进入 Plannotator 的文本/SPA 视图。
+
+## 2026-05-16 Requirements 预检修订重复澄清
+
+- 无 `--spec` 的首次 Requirements intake 必须先澄清，这个规则仍然正确；但 Requirements 预检自动打回后的 revision 已经有上一版 gate、Requirements Dialogue Brief、controller validation error 和 `## 4.8`，不应再被当成首次 intake。
+- 现场 V2.9.1 证明，revision prompt 如果继续保留“第一条回复只能澄清 / 继续不是有效回答 / 未完成首次澄清不能 drafting”，agent 会重复询问已经在 `## 4.8` 记录的范围问题，甚至把 controller 可自动修复的 Journey layer 错误变成人工阻塞。
+- `requirementsRevisionFeedback` 是区分修订轮次的可靠信号：它由 controller 在人工 revision 或 validation-only 自动 revision 前注入，且包含上一版 gate 和当前阻断原因。
+- Requirements revision prompt 应复用已有澄清事实，只在当前 controller validation error 或人工反馈无法从已有 gate、brief 和 `## 4.8` 解决时再问新的阻断澄清。
+
+## 2026-05-16 V0.6.0b Prototype Conformance Gate
+
+- V0.6.0a 只能保证 Requirements 阶段的 prototype artifact 可审阅、可点击，但不能保证 Builder 最终实现的生产 route/page 继承了原型的信息架构和交互合约。
+- 原型 manifest 需要明确 `implementation_targets`，否则 Unit Plan、Verifier 和 Final Acceptance 无法判断哪些真实页面必须与哪个 prototype 对齐。`production_targets` / `real_targets` 作为兼容别名保留，但推荐输出 `implementation_targets`。
+- Requirements 正文一旦把 prototype、clickable webpage prototype 或 UI contract 写成验收义务，即使 state flags 没打开，也必须触发 manifest 与 production target 预检；但 V0.6.0/V0.6.0a/V0.6.0b 这类 controller policy work 不要求 controller 自己产出业务原型。
+- 静态 prototype 点击测试只能证明 review artifact 可用，不能证明生产 UI 一致性。Unit Plan 中的 prototype conformance 必须通过 `prototype_conformance`、`production_targets`、真实 route/page command 和具体 expected 断言表达。
+- Final Acceptance 需要单独展示 Prototype Conformance Matrix；证据缺失或未通过时阻断终验，避免普通 AC 覆盖证据掩盖 UI 合约未落地。
+
 ## 2026-05-15 V0.6.0a Prototype Review Bundle 实施决策
 
 - 原型审阅需要和 approval gate 分离：Plannotator 可审阅 `artifacts/requirements-draft/plannotator-review.md`，但 Requirements 批准状态仍只写入 `approvals/requirements-and-acceptance.md`，避免 review view 成为审批事实源。

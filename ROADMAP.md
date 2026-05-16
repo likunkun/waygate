@@ -90,6 +90,22 @@ Delivered work:
 - Add Requirements preflight checks for missing prototype files, incomplete clickable prototype access method, missing page states, missing click path, missing AC mapping, unknown AC references, and sensitive URL query parameters.
 - Keep approval semantics unchanged: Plannotator Approve still cannot bypass the Requirements quality gate.
 
+### V0.6.0b - Prototype Conformance Gate
+
+Goal: make Requirements-stage prototypes a production UI acceptance contract for Unit Plan, Verifier, and Final Acceptance, not just a clickable review artifact.
+
+Status: implemented in package `0.6.0b`.
+
+Delivered work:
+
+- Require prototype manifest entries used as UI/Web contracts to map to real implementation targets through `implementation_targets` with compatible aliases `production_targets` and `real_targets`.
+- Require multi-surface UI/Web prototypes to declare `surface_contracts` for each required route, page, component, dialog, drawer, panel, form, selector, management surface, and real entry point.
+- Detect prototype obligations from Requirements text even when state flags such as `currentUnitNeedsUiDesign` are not set, while preserving controller policy-work exceptions.
+- Block Unit Plan approval when prototype conformance tests only exercise static prototype artifacts instead of real production routes/pages.
+- Require prototype conformance test cases to declare `prototype_conformance`, `prototype_surfaces` when applicable, `production_targets`, executable commands, concrete expected assertions, real-entry `user_steps`, and E2E layer for browser routes and surfaces.
+- Render a Final Acceptance `Prototype Conformance Matrix` with Surface and Entry Point columns, and block final approval when required prototype-to-production evidence is missing or not passed.
+- Preserve `currentUnitIsWebSystem` in Controller State Patch alongside `currentUnitNeedsUiDesign`.
+
 ### V0.6.1 - External Spec Intake
 
 Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable.

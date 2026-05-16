@@ -8,6 +8,7 @@
   "feasibleOutcome": "usable-system",
   "scopeApproved": false,
   "currentUnitNeedsUiDesign": false,
+  "currentUnitIsWebSystem": false,
   "objectiveCoverage": [
     {
       "objective": "用户可以完成登录流程",

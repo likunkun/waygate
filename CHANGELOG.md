@@ -2,6 +2,15 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0b
+
+- Added prototype-to-production conformance gating for Requirements, Unit Plan, and Final Acceptance.
+- Required prototype manifests to map each UI/Web prototype to real implementation targets through `implementation_targets` or compatible aliases.
+- Extended conformance from whole-prototype targets to required `surface_contracts`, including dialogs, drawers, panels, selectors, management surfaces, and real entry points.
+- Added Unit Plan validation for real route/page conformance tests with concrete assertions.
+- Added the Final Acceptance `Prototype Conformance Matrix` and blocking validation for missing or failed conformance evidence.
+- Preserved `currentUnitIsWebSystem` in Controller State Patch.
+
 ## 0.6.0a
 
 - Added Requirements prototype review bundles for Plannotator.

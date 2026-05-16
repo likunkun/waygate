@@ -21,7 +21,11 @@ from workflow_controller.gates.parsers import (
     write_gate_file,
 )
 from workflow_controller.prototype_review import (
+    implementation_target_is_browser_route,
+    prototype_required_target_contracts,
+    prototype_test_case_covers_target,
     source_prototype_manifest_path_for_requirements,
+    surface_contract_requires_browser_e2e,
     validate_prototype_review_manifest,
 )
 
@@ -262,6 +266,68 @@ def validate_unit_plan_design_architecture_traceability(
         raise ValueError('unit plan design/architecture traceability is incomplete: ' + '; '.join(missing))
 
 
+def validate_unit_plan_prototype_conformance(
+    requirements_path: Path,
+    unit_plan_path: Path,
+    state: dict[str, Any],
+) -> None:
+    del unit_plan_path
+    if not requirements_path.exists():
+        return
+    manifest_path, artifacts_dir = source_prototype_manifest_path_for_requirements(requirements_path)
+    if not manifest_path.exists():
+        return
+    try:
+        normalized = validate_prototype_review_manifest(
+            manifest_path,
+            requirements_path=requirements_path,
+            artifacts_dir=artifacts_dir,
+            require_implementation_targets=True,
+        )
+    except ValueError as exc:
+        raise ValueError('unit plan prototype conformance is incomplete: ' + str(exc)) from exc
+
+    issues: list[str] = []
+    test_cases = [
+        case
+        for unit in state.get('units') or []
+        if isinstance(unit, dict)
+        for case in _unit_test_cases(unit)
+        if isinstance(case, dict)
+    ]
+    for contract in prototype_required_target_contracts(normalized):
+        prototype_id = str(contract.get('prototype_id') or '').strip()
+        surface_id = str(contract.get('surface_id') or '').strip()
+        target = contract.get('target') if isinstance(contract.get('target'), dict) else {}
+        matched_cases = [
+            case for case in test_cases
+            if prototype_test_case_covers_target(case, prototype_id, target, surface_id=surface_id)
+        ]
+        valid_cases = [
+            case for case in matched_cases
+            if not _prototype_conformance_case_issue(case, target, contract)
+        ]
+        if valid_cases:
+            continue
+        contract_label = _prototype_contract_label(contract)
+        if not matched_cases:
+            issues.append(
+                f'{contract_label} missing production UI conformance test; '
+                'add test_cases[] metadata prototype_conformance, prototype_surfaces, production_targets, and user_steps'
+            )
+            continue
+        case_summaries = ', '.join(
+            f"{case.get('id') or 'unknown-test'} ({_prototype_conformance_case_issue(case, target, contract)})"
+            for case in matched_cases
+        )
+        issues.append(
+            f'{contract_label} has no valid production UI conformance test: '
+            + case_summaries
+        )
+    if issues:
+        raise ValueError('unit plan prototype conformance is incomplete: ' + '; '.join(issues))
+
+
 def validate_requirements_acceptance_quality(
     requirements_path: Path,
     state: dict[str, Any],
@@ -324,6 +390,7 @@ def validate_requirements_acceptance_quality(
                 + '; add Product Design Ref and Technical Architecture Ref for every AC'
             )
 
+    content_declares_prototype_contract = _requirements_declares_prototype_contract(content, state)
     if _requirements_need_uiux_prototype(state) and not _requirements_has_uiux_prototype_evidence(content):
         issues.append(
             'UI/UX target requires prototype evidence before Requirements human confirmation; '
@@ -339,12 +406,13 @@ def validate_requirements_acceptance_quality(
     prototype_manifest_required = (
         _requirements_need_uiux_prototype(state)
         or _requirements_need_clickable_web_prototype(state)
+        or content_declares_prototype_contract
     )
     if prototype_manifest_required:
         manifest_path, artifacts_dir = source_prototype_manifest_path_for_requirements(requirements_path)
         if not manifest_path.exists():
             issues.append(
-                'UI/UX or Web target requires a valid prototype manifest before Requirements human confirmation; '
+                'UI/UX, Web, or prototype UI contract requires a valid prototype manifest before Requirements human confirmation; '
                 f'write artifacts/requirements-draft/{manifest_path.name}'
             )
         else:
@@ -353,7 +421,11 @@ def validate_requirements_acceptance_quality(
                     manifest_path,
                     requirements_path=requirements_path,
                     artifacts_dir=artifacts_dir,
-                    require_clickable=_requirements_need_clickable_web_prototype(state),
+                    require_clickable=(
+                        _requirements_need_clickable_web_prototype(state)
+                        or _requirements_declares_clickable_web_prototype_contract(content, state)
+                    ),
+                    require_implementation_targets=True,
                 )
             except ValueError as exc:
                 issues.append(str(exc))
@@ -476,6 +548,8 @@ def apply_unit_plan_state_patch(state: dict[str, Any], patch: dict[str, Any]) ->
         current_unit = next((unit for unit in normalized_units if unit.get('id') == current_unit_id), {})
         if current_unit.get('ui_design_required') is True:
             next_state['currentUnitNeedsUiDesign'] = True
+    if 'currentUnitIsWebSystem' in patch:
+        next_state['currentUnitIsWebSystem'] = bool(patch['currentUnitIsWebSystem'])
     return next_state
 
 
@@ -597,6 +671,74 @@ def _normalize_patch_coverage(
 _REQUIREMENTS_RESOLUTION_STATUSES = {'deferred', 'rejected', 'out_of_scope'}
 
 
+def _requirements_declares_prototype_contract(content: str, state: dict[str, Any]) -> bool:
+    if _is_controller_prototype_policy_gate(state):
+        return False
+    for line in content.splitlines():
+        normalized = _normalized_requirements_text(line)
+        if not normalized or _is_markdown_table_separator(normalized):
+            continue
+        has_prototype = any(
+            keyword in normalized
+            for keyword in [
+                'prototype',
+                '原型',
+                'clickable webpage prototype',
+                'ui contract',
+                'ui/ux contract',
+                'ui 合约',
+                'ui/ux 合约',
+            ]
+        )
+        if not has_prototype:
+            continue
+        has_contract_signal = any(
+            keyword in normalized
+            for keyword in [
+                'contract',
+                '合约',
+                'production',
+                'implementation',
+                'real route',
+                '真实 route',
+                '真实页面',
+                'route',
+                'page',
+                'must',
+                '必须',
+                '验收',
+            ]
+        )
+        if has_contract_signal:
+            return True
+    return False
+
+
+def _requirements_declares_clickable_web_prototype_contract(content: str, state: dict[str, Any]) -> bool:
+    return (
+        not _is_controller_prototype_policy_gate(state)
+        and bool(
+            re.search(
+                r'(?i)(clickable webpage prototype|web prototype|可点击网页原型|网页原型)',
+                content,
+            )
+        )
+    )
+
+
+def _is_controller_prototype_policy_gate(state: dict[str, Any]) -> bool:
+    candidates = [
+        state.get('requestedOutcome'),
+        state.get('feasibleOutcome'),
+        state.get('currentUnitId'),
+        state.get('task_id'),
+    ]
+    return any(
+        re.search(r'(?i)v0[.-]6[.-]0[a-z]?|v0-6-0[a-z]?', str(item or ''))
+        for item in candidates
+    )
+
+
 def _requirements_need_uiux_prototype(state: dict[str, Any]) -> bool:
     return bool(state.get('currentUnitNeedsUiDesign')) or _state_declares_target_uiux(state)
 
@@ -700,6 +842,70 @@ def _state_target_context_has_any(state: dict[str, Any], indicators: list[str]) 
         if state.get(key)
     ]
     return any(indicator in value for value in values for indicator in indicators)
+
+
+def _prototype_conformance_case_issue(
+    case: dict[str, Any],
+    target: dict[str, Any],
+    contract: dict[str, Any] | None = None,
+) -> str:
+    command = str(case.get('command') or '').strip()
+    expected = str(case.get('expected') or case.get('expected_result') or case.get('expectedResult') or '').strip()
+    layer = str(case.get('layer') or '').strip().lower()
+    surface_kind = str((contract or {}).get('surface_kind') or '').strip().lower()
+    if not command:
+        return 'missing command'
+    if _prototype_command_is_static_artifact_check(command):
+        return 'command only opens static prototype artifact, not production UI'
+    if (implementation_target_is_browser_route(target) or surface_contract_requires_browser_e2e(surface_kind)) and layer != 'e2e':
+        return 'browser route target requires e2e layer'
+    if surface_kind and not _case_user_steps(case):
+        return 'missing user_steps from production entrypoint'
+    if _expected_is_weak(expected):
+        return 'missing concrete expected assertion'
+    return ''
+
+
+def _prototype_command_is_static_artifact_check(command: str) -> bool:
+    normalized = command.replace('\\', '/').lower()
+    static_needles = [
+        'requirements-draft/prototypes',
+        'prototype-review',
+        'plannotator-review',
+        'prototype-manifest',
+        'prototype-review-manifest',
+    ]
+    if any(needle in normalized for needle in static_needles):
+        return True
+    return 'file://' in normalized and 'prototype' in normalized
+
+
+def _prototype_target_label(target: dict[str, Any]) -> str:
+    kind = str(target.get('kind') or '').strip()
+    path = str(target.get('path') or '').strip()
+    if kind and path:
+        return f'{kind}:{path}'
+    return path or kind or 'unknown-target'
+
+
+def _prototype_contract_label(contract: dict[str, Any]) -> str:
+    prototype_id = str(contract.get('prototype_id') or 'unknown-prototype').strip()
+    surface_id = str(contract.get('surface_id') or '').strip()
+    target = contract.get('target') if isinstance(contract.get('target'), dict) else {}
+    target_label = _prototype_target_label(target)
+    if surface_id:
+        return f'prototype {prototype_id} surface {surface_id} target {target_label}'
+    return f'prototype {prototype_id} target {target_label}'
+
+
+def _case_user_steps(case: dict[str, Any]) -> list[str]:
+    raw = case.get('user_steps') or case.get('userSteps') or case.get('steps')
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    text = str(raw).strip()
+    return [text] if text else []
 
 
 def _requirements_has_design_architecture_matrix(content: str) -> bool:

@@ -84,6 +84,16 @@ If the spec has ambiguity, record conservative assumptions and review risks in `
 - Directly expand Requirements, AO, AC, Journey, Design/Architecture, and Test Strategy matrices from the spec.
 - Record assumptions and review risks in `## 4.8 已澄清事项、关键假设与待确认风险`.
 """
+    elif revision_feedback:
+        clarification_section = """Requirements revision drafting:
+- 这是 Requirements 预检或人工反馈后的修订，不是首次 requirements intake。
+- 已有草案、controller validation error、Requirements Dialogue Brief 和 `requirementsRevisionFeedback` 是本轮修订事实源。
+- 不要重复询问已有 gate、`## 4.8 已澄清事项、关键假设与待确认风险`、Requirements Dialogue Brief 或 revision feedback 中已经澄清的问题。
+- 先复用已有 `## 4.8` 中的已澄清事项；如果修订会改变这些结论，必须在新 gate 中明确写出变化原因。
+- 只在当前 controller validation error 或人工反馈无法从已有事实解决时，才提出新的阻断澄清问题并等待用户回答。
+- 如果只是补正 controller preflight 错误，例如 AC layer、Journey layer、AO 映射、prototype manifest 或 implementation target，不要向用户重复确认已澄清范围；直接修订 Requirements Gate 和相关 artifact。
+- 将新增澄清、沿用澄清和仍需人工确认的风险写入 `## 4.8 已澄清事项、关键假设与待确认风险`。
+"""
     infrastructure_intake_section = _v0_6_0_infrastructure_intake_prompt_section(state)
 
     return f"""为 workflow-controller 生成"需求与验收确认"Markdown 正文。
@@ -102,6 +112,11 @@ Write the Markdown body to this exact file:
 使用 `test-strategy` skill 将每条验收标准映射到适当验证层级、具体测试用例、命令、fixture、环境和人工证据。
 Requirements approval 会被 controller 预检：每条 AC 必须声明 verification layer；每个 active must AO 必须映射到 AC，或显式 deferred/rejected/out_of_scope 并写明原因。
 V0.3.4 还要求每条 covered AC 在 Design/Architecture Traceability Matrix 中同时映射 Product Design Ref 和 Technical Architecture Ref。
+UI/原型设计约束：
+- 当生成 prototype evidence、可审阅设计说明或 clickable webpage prototype 时，原型设计默认必须遵循现有系统风格。
+- 除非用户或 spec 明确要求创新、重设计或探索新视觉方向，不要引入与现有产品明显不一致的新视觉语言、布局模式或交互范式。
+- 必须先从目标项目代码、现有页面、历史设计、截图、文档或参考环境中提取风格基线，并保持信息架构、导航结构、组件形态、视觉密度、颜色/字体/间距、交互模式和文案语气的一致性。
+- 如果确实需要偏离现有系统风格，偏离点必须写入 `## 4.8 已澄清事项、关键假设与待确认风险`，并说明偏离原因、影响范围和需要人工确认的风险。
 
 {infrastructure_intake_section}
 
@@ -237,8 +252,12 @@ def _v0_6_0_infrastructure_intake_prompt_section(state: dict[str, Any]) -> str:
 - 文档地址必须允许本地 `docs/`、wiki、外部网址、历史项目、设计稿、API 文档、部署文档和排障文档，并说明用途或可信度。
 - 架构、交互逻辑、接口说明和依赖信息必须覆盖：模块边界、数据流、用户交互、状态流转、API/CLI/事件接口、错误语义、系统依赖、服务依赖和验证依赖，并能被 Unit Plan 消费。
 - 当目标项目需要 UI/UX、包含浏览器可见界面或 `currentUnitNeedsUiDesign=true` 时，Requirements Gate 必须在人工确认前包含 prototype evidence 或可审阅设计说明。
-- 当目标项目是 Web 系统时，必须包含可点击、可操作、可在浏览器中使用的 clickable webpage prototype，不接受静态截图、纯文字描述或不可点击线框；必须记录访问方式、页面状态、核心点击路径和 AC 映射。
-- 当目标项目需要 UI/UX、包含浏览器可见界面或是 Web 系统时，必须额外写出 `artifacts/requirements-draft/prototype-manifest.json`。该 JSON 必须包含 prototypes 列表；每个条目必须包含 prototype id, type, path or URL, title, linked ACs, linked journeys, page states, click path, thumbnail or preview hint, and review guidance。
+- 当目标项目是 Web 系统时，必须包含可点击、可操作、可在浏览器中使用的 clickable webpage prototype，不接受静态截图、纯文字描述或不可点击线框；必须记录访问方式、页面状态、核心点击路径、AC 映射、真实实现目标和每个可交互 UI surface。
+- 当目标项目需要 UI/UX、包含浏览器可见界面、是 Web 系统，或 Requirements 声明原型是 UI/UX 合约时，必须额外写出 `artifacts/requirements-draft/prototype-manifest.json`。该 JSON 必须包含 prototypes 列表；每个条目必须包含 prototype id, type, path or URL, title, linked ACs, linked journeys, page states, click path, implementation_targets, surface_contracts, thumbnail or preview hint, and review guidance。
+- `implementation_targets` 是原型到真实生产 UI 的验收映射；每个 target 必须至少包含 `kind` 和 `path`，例如 `{ "kind": "route", "path": "/dashboard/teacher" }`。兼容别名为 `production_targets` / `real_targets`，但推荐输出 `implementation_targets`。
+- `surface_contracts` 用于拆分原型中的每个可交互 UI surface，兼容别名 `ui_surfaces` / `page_state_targets`。每个 surface 必须包含 `id`, `title`, `kind`（`route | page | component | dialog | drawer | panel | form | other`）, `page_states[]`, `click_path[]`, `entrypoints[]`, `implementation_targets[]`, `linked_acceptance_criteria[]`, `required: true`。
+- 写 manifest 前必须扫描真实生产入口；同一个原型动作如果在真实系统有多个入口，例如批量分配、单课分配管理、弹窗、抽屉、选择器、管理面板、批量操作入口和单项操作入口，必须拆成多个 surface contract。
+- 原型是后续 Unit Plan、Verifier 和 Final Acceptance 的 UI 合约；不要求像素级一致，但关键布局、信息架构、可见文案、主要状态和核心交互必须落到真实 route/page。
 - `prototype-manifest.json` 中的本地图片或 HTML 原型路径必须是真实文件；外部 URL 不能带 token、password、secret、api_key、signature 等 sensitive URL query；linked ACs 必须引用本 Requirements Gate 中存在的 AC。
 - 必须保持 environment/runbook facts、Requirements 和 Unit Plan artifacts 的边界：Requirements Gate 负责明确目标项目需要梳理哪些基础设施事实；Unit Plan 负责决定如何实现；`docs/operations/`、wiki 或外部链接只作为事实来源或落点。
 """

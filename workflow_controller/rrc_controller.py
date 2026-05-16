@@ -46,6 +46,7 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_acceptance_obligation_coverage,
     validate_unit_plan_design_architecture_traceability,
     validate_unit_plan_golden_path,
+    validate_unit_plan_prototype_conformance,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,
@@ -67,8 +68,10 @@ from workflow_controller.spec_sources import (
 )
 from workflow_controller.prototype_review import (
     prepare_prototype_review_bundle,
+    prototype_review_html_path,
     prototype_review_paths,
     start_prototype_review_preview_server,
+    validate_final_prototype_conformance,
 )
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import (
@@ -124,6 +127,7 @@ DEFAULT_INITIAL_STATE: dict[str, Any] = {
     'testStrategistEnabled': False,
     'codeSimplifierEnabled': True,
     'currentUnitNeedsUiDesign': False,
+    'currentUnitIsWebSystem': False,
     'objectiveCoverage': [
         {
             'objective': '用户可以完成登录流程',
@@ -182,7 +186,7 @@ ACTION_LABELS = {
     'run_bug_fix': '运行 Bug Fix Agent',
     'run_bug_fix_verifier': '运行 Bug Fix 回归验证',
     'require_scope_approval': '范围确认',
-    'run_ui_design': '生成 UI 设计简报',
+    'run_ui_design': '准备 UI 检查清单',
     'run_builder': '运行构建器',
     'run_refiner': '运行精修器',
     'run_reviewer': '运行评审器',
@@ -506,6 +510,11 @@ class RalphRefinerController:
                 gate_path,
                 candidate_state,
             )
+            validate_unit_plan_prototype_conformance(
+                self.approvals_dir / 'requirements-and-acceptance.md',
+                gate_path,
+                candidate_state,
+            )
             validate_unit_plan_verification_environment(candidate_state)
             validate_unit_plan_golden_path(candidate_state)
             validate_and_enrich_journey_unit_plan(
@@ -582,6 +591,11 @@ class RalphRefinerController:
             audit = self._write_final_scope_audit(state)
             validate_final_scope_audit(audit)
             validate_final_journey_acceptance(state, self.artifacts_dir)
+            validate_final_prototype_conformance(
+                state=state,
+                artifacts_dir=self.artifacts_dir,
+                requirements_path=self.approvals_dir / 'requirements-and-acceptance.md',
+            )
         except ValueError as exc:
             return f'final acceptance gate invalid: {exc}'
         return None
@@ -1797,6 +1811,11 @@ class RalphRefinerController:
                         gate_path,
                         state,
                     )
+                    validate_unit_plan_prototype_conformance(
+                        self.approvals_dir / 'requirements-and-acceptance.md',
+                        gate_path,
+                        state,
+                    )
                     validate_unit_plan_verification_environment(state)
                     validate_unit_plan_golden_path(state)
                     validate_and_enrich_journey_unit_plan(
@@ -2177,7 +2196,12 @@ class RalphRefinerController:
 
     def _save_state(self, state: dict[str, Any]) -> None:
         next_action = compute_next_allowed_action(state)
-        state['nextAllowedActions'] = [next_action] if next_action else []
+        if next_action:
+            state['nextAction'] = next_action
+            state['nextAllowedActions'] = [next_action]
+        else:
+            state.pop('nextAction', None)
+            state['nextAllowedActions'] = []
         self.store.save_state(state)
 
     def _active_bug_fix_dir(self, state: dict[str, Any]) -> Path:
@@ -2415,8 +2439,9 @@ class RalphRefinerController:
                 prototype_review_manifest_path = None
                 prototype_review_preview_url = None
                 if str(gate_info['gate']) == 'requirements' and review_path != approval_gate_path:
-                    expected_review_path, expected_manifest_path, prototypes_dir = prototype_review_paths(self.artifacts_dir)
-                    if review_path == expected_review_path and expected_manifest_path.exists():
+                    expected_markdown_path, expected_manifest_path, prototypes_dir = prototype_review_paths(self.artifacts_dir)
+                    expected_html_path = prototype_review_html_path(self.artifacts_dir)
+                    if review_path in {expected_markdown_path, expected_html_path} and expected_manifest_path.exists():
                         try:
                             prototype_preview_server = start_prototype_review_preview_server(
                                 review_path=review_path,
@@ -2464,10 +2489,19 @@ class RalphRefinerController:
                         event_payload['prototype_review_preview_url'] = prototype_review_preview_url
                     self.store.append_event('plannotator_review_requested', event_payload)
                     output_func('[Plannotator] 已打开辅助审阅。')
+                    color_enabled = bool(getattr(self, '_drive_color_enabled', False))
                     if self.plannotator_port is not None:
-                        output_func(f'  打开网址：http://localhost:{self.plannotator_port}')
+                        output_func(_format_plannotator_access_line(
+                            'Plannotator 审批页',
+                            f'http://localhost:{self.plannotator_port}',
+                            color_enabled=color_enabled,
+                        ))
                     if prototype_review_preview_url:
-                        output_func(f'  原型预览：{prototype_review_preview_url}')
+                        output_func(_format_plannotator_access_line(
+                            '原型渲染预览页',
+                            prototype_review_preview_url,
+                            color_enabled=color_enabled,
+                        ))
                     output_func(f'  审阅记录：{result.summary_path}')
                     _print_plannotator_output(result.stdout, output_func)
                     if result.stderr.strip():
@@ -2752,8 +2786,10 @@ class RalphRefinerController:
         )
         output_func = getattr(self, '_drive_progress_callback', None)
         compact_reporter = getattr(self, '_drive_compact_reporter', None)
-        attempts = 0
-        while attempts < max_revisions:
+        consecutive_attempts = 0
+        total_attempts = 0
+        last_reason_key: str | None = None
+        while True:
             if compact_reporter is not None:
                 compact_reporter.print_status(
                     state,
@@ -2765,7 +2801,15 @@ class RalphRefinerController:
                 state['blockedReason'] = None
                 return state
 
-            attempts += 1
+            reason_key = _auto_revision_reason_key(reason)
+            if reason_key == last_reason_key:
+                consecutive_attempts += 1
+            else:
+                last_reason_key = reason_key
+                consecutive_attempts = 1
+            if consecutive_attempts > max_revisions:
+                break
+            total_attempts += 1
             state['requirementsAccepted'] = False
             state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
             state['blockedReason'] = reason
@@ -2774,12 +2818,13 @@ class RalphRefinerController:
                 'task_id': state.get('task_id'),
                 'path': str(gate_path),
                 'reason': reason,
-                'attempt': attempts,
+                'attempt': consecutive_attempts,
+                'total_attempt': total_attempts,
             })
             self._write_controller_validation_artifact(
                 gate='requirements',
                 reason=reason,
-                attempt=attempts,
+                attempt=consecutive_attempts,
             )
             if compact_reporter is not None:
                 compact_reporter.print_status(
@@ -2813,6 +2858,8 @@ class RalphRefinerController:
                 'path': str(gate_path),
                 'reason': reason,
                 'attempts': max_revisions,
+                'consecutive_attempts': consecutive_attempts,
+                'total_attempts': total_attempts,
             })
         else:
             state['blockedReason'] = None
@@ -2940,6 +2987,10 @@ def _gate_reason_label(reason: str) -> str:
     return _compact_controller_reason(reason)
 
 
+def _auto_revision_reason_key(reason: str) -> str:
+    return re.sub(r'\s+', ' ', str(reason or '').strip())
+
+
 def _format_auto_revision_message(
     *,
     action_label: str,
@@ -2969,6 +3020,10 @@ def _format_blocked_message(reason: str, *, color_enabled: bool) -> str:
         f"{_paint('[阻塞]', 'red', color_enabled)} "
         f'{_highlight_validation_tokens(reason, color_enabled=color_enabled)}'
     )
+
+
+def _format_plannotator_access_line(label: str, url: str, *, color_enabled: bool) -> str:
+    return _paint(f'▶ {label}: {url}', 'cyan', color_enabled)
 
 
 def _highlight_validation_tokens(text: str, *, color_enabled: bool) -> str:
@@ -4007,6 +4062,9 @@ def _should_hide_plannotator_output_line(line: str) -> bool:
 def _plannotator_review_path_for_gate(artifacts_dir: Path, gate: str, approval_gate_path: Path) -> Path:
     if gate == 'requirements':
         review_path, manifest_path, _ = prototype_review_paths(artifacts_dir)
+        html_review_path = prototype_review_html_path(artifacts_dir)
+        if html_review_path.exists() and manifest_path.exists():
+            return html_review_path
         if review_path.exists() and manifest_path.exists():
             return review_path
     return approval_gate_path

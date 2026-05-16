@@ -54,6 +54,7 @@ def build_state_from_target_acceptance(
         'autoApprove': False,
         'testStrategistEnabled': False,
         'currentUnitNeedsUiDesign': False,
+        'currentUnitIsWebSystem': False,
         'workspacePath': str(workspace_dir),
         'executionWorkspacePath': str(execution_workspace),
         'baselineChangedFiles': collect_git_changed_files(execution_workspace),

@@ -80,6 +80,9 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - `verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`），并包含实际执行这些 E2E 测试和 golden path 的命令；不接受"截图留证"或人工步骤作为完成条件。
 - `done_when` 必须是"测试命令退出码为 0 且断言覆盖 AC"，不接受"截图已上传"、"人工确认"或"浏览器路径已验证"。
 - 每个测试用例必须追溯到一条 AC，并在 `expected` 字段中描述可断言的具体值（如字段值、数组长度、排序关系），不接受"页面正常渲染"、"无报错"或"截图留存"作为唯一断言。
+- 如果 Requirements 的 prototype manifest 包含 `surface_contracts`，每个 `required: true` surface 的每个 `implementation_targets[]` 必须至少有一个真实生产 UI 一致性测试；相邻弹窗、抽屉或面板的测试不能代替当前 surface。
+- 测试用例必须在 Controller State Patch 的 `test_cases[]` 中写 `prototype_conformance: ["<prototype-id>"]`、`prototype_surfaces: ["<surface-id>"]`、`production_targets: ["<route-or-target>"]`、`user_steps[]`，并包含具体 `command` 与非弱断言 `expected`。旧 prototype-level manifest 没有 `surface_contracts` 时仍用 `implementation_targets` 做兼容验收。
+- 浏览器 route/page/dialog/drawer/panel/form/component surface 的 prototype conformance 测试层级必须是 `e2e`，命令必须从真实生产入口打开该 surface（如 Playwright 打开 `/dashboard/teacher` 后点击 `CourseCard -> 分配管理`）；只测试 `requirements-draft/prototypes`、`prototype-review`、`file://...prototype` 或静态 prototype spec，只能证明 artifact 有效，不能算生产 UI 一致性。
 - 对不适合 E2E 的 AC，必须说明为什么降级到 unit/functional/integration，并保留可执行命令。
 - 使用 `webapp-testing` skill 生成带真实数据断言的 Playwright 测试文件，而不是人工操作步骤清单。
 
@@ -179,14 +182,19 @@ E2E 层的测试用例必须有可执行 `command`（Playwright/pytest 命令）
           "fixture": "<test data or setup path for runtime tests>",
           "command": "<verification command if automated>",
           "evidence": "<manual evidence if not automated>",
-          "expected": "<observable expected result>"
+          "expected": "<observable expected result>",
+          "prototype_conformance": ["<prototype id from requirements prototype manifest when applicable>"],
+          "prototype_surfaces": ["<surface id from surface_contracts when applicable>"],
+          "production_targets": ["<route/page/component target from implementation_targets when applicable>"],
+          "user_steps": ["<open real production route>", "<click real entrypoint to open the surface>"]
         }}
       ],
       "verification_commands": ["<command>"],
       "verification_env": {{"DATABASE_URL": "<test database url if required>"}}
     }}
   ],
-  "currentUnitNeedsUiDesign": false
+  "currentUnitNeedsUiDesign": false,
+  "currentUnitIsWebSystem": false
 }}
 ```
 

@@ -574,6 +574,57 @@ def test_requirements_prompt_without_spec_keeps_agent_side_clarification(tmp_pat
     assert '## 4.8 已澄清事项、关键假设与待确认风险' in prompt
 
 
+def test_requirements_prompt_requires_prototypes_to_follow_existing_system_style_by_default(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': 'V2.9.1',
+        'feasibleOutcome': 'V2.9.1',
+        'currentUnitId': 'target-v2-9-1',
+        'currentUnitNeedsUiDesign': True,
+        'currentUnitIsWebSystem': True,
+        'units': [{'id': 'target-v2-9-1', 'name': 'Teacher dashboard prototype', 'passes': False}],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert '原型设计默认必须遵循现有系统风格' in prompt
+    assert '除非用户或 spec 明确要求创新、重设计或探索新视觉方向' in prompt
+    assert '信息架构、导航结构、组件形态、视觉密度、颜色/字体/间距、交互模式和文案语气' in prompt
+    assert '偏离点必须写入 `## 4.8 已澄清事项、关键假设与待确认风险`' in prompt
+
+
+def test_requirements_revision_prompt_reuses_prior_clarifications(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': 'V2.9.1',
+        'feasibleOutcome': 'V2.9.1',
+        'currentUnitId': 'target-v2-9-1',
+        'requirementsRevisionCount': 1,
+        'blockedReason': 'requirements gate invalid: journey contract invalid: J-05 missing valid verification layer',
+        'requirementsRevisionFeedback': """## Controller Validation Error
+
+requirements gate invalid: journey contract invalid: J-05 missing valid verification layer
+
+## Previous Requirements Gate
+
+## 4.8 已澄清事项、关键假设与待确认风险
+
+- 用户确认 V2.9.1 只处理真实 `/dashboard/teacher` 与既有 V2.9 可点击原型的一致性，不新增新业务能力。
+- 用户确认真实页面不要求逐像素复刻原型。
+- 用户确认必须新增真实 `/dashboard/teacher` Playwright 验收，prototype file:// 测试不能替代真实页面验收。
+""",
+        'units': [{'id': 'target-v2-9-1', 'name': 'Requirements revision', 'passes': False}],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert 'Requirements revision drafting' in prompt
+    assert '不要重复询问已有 gate、`## 4.8 已澄清事项、关键假设与待确认风险`' in prompt
+    assert '只在当前 controller validation error 或人工反馈无法从已有事实解决时' in prompt
+    assert '第一条回复只能包含澄清问题' not in prompt
+    assert '如果用户只回复「继续」' not in prompt
+    assert '不能进入 drafting' not in prompt
+    assert '用户确认 V2.9.1 只处理真实 `/dashboard/teacher`' in prompt
+
+
 def test_requirements_and_unit_plan_prompts_require_simplified_chinese(tmp_path: Path) -> None:
     state = {
         'requestedOutcome': '2.5',
@@ -2813,6 +2864,227 @@ def test_final_acceptance_gate_renders_journey_matrix(tmp_path: Path) -> None:
     assert '## Journey Matrix' in content
     assert '| Journey | AC | Unit | Test Case | Layer | Status | Command / Evidence | Expected | Artifacts |' in content
     assert '| J-001 Delivery happy path | AC-1 | unit-01 | TC-AC1-E2E | e2e | passed | `pytest tests/e2e/test_delivery.py -q` | delivery confirmation is visible | artifacts/unit-01/verification.json |' in content
+
+
+def test_final_acceptance_gate_renders_prototype_conformance_matrix(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    approvals_dir = tmp_path / 'approvals'
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    prototype_dir = artifacts_dir / 'requirements-draft'
+    prototype_dir.mkdir(parents=True)
+    prototype_html = prototype_dir / 'teacher.html'
+    prototype_html.write_text('<button>Preview</button>\n', encoding='utf-8')
+    (prototype_dir / 'prototype-manifest.json').write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'teacher-dashboard',
+                        'type': 'html',
+                        'path': str(prototype_html),
+                        'title': 'Teacher dashboard',
+                        'linked_acceptance_criteria': ['AC-21'],
+                        'linked_journeys': ['J-01'],
+                        'page_states': ['Dashboard', 'Preview'],
+                        'click_path': ['Open dashboard', 'Click Preview'],
+                        'implementation_targets': [{'kind': 'route', 'path': '/dashboard/teacher'}],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    (unit_dir / 'builder-summary.json').write_text(json.dumps({'runner_status': 'done'}), encoding='utf-8')
+    (unit_dir / 'review.json').write_text(json.dumps({'passed': True, 'issues': []}), encoding='utf-8')
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'passed': True,
+                'commands': ['npx playwright test tests/e2e/teacher-dashboard.spec.ts'],
+                'results': [
+                    {
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts',
+                        'ok': True,
+                        'returncode': 0,
+                    }
+                ],
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-TEACHER',
+                        'acceptance_criterion': 'AC-21',
+                        'acceptance_obligations': [],
+                        'layer': 'e2e',
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts',
+                        'manual_evidence': '',
+                        'expected': 'route /dashboard/teacher preserves dashboard and preview state ordering',
+                        'status': 'passed',
+                        'result_index': 0,
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'golden_path': True,
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'status': 'active',
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+        ],
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-TEACHER',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts',
+                        'expected': 'route /dashboard/teacher preserves dashboard and preview state ordering',
+                        'prototype_conformance': ['teacher-dashboard'],
+                        'production_targets': ['/dashboard/teacher'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    gate_path = ensure_final_acceptance_gate(state, approvals_dir, artifacts_dir, force=True)
+
+    content = gate_path.read_text(encoding='utf-8')
+    assert '## Prototype Conformance Matrix' in content
+    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Command | Status |' in content
+    assert '| teacher-dashboard | - | - | AC-21 | route:/dashboard/teacher | TC-PROTO-TEACHER | `npx playwright test tests/e2e/teacher-dashboard.spec.ts` | passed |' in content
+
+
+def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    approvals_dir = tmp_path / 'approvals'
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 课程运营原型中的每个弹窗 surface 必须落到真实入口。\n',
+        encoding='utf-8',
+    )
+    prototype_dir = artifacts_dir / 'requirements-draft'
+    prototype_dir.mkdir(parents=True)
+    prototype_html = prototype_dir / 'course-ops.html'
+    prototype_html.write_text('<button>分配管理</button>\n', encoding='utf-8')
+    (prototype_dir / 'prototype-manifest.json').write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'v291-course-ops-prototype-contract',
+                        'type': 'html',
+                        'path': str(prototype_html),
+                        'title': 'Course ops prototype',
+                        'linked_acceptance_criteria': ['AC-21'],
+                        'linked_journeys': ['J-01'],
+                        'page_states': ['Teacher dashboard'],
+                        'click_path': ['Open dashboard'],
+                        'implementation_targets': [{'kind': 'route', 'path': '/dashboard/teacher'}],
+                        'surface_contracts': [
+                            {
+                                'id': 'assignment-management-dialog',
+                                'title': 'Assignment management dialog',
+                                'kind': 'dialog',
+                                'page_states': ['Teacher dashboard', 'Assign management dialog'],
+                                'click_path': ['Open dashboard', 'Click 分配管理'],
+                                'entrypoints': ['CourseCard -> 分配管理'],
+                                'implementation_targets': [
+                                    {'kind': 'component', 'path': 'OpenMAIC/components/course/AssignManageDialog.tsx'}
+                                ],
+                                'linked_acceptance_criteria': ['AC-21'],
+                                'required': True,
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    (unit_dir / 'builder-summary.json').write_text(json.dumps({'runner_status': 'done'}), encoding='utf-8')
+    (unit_dir / 'review.json').write_text(json.dumps({'passed': True, 'issues': []}), encoding='utf-8')
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'passed': True,
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-ASSIGN-MANAGE-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'acceptance_obligations': [],
+                        'layer': 'e2e',
+                        'command': 'npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium',
+                        'manual_evidence': '',
+                        'expected': 'CourseCard opens AssignManageDialog and saves assignment count 1',
+                        'status': 'passed',
+                        'result_index': 0,
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'golden_path': True,
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'course-ops',
+        'currentUnitId': 'unit-01',
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'status': 'active',
+        'objectiveCoverage': [
+            {'objective': 'Course ops objective', 'units': ['unit-01'], 'status': 'covered'},
+        ],
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-ASSIGN-MANAGE-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': 'npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium',
+                        'expected': 'CourseCard opens AssignManageDialog and saves assignment count 1',
+                        'prototype_conformance': ['v291-course-ops-prototype-contract'],
+                        'prototype_surfaces': ['assignment-management-dialog'],
+                        'production_targets': ['component:OpenMAIC/components/course/AssignManageDialog.tsx'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    gate_path = ensure_final_acceptance_gate(state, approvals_dir, artifacts_dir, force=True)
+
+    content = gate_path.read_text(encoding='utf-8')
+    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Command | Status |' in content
+    assert '| v291-course-ops-prototype-contract | assignment-management-dialog | CourseCard -> 分配管理 | AC-21 | component:OpenMAIC/components/course/AssignManageDialog.tsx | TC-PROTO-ASSIGN-MANAGE-DIALOG | `npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium` | passed |' in content
 
 
 def test_builder_prompt_includes_final_acceptance_defect_list_for_defect_fix_units(tmp_path: Path) -> None:

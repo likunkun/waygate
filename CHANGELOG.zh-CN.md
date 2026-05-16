@@ -2,6 +2,15 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.0b
+
+- 新增 Requirements、Unit Plan 和 Final Acceptance 的原型到生产 UI 一致性门禁。
+- prototype manifest 中每个 UI/Web 原型必须通过 `implementation_targets` 或兼容别名映射真实实现目标。
+- 一致性验收从整张 prototype target 扩展到 required `surface_contracts`，覆盖弹窗、抽屉、面板、选择器、管理 surface 和真实入口。
+- Unit Plan 新增真实 route/page 一致性测试校验，要求具体断言。
+- Final Acceptance 新增 `Prototype Conformance Matrix`，缺失或失败的一致性证据会阻断终验。
+- Controller State Patch 保留 `currentUnitIsWebSystem`。
+
 ## 0.6.0a
 
 - 新增 Requirements prototype review bundle，供 Plannotator 审阅原型证据。

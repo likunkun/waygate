@@ -90,6 +90,22 @@
 - Requirements 预检增加原型文件缺失、可点击原型访问方式不完整、页面状态缺失、点击路径缺失、AC 映射缺失、未知 AC 引用和敏感 URL query 的阻断。
 - 保持审批语义不变：Plannotator Approve 仍不能绕过 Requirements quality gate。
 
+### V0.6.0b - Prototype Conformance Gate
+
+目标：让 Requirements 阶段的原型成为 Unit Plan、Verifier 和 Final Acceptance 的生产 UI 验收合约，而不只是可点击 review artifact。
+
+状态：已在 package `0.6.0b` 实现。
+
+已交付：
+
+- prototype manifest 中作为 UI/Web 合约的条目必须通过 `implementation_targets` 映射真实实现目标，并兼容 `production_targets` / `real_targets` 别名。
+- 多 surface 的 UI/Web prototype 必须为每个 required route、page、component、dialog、drawer、panel、form、selector、management surface 和真实入口声明 `surface_contracts`。
+- Requirements 正文即使没有打开 `currentUnitNeedsUiDesign` 等 state flag，只要声明原型义务或 UI contract，也会触发 manifest 和真实实现目标预检；保留 controller policy work 例外。
+- Unit Plan approval 会拒绝只打开静态 prototype artifact、`prototype-review` 或 `file://...prototype` 的测试。
+- prototype conformance test case 必须声明 `prototype_conformance`、适用时的 `prototype_surfaces`、`production_targets`、可执行 command、具体 expected 和真实入口 `user_steps`；浏览器 route/page/surface 必须是 E2E。
+- Final Acceptance 渲染包含 Surface 和 Entry Point 列的 `Prototype Conformance Matrix`，缺失或未通过的原型到生产 UI 证据会阻断终验。
+- Controller State Patch 支持并保留 `currentUnitIsWebSystem`，与 `currentUnitNeedsUiDesign` 一起进入后续 gate 判断。
+
 ### V0.6.1 - External Spec Intake
 
 目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径。

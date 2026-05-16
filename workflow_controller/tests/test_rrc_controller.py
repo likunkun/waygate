@@ -779,6 +779,48 @@ def test_status_reports_current_step_and_next_action(tmp_path: Path) -> None:
     assert 'nextAction=require_scope_approval' in result.stdout
 
 
+def test_unit_plan_approval_replaces_stale_next_action_with_builder_action(tmp_path: Path) -> None:
+    from workflow_controller.gates.parsers import approve_gate_file
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    initial_state = _controller_state_for_unit_plan(workspace)
+    initial_state.update(
+        {
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'scopeApproved': True,
+            'unitPlanDraftGenerated': True,
+        }
+    )
+    controller.init_state(initial_state, force=True)
+
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text('# Requirements\n\n- AC-1: Delivery behavior works.\n', encoding='utf-8')
+    unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
+    _write_valid_unit_plan(unit_plan_path)
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    session_path = state_dir / 'session.json'
+    state = json.loads(session_path.read_text(encoding='utf-8'))
+    state['nextAction'] = 'check_requirements_acceptance'
+    state['nextAllowedActions'] = ['check_requirements_acceptance']
+    session_path.write_text(json.dumps(state), encoding='utf-8')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'PLAN_APPROVED'
+    assert state['nextAction'] == 'run_builder'
+    assert state['nextAllowedActions'] == ['run_builder']
+    assert state['nextAction'] != 'check_requirements_acceptance'
+    saved_state = json.loads(session_path.read_text(encoding='utf-8'))
+    assert saved_state['nextAction'] == 'run_builder'
+    assert saved_state['nextAllowedActions'] == ['run_builder']
+
+
 def _fake_agent_result(request, *, status: str = 'done', returncode: int = 0, stderr: str = ''):
     return SimpleNamespace(
         backend=request.backend,
@@ -2858,6 +2900,69 @@ def test_compact_reporter_dedupes_identical_rendered_status_cards() -> None:
     assert output[0].count('当前   检查 Unit Plan 确认') == 1
 
 
+def test_compact_status_uses_builder_action_after_saved_state_normalizes_stale_next_action(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'ui-work',
+            'currentUnitId': 'unit-ui',
+            'currentStep': 'UI_DESIGN_DONE',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'nextAction': 'check_requirements_acceptance',
+            'nextAllowedActions': ['check_requirements_acceptance'],
+            'objectiveCoverage': [
+                {'objective': 'UI path is usable', 'units': ['unit-ui'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-ui', 'name': 'UI delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    rendered = rrc_controller_module._compact_roadmap(state, color_enabled=False)
+
+    assert '阶段 [构建*] [精修] [评审] [验证] [单元完成]' in rendered
+    assert '当前   运行构建器' in rendered
+    assert '需求确认*' not in rendered
+    assert '检查需求与验收确认' not in rendered
+
+
+def test_compact_status_labels_ui_design_as_preparing_ui_checklist() -> None:
+    state = {
+        'task_id': 'ui-work',
+        'currentUnitId': 'unit-ui',
+        'currentStep': 'PLAN_APPROVED',
+        'lastVerifiedStep': 'PLAN_CREATED',
+        'status': 'active',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'scopeApproved': True,
+        'requirementsAccepted': True,
+        'unitPlanAccepted': True,
+        'currentUnitNeedsUiDesign': True,
+        'objectiveCoverage': [
+            {'objective': 'UI path is usable', 'units': ['unit-ui'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-ui', 'name': 'UI delivery', 'passes': False},
+        ],
+    }
+
+    rendered = rrc_controller_module._compact_roadmap(state, color_enabled=False)
+
+    assert '当前   准备 UI 检查清单' in rendered
+    assert '生成 UI 设计简报' not in rendered
+
+
 def test_human_review_sends_tmux_reminder_without_submit(tmp_path: Path, monkeypatch) -> None:
     tmux_log = tmp_path / 'tmux-reminder.log'
     fake_tmux = tmp_path / 'tmux'
@@ -4034,15 +4139,17 @@ def test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_
     body_path.parent.mkdir(parents=True, exist_ok=True)
     body_path.write_text('# Requirements & Acceptance Confirmation\n\nClaude body\n', encoding='utf-8')
     review_path = body_path.parent / 'plannotator-review.md'
+    html_review_path = body_path.parent / 'plannotator-review.html'
     manifest_path = body_path.parent / 'prototype-review-manifest.json'
     prototypes_dir = body_path.parent / 'prototypes'
     (prototypes_dir / 'checkout').mkdir(parents=True, exist_ok=True)
     (prototypes_dir / 'checkout' / 'index.html').write_text('<button>Checkout</button>\n', encoding='utf-8')
     review_path.write_text('# Prototype Review Bundle for Plannotator\n\n[Checkout](prototypes/checkout/index.html)\n', encoding='utf-8')
+    html_review_path.write_text('<!doctype html><iframe srcdoc="<button>Checkout</button>"></iframe>\n', encoding='utf-8')
     manifest_path.write_text(
         json.dumps(
             {
-                'version': 'v0.6.0a',
+                'version': 'v0.6.0b',
                 'review_bundle_path': str(review_path),
                 'prototypes_dir': str(prototypes_dir),
                 'prototypes': [
@@ -4090,21 +4197,49 @@ print('{"decision":"dismissed"}')
     )
 
     assert result.returncode == 0, result.stderr
-    assert f'审阅文件：{review_path}' in result.stdout
+    assert f'审阅文件：{html_review_path}' in result.stdout
     assert f'确认文件：{approval_path}' in result.stdout
-    assert '原型预览：http://127.0.0.1:' in result.stdout
+    assert 'Plannotator 审批页: http://localhost:20000' in result.stdout
+    assert '原型渲染预览页: http://127.0.0.1:' in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
         'annotate',
-        str(review_path),
+        str(html_review_path),
         '--gate',
         '--json',
     ]
     summary = json.loads((state_dir / 'plannotator' / 'requirements-last-review.json').read_text(encoding='utf-8'))
-    assert summary['gate_path'] == str(review_path)
-    assert summary['review_path'] == str(review_path)
+    assert summary['gate_path'] == str(html_review_path)
+    assert summary['review_path'] == str(html_review_path)
     assert summary['approval_gate_path'] == str(approval_path)
     assert summary['prototype_review_manifest_path'] == str(manifest_path)
     assert summary['prototype_review_preview_url'].startswith('http://127.0.0.1:')
+    assert summary['prototype_review_preview_url'].endswith('/plannotator-review.html')
+
+    color_result = run_rrc(
+        'drive',
+        '--state-dir',
+        str(state_dir),
+        '--auto-approve',
+        '--plannotator-command',
+        str(fake_plannotator),
+        '--color',
+        'always',
+        input_text='v\nq\n',
+    )
+
+    assert color_result.returncode == 0, color_result.stderr
+    approval_lines = [
+        line for line in color_result.stdout.splitlines()
+        if 'Plannotator 审批页' in line
+    ]
+    preview_lines = [
+        line for line in color_result.stdout.splitlines()
+        if '原型渲染预览页' in line
+    ]
+    assert approval_lines and '\x1b[' in approval_lines[0]
+    assert preview_lines and '\x1b[' in preview_lines[0]
+    assert 'Plannotator 审批页: http://localhost:20000' in color_result.stdout
+    assert '原型渲染预览页: http://127.0.0.1:' in color_result.stdout
 
 
 def test_drive_auto_approves_gate_when_plannotator_approves(
@@ -5069,6 +5204,128 @@ def test_drive_refreshes_pending_requirements_invalid_reason_from_current_gate(t
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['requirementsAccepted'] is False
     assert state['blockedReason'].startswith('requirements gate invalid:')
+
+
+def test_requirements_auto_revision_budget_resets_when_invalid_reason_changes(tmp_path: Path, monkeypatch) -> None:
+    from workflow_controller.gates.parsers import write_gate_file
+
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(tmp_path / 'workspace'),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'requirementsAutoRevisionMax': 2,
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(gate_path, '# Requirements\n')
+
+    reasons = iter([
+        'requirements gate invalid: missing prototype manifest',
+        'requirements gate invalid: missing surface contracts',
+        'requirements gate invalid: J-03 missing valid verification layer',
+        None,
+    ])
+    revisions: list[str] = []
+
+    monkeypatch.setattr(
+        controller,
+        '_requirements_gate_invalid_reason',
+        lambda _state, _gate_path: next(reasons),
+    )
+
+    def fake_revise_requirements_gate(*, controller_validation_only: bool = False) -> None:
+        assert controller_validation_only is True
+        revisions.append(controller.store.load_state()['blockedReason'])
+
+    monkeypatch.setattr(controller, '_revise_requirements_gate', fake_revise_requirements_gate)
+
+    state = controller._auto_revise_invalid_requirements_draft(controller.store.load_state())
+
+    assert revisions == [
+        'requirements gate invalid: missing prototype manifest',
+        'requirements gate invalid: missing surface contracts',
+        'requirements gate invalid: J-03 missing valid verification layer',
+    ]
+    assert state['status'] == 'active'
+    assert state.get('blockedReason') is None
+
+
+def test_requirements_auto_revision_budget_still_blocks_repeated_same_reason(tmp_path: Path, monkeypatch) -> None:
+    from workflow_controller.gates.parsers import write_gate_file
+
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(tmp_path / 'workspace'),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'requirementsAutoRevisionMax': 2,
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(gate_path, '# Requirements\n')
+    reason = 'requirements gate invalid: J-03 missing valid verification layer'
+    revisions: list[str] = []
+
+    monkeypatch.setattr(
+        controller,
+        '_requirements_gate_invalid_reason',
+        lambda _state, _gate_path: reason,
+    )
+
+    def fake_revise_requirements_gate(*, controller_validation_only: bool = False) -> None:
+        assert controller_validation_only is True
+        revisions.append(controller.store.load_state()['blockedReason'])
+
+    monkeypatch.setattr(controller, '_revise_requirements_gate', fake_revise_requirements_gate)
+
+    state = controller._auto_revise_invalid_requirements_draft(controller.store.load_state())
+
+    assert revisions == [reason, reason]
+    assert state['status'] == 'blocked'
+    assert state['blockedReason'] == (
+        f'requirements gate invalid after automatic revisions: {reason}'
+    )
 
 
 def test_unit_plan_draft_auto_revises_controller_invalid_gate_before_human_review(
@@ -8993,6 +9250,149 @@ def test_final_acceptance_approval_accepts_passed_journey_evidence(tmp_path: Pat
 
     assert state['finalAcceptanceAccepted'] is True
     assert state['currentStep'] == 'RELEASE_GATE'
+
+
+def test_final_acceptance_approval_blocks_failed_prototype_conformance_evidence(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    approvals_dir = state_dir / 'approvals'
+    artifacts_dir = state_dir / 'artifacts'
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    draft_dir = artifacts_dir / 'requirements-draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    prototype_html = draft_dir / 'teacher.html'
+    prototype_html.write_text('<button>Preview</button>\n', encoding='utf-8')
+    (draft_dir / 'prototype-manifest.json').write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'teacher-dashboard',
+                        'type': 'html',
+                        'path': str(prototype_html),
+                        'title': 'Teacher dashboard',
+                        'linked_acceptance_criteria': ['AC-21'],
+                        'linked_journeys': ['J-01'],
+                        'page_states': ['Dashboard', 'Preview'],
+                        'click_path': ['Open dashboard', 'Click Preview'],
+                        'implementation_targets': [{'kind': 'route', 'path': '/dashboard/teacher'}],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'passed': True,
+                'commands': [
+                    'pytest workflow_controller/tests/test_other.py -q',
+                    'npx playwright test tests/e2e/teacher-dashboard.spec.ts',
+                ],
+                'results': [],
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-OTHER-AC21',
+                        'acceptance_criterion': 'AC-21',
+                        'acceptance_obligations': [],
+                        'layer': 'functional',
+                        'command': 'pytest workflow_controller/tests/test_other.py -q',
+                        'manual_evidence': '',
+                        'expected': 'controller records AC coverage',
+                        'status': 'passed',
+                        'result_index': 0,
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'golden_path': False,
+                    },
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-TEACHER',
+                        'acceptance_criterion': 'AC-21',
+                        'acceptance_obligations': [],
+                        'layer': 'e2e',
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts',
+                        'manual_evidence': '',
+                        'expected': 'route /dashboard/teacher preserves dashboard and preview state ordering',
+                        'status': 'failed',
+                        'result_index': 1,
+                        'returncode': 1,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'golden_path': True,
+                    },
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'Delivery unit',
+                    'passes': True,
+                    'test_cases': [
+                        {
+                            'id': 'TC-PROTO-TEACHER',
+                            'acceptance_criterion': 'AC-21',
+                            'layer': 'e2e',
+                            'fixture': 'teacher dashboard dataset',
+                            'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts',
+                            'expected': 'route /dashboard/teacher preserves dashboard and preview state ordering',
+                            'prototype_conformance': ['teacher-dashboard'],
+                            'production_targets': ['/dashboard/teacher'],
+                        }
+                    ],
+                },
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.generators import ensure_final_acceptance_gate
+    from workflow_controller.gates.parsers import approve_gate_file
+
+    gate_path = ensure_final_acceptance_gate(
+        controller.store.load_state(),
+        approvals_dir,
+        artifacts_dir,
+        force=True,
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['finalAcceptanceAccepted'] is False
+    assert state['currentStep'] == 'WAITING_FINAL_ACCEPTANCE'
+    assert state['blockedReason'].startswith('final acceptance gate invalid:')
+    assert 'prototype conformance is incomplete' in state['blockedReason']
+    assert 'teacher-dashboard' in state['blockedReason']
 
 
 def test_final_acceptance_approval_syncs_tmux_agent_before_release(tmp_path: Path, monkeypatch) -> None:
