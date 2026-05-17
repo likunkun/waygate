@@ -1,5 +1,31 @@
 # 进度日志
 
+## 会话：2026-05-17
+
+### 目标项目基础设施 intake 全局化与 Waygate 来源诊断
+- **状态：** implementation verified; system install blocked by interactive sudo。
+- Requirements Draft prompt 不再只对 V0.6.0 注入基础设施 intake；所有目标项目都会要求固定 `## 4.9 目标项目基础设施信息`，覆盖代码仓库、运行时、调试、参考环境、文档、架构/交互/接口和依赖信息。
+- Requirements preflight 已阻断缺失 4.9、缺任一基础设施类别、或类别内容为空/TBD/待补/不清楚；validation-only revision 也会保留该要求，不能只修其他 preflight 错误后进入人工确认。
+- 新增 `waygate doctor` 诊断：输出 executable path、module path/version、dpkg version、PATH 中所有 `waygate` 候选，并在 `~/.local/bin/waygate` 位于 `/usr/bin/waygate` 前时报告 shadow warning。
+- Debian build 已强制 `WAYGATE_VERSION` 不得与 `workflow_controller.__version__` 不一致；包内 wrapper 支持 `WAYGATE_LIB_DIR` 以便解包验证；postinst 会警告用户级 wrapper，但不删除用户文件。
+- `workflow_controller.__version__` 更新为 `0.6.0c`，并重新打包 `dist/waygate_0.6.0c_all.deb`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `3 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_acceptance_obligations.py -q` -> `97 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_diagnostics.py workflow_controller/tests/test_packaging.py -q` -> `182 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `437 passed in 64.19s`
+  - `PATH="/tmp/waygate-test-bin:$PATH" bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0c_all.deb`
+  - 解包验证：`WAYGATE_LIB_DIR=/tmp/waygate-0.6.0c-extract/usr/lib/waygate /tmp/waygate-0.6.0c-extract/usr/bin/waygate --version` -> `waygate 0.6.0c`；`doctor` 能报告当前 `.local/bin/waygate` shadow。
+- 现场恢复未执行：`sudo apt install -y ./dist/waygate_0.6.0c_all.deb` 失败于 `sudo: a terminal is required to read the password`，因此未移动 `~/.local/bin/waygate`，也未在 `/home/lichangkun/code/proxy-collector` 执行 V1.8.4 Requirements revision。
+
+### V0.6.0c development acceptance 终验同步
+- **状态：** complete
+- Controller Final Acceptance 已批准：`finalAcceptanceAccepted=true`，确认人为 human，hash 为 `sha256:75feebccb4ebb9a5b431b503cc721e02435ce74c4e4ffda82eb3214cc85a2f6b`。
+- 当前目标 `Complete V0.6.0c development acceptance using current planning progress` 已标记为 `covered`；单元 `target-v0-6-0c` 已 `passes=true`。
+- Final Acceptance evidence matrix 中 AC-01 到 AC-15 均 passed 或具备 manual evidence；Final Scope Audit 显示 AO coverage `5/5`、AC coverage `15/15`、Journey coverage `5/5`、unexplained changed files `0`。
+- Golden Path `TC-V060C-AC15-FULL-PYTEST` 已 passed：`PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `428 passed in 58.76s`。
+- 本次状态同步更新了 `task_plan.md` 和 `progress.md`；未发现新的 workflow decision、defect 或 risk，因此 `findings.md` 未新增终验记录。
+
 ## 会话：2026-05-16
 
 ### Requirements 自动打回连续原因计数修复

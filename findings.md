@@ -1,5 +1,14 @@
 # 发现与决策
 
+## 2026-05-17 基础设施 intake 与安装来源一致性
+
+- 基础设施 intake 是 Waygate 处理目标项目的通用 Requirements 约束，不应由目标版本号触发；只在 V0.6.0 prompt 中注入会导致 V1.8.4 等真实目标项目缺少仓库、运行时、调试、参考环境、文档、架构/接口和依赖事实。
+- Requirements preflight 必须把 `## 4.9 目标项目基础设施信息` 当成硬门禁；缺失、缺类别、空内容和 TBD/待补/不清楚这类占位都不能进入人工确认。允许写“不涉及”，但必须附具体理由。
+- validation-only revision 不能只修 prototype/Journey/AC 等当前错误后绕过基础设施事实；同一 preflight 路径需要重新检查 4.9，确保修订后的 gate 仍完整。
+- `WAYGATE_VERSION` override 会让 Debian control `Version` 与包内 `workflow_controller.__version__` 分叉；build script 应直接拒绝不一致，而不是构建一个 `waygate --version` 与 dpkg version 不同的包。
+- `/home/lichangkun/.local/bin/waygate` 位于 `/usr/bin/waygate` 前时会 shadow DEB wrapper。Debian postinst 和 `waygate doctor` 只警告，不删除用户文件；现场清理应在确认新包已安装后由人工改名或删除并执行 `hash -r`。
+- 本轮尝试安装 `dist/waygate_0.6.0c_all.deb` 时 sudo 需要交互密码；因此未执行系统安装、未移动 `.local/bin/waygate`，也未对 proxy-collector V1.8.4 live state 进行 Requirements revision。
+
 ## 2026-05-16 Requirements 自动打回连续原因计数
 
 - Requirements 草案预检自动修订预算的核心风险不是“总共修订几次”，而是“同一个 controller invalid reason 被 agent 反复修不掉”。不同 invalid reason 表示 gate 已向前推进，应视为新的有效打回。

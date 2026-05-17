@@ -78,6 +78,14 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 5. Out of Scope\\n- Future units.\\n\\n"
             "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
             "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 4.9 目标项目基础设施信息\\n"
+            "- 代码仓库：temporary git workspace, task_plan.md, artifacts, and state-dir are known.\\n"
+            "- 项目部署运行时环境：local Python, fake tmux runner, git workspace, and verifier command runtime.\\n"
+            "- 调试分析方法：session.json, events.jsonl, runner stdout/stderr, verification.json, and pytest output.\\n"
+            "- 参考环境：the temporary E2E workspace is the reference environment.\\n"
+            "- 文档地址：task_plan.md and generated controller artifacts document this run.\\n"
+            "- 架构/交互逻辑/接口说明：requirements, unit plan, builder, verifier, and final sync interfaces.\\n"
+            "- 依赖信息：Python, pytest, git, fake tmux script, JSON artifacts, and shell runtime.\\n\\n"
             "## 8. Human Review Checklist\\n- [ ] Reviewed.\\n",
             encoding="utf-8",
         )

@@ -4,7 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PACKAGE_NAME="waygate"
 _PKG_VERSION="$(python3 -c "import sys; sys.path.insert(0, '${ROOT_DIR}'); from workflow_controller import __version__; print(__version__)")"
-VERSION="${WAYGATE_VERSION:-${_PKG_VERSION}}"
+if [[ -n "${WAYGATE_VERSION:-}" && "${WAYGATE_VERSION}" != "${_PKG_VERSION}" ]]; then
+  printf 'error: WAYGATE_VERSION (%s) must match workflow_controller.__version__ (%s)\n' "${WAYGATE_VERSION}" "${_PKG_VERSION}" >&2
+  exit 2
+fi
+VERSION="${_PKG_VERSION}"
 ARCHITECTURE="all"
 DIST_DIR="${WAYGATE_DIST_DIR:-"${ROOT_DIR}/dist"}"
 BUILD_ROOT="${WAYGATE_BUILD_ROOT:-"${ROOT_DIR}/.build/debian"}"
@@ -56,10 +60,40 @@ EOF
 
 cat > "${PACKAGE_DIR}/usr/bin/${PACKAGE_NAME}" <<'EOF'
 #!/usr/bin/env sh
-export PYTHONPATH="/usr/lib/waygate${PYTHONPATH:+:$PYTHONPATH}"
+WAYGATE_LIB_DIR="${WAYGATE_LIB_DIR:-/usr/lib/waygate}"
+export PYTHONPATH="${WAYGATE_LIB_DIR}${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 -m workflow_controller.cli "$@"
 EOF
 chmod 0755 "${PACKAGE_DIR}/usr/bin/${PACKAGE_NAME}"
+
+cat > "${PACKAGE_DIR}/DEBIAN/postinst" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+
+warn_shadow() {
+  candidate="$1"
+  if [ -n "${candidate}" ] && [ -x "${candidate}" ] && [ "${candidate}" != "/usr/bin/waygate" ]; then
+    printf '%s\n' "WARNING: user-level waygate wrapper found at ${candidate}; it may shadow /usr/bin/waygate depending on PATH. Waygate will not remove it. Rename or remove it manually, then run 'hash -r'." >&2
+  fi
+}
+
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+  sudo_home="$(getent passwd "${SUDO_USER}" | awk -F: '{print $6}')"
+  warn_shadow "${sudo_home}/.local/bin/waygate"
+fi
+
+if [ -n "${HOME:-}" ]; then
+  warn_shadow "${HOME}/.local/bin/waygate"
+fi
+
+for candidate in /home/*/.local/bin/waygate; do
+  [ -e "${candidate}" ] || continue
+  warn_shadow "${candidate}"
+done
+
+exit 0
+EOF
+chmod 0755 "${PACKAGE_DIR}/DEBIAN/postinst"
 
 dpkg-deb --build --root-owner-group "${PACKAGE_DIR}" "${DEB_PATH}"
 printf '%s\n' "${DEB_PATH}"

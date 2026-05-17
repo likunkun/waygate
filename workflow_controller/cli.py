@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from workflow_controller import __version__
+from workflow_controller.diagnostics import render_doctor_report
 from workflow_controller.rrc_controller import (
     COLOR_MODES,
     DEFAULT_MAX_AUTOMATIC_STEPS,
@@ -90,6 +91,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument('--version', action='version', version=f'waygate {__version__}')
     subparsers = parser.add_subparsers(dest='command', required=True)
+
+    subparsers.add_parser(
+        'doctor',
+        help='Print installation and PATH diagnostics',
+        allow_abbrev=False,
+    )
 
     init_parser = subparsers.add_parser(
         'init',
@@ -247,6 +254,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if args.command == 'doctor':
+        print(render_doctor_report(), end='')
+        return
+
     controller = RalphRefinerController(
         state_dir=Path(args.state_dir),
         dry_run=getattr(args, 'dry_run', False),

@@ -99,7 +99,10 @@ Build and install the Debian package:
 bash packaging/debian/build-deb.sh
 sudo apt install ./dist/waygate_*_all.deb
 waygate --help
+waygate doctor
 ```
+
+If `waygate doctor` reports a user-level wrapper such as `~/.local/bin/waygate` before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`. The Debian package warns about this shadowing but does not delete user files.
 
 For local development, run from the source tree:
 

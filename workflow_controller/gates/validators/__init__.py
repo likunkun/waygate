@@ -430,6 +430,9 @@ def validate_requirements_acceptance_quality(
             except ValueError as exc:
                 issues.append(str(exc))
 
+    if _requirements_target_infrastructure_required(state):
+        issues.extend(_requirements_target_infrastructure_issues(content))
+
     if issues:
         raise ValueError('; '.join(issues))
 
@@ -669,6 +672,98 @@ def _normalize_patch_coverage(
 
 
 _REQUIREMENTS_RESOLUTION_STATUSES = {'deferred', 'rejected', 'out_of_scope'}
+
+_REQUIREMENTS_INFRASTRUCTURE_CATEGORIES = [
+    ('代码仓库', ('代码仓库',)),
+    ('项目部署运行时环境', ('项目部署运行时环境', '部署运行时环境', '运行时环境')),
+    ('调试分析方法', ('调试分析方法', '调试方法', '排查方法')),
+    ('参考环境', ('参考环境',)),
+    ('文档地址', ('文档地址', '文档来源')),
+    ('架构/交互逻辑/接口说明', ('架构/交互逻辑/接口说明', '架构、交互逻辑、接口说明')),
+    ('依赖信息', ('依赖信息',)),
+]
+
+
+def _requirements_target_infrastructure_required(state: dict[str, Any]) -> bool:
+    target_keys = [
+        'requestedOutcome',
+        'feasibleOutcome',
+        'currentUnitId',
+        'task_id',
+        'workspacePath',
+        'executionWorkspacePath',
+    ]
+    return any(str(state.get(key) or '').strip() for key in target_keys) or bool(state.get('units'))
+
+
+def _requirements_target_infrastructure_issues(content: str) -> list[str]:
+    section = _markdown_section(content, '目标项目基础设施信息')
+    if not section.strip():
+        return [
+            'Requirements Gate missing `## 4.9 目标项目基础设施信息`; '
+            'add concrete target project infrastructure facts before Requirements approval'
+        ]
+
+    issues: list[str] = []
+    for label, aliases in _REQUIREMENTS_INFRASTRUCTURE_CATEGORIES:
+        category_text = _requirements_infrastructure_category_text(section, label, aliases)
+        if not category_text.strip():
+            issues.append(
+                f'Requirements Gate `## 4.9 目标项目基础设施信息` missing infrastructure category: {label}'
+            )
+            continue
+        if _requirements_infrastructure_category_is_placeholder(category_text, aliases):
+            issues.append(
+                f'Requirements Gate `## 4.9 目标项目基础设施信息` category {label} '
+                'is empty or placeholder; replace placeholder text with concrete facts or a specific 不涉及 reason'
+            )
+    return issues
+
+
+def _requirements_infrastructure_category_text(section: str, label: str, aliases: tuple[str, ...]) -> str:
+    matches: list[str] = []
+    for line in section.splitlines():
+        normalized = _normalized_requirements_text(line)
+        if not normalized or _is_markdown_table_separator(normalized):
+            continue
+        if label == '架构/交互逻辑/接口说明':
+            if (
+                any(_normalized_requirements_text(alias) in normalized for alias in aliases)
+                or all(term in normalized for term in ['架构', '交互', '接口'])
+            ):
+                matches.append(line)
+            continue
+        if any(_normalized_requirements_text(alias) in normalized for alias in aliases):
+            matches.append(line)
+    return '\n'.join(matches)
+
+
+def _requirements_infrastructure_category_is_placeholder(text: str, aliases: tuple[str, ...]) -> bool:
+    cleaned = _normalized_infrastructure_category_content(text, aliases)
+    if not cleaned:
+        return True
+    lowered = cleaned.lower()
+    if re.fullmatch(r'(?:tbd|todo|pending|unknown|n/?a|none|null|-|—|_)+', lowered):
+        return True
+    placeholder_terms = ['tbd', 'todo', 'pending', '待补', '不清楚', '未知', '待确认', '暂缺', '暂无']
+    if any(term in lowered for term in placeholder_terms):
+        return True
+    if lowered in {'无', '不涉及', '没有', 'none'}:
+        return True
+    if '不涉及' in lowered:
+        reason = lowered.replace('不涉及', '')
+        reason = re.sub(r'[\s:：，。,.；;、`*_|\-—]+', '', reason)
+        return len(reason) < 6
+    return False
+
+
+def _normalized_infrastructure_category_content(text: str, aliases: tuple[str, ...]) -> str:
+    cleaned = re.sub(r'(?m)^\s*[-*+]\s*', '', text)
+    cleaned = cleaned.replace('|', ' ')
+    for alias in aliases:
+        cleaned = re.sub(re.escape(alias), ' ', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'[\s:：，。,.；;、`*_|\-—]+', ' ', cleaned).strip()
+    return cleaned
 
 
 def _requirements_declares_prototype_contract(content: str, state: dict[str, Any]) -> bool:

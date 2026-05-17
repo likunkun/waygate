@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40）、V0.5.4 人工评审防串聊与强制 Requirements 澄清（阶段 46）、V0.5.6 Spec Intake & Dependency Documentation 终验批准、V0.6.0 Infrastructure Knowledge Base 终验批准、V0.6.0a Prototype Review Bundle for Plannotator 实施、V0.6.0b Prototype Conformance Gate 实施、Prototype Surface Conformance 流程修复，以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40）、V0.5.4 人工评审防串聊与强制 Requirements 澄清（阶段 46）、V0.5.6 Spec Intake & Dependency Documentation 终验批准、V0.6.0 Infrastructure Knowledge Base 终验批准、V0.6.0a Prototype Review Bundle for Plannotator 实施、V0.6.0b Prototype Conformance Gate 实施、Prototype Surface Conformance 流程修复、V0.6.0c 目标项目基础设施 intake / `AGENTS.md` 边界 / blocked 上游路由 / 后续流转说明终验批准，以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
 
 ## 各阶段
 
@@ -76,6 +76,7 @@
 - [x] V0.6.0b Prototype Conformance Gate 已实施：Requirements prototype manifest 增加真实实现目标映射；Requirements/Unit Plan/Final Acceptance 增加原型到生产 UI 一致性门禁；`currentUnitIsWebSystem` 进入 Controller State Patch；版本更新为 `0.6.0b`。
 - [x] Prototype Surface Conformance 流程修复：`surface_contracts` 覆盖每个 required UI surface，Unit Plan/Final Acceptance 按 `prototype + surface + production target` 验收，避免相邻弹窗或管理面板测试误覆盖真实漏项。
 - [x] Requirements 自动打回连续原因计数修复：`requirementsAutoRevisionMax` 改为限制连续相同 invalid reason；不同预检原因视为有效推进并重置连续计数。
+- [x] V0.6.0c Final Acceptance 已批准：完成目标项目基础设施 intake、`AGENTS.md` 边界、blocked 上游路由过滤和 Requirements approval 后后续流转说明；目标 `Complete V0.6.0c development acceptance using current planning progress` 已 covered，单元 `target-v0-6-0c` 已 passes=true。
 - **状态：** complete
 
 ### 阶段 7：控制器可靠性增强

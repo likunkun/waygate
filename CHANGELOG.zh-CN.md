@@ -2,6 +2,14 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.0c
+
+- 目标项目基础设施 intake 现在适用于每个 Requirements draft，并固定输出 `## 4.9 目标项目基础设施信息`。
+- Requirements preflight 会阻断缺失、不完整或仍是占位内容的基础设施类别。
+- 新增 `waygate doctor`，输出 executable path、module path/version、dpkg version、PATH 候选和命令 shadow 警告。
+- Debian 打包会强制 control `Version`、包内 `__version__` 和 `waygate --version` 保持一致。
+- Debian post-install 会提示 `~/.local/bin/waygate` 等用户级 wrapper 的 shadow 风险，但不会删除用户文件。
+
 ## 0.6.0b
 
 - 新增 Requirements、Unit Plan 和 Final Acceptance 的原型到生产 UI 一致性门禁。

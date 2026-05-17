@@ -106,6 +106,18 @@ Delivered work:
 - Render a Final Acceptance `Prototype Conformance Matrix` with Surface and Entry Point columns, and block final approval when required prototype-to-production evidence is missing or not passed.
 - Preserve `currentUnitIsWebSystem` in Controller State Patch alongside `currentUnitNeedsUiDesign`.
 
+### V0.6.0c - Target Infrastructure Intake and Install Diagnostics
+
+Goal: make infrastructure intake mandatory for every target project and make installed `waygate` command provenance auditable.
+
+Delivered work:
+
+- Apply target-project infrastructure intake to every Requirements draft, not only V0.6.0 controller policy work.
+- Require fixed Requirements section `## 4.9 目标项目基础设施信息` with repository, runtime, debugging, reference environment, documentation, architecture/interaction/interface, and dependency facts.
+- Block Requirements approval when section 4.9 is missing, a category is missing, or category content is empty/placeholder.
+- Keep Debian package version, package module `__version__`, and `waygate --version` aligned.
+- Add `waygate doctor` and Debian post-install shadow warnings for user-level wrappers such as `~/.local/bin/waygate`.
+
 ### V0.6.1 - External Spec Intake
 
 Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable.

@@ -2,6 +2,14 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0c
+
+- Made target-project infrastructure intake apply to every Requirements draft, with fixed section `## 4.9 目标项目基础设施信息`.
+- Added Requirements preflight validation for missing, incomplete, or placeholder infrastructure categories.
+- Added `waygate doctor` to report executable path, module path/version, dpkg version, PATH candidates, and command shadow warnings.
+- Hardened Debian packaging so the control `Version`, package module `__version__`, and `waygate --version` stay aligned.
+- Added Debian post-install warnings for user-level `waygate` wrappers such as `~/.local/bin/waygate` without deleting user files.
+
 ## 0.6.0b
 
 - Added prototype-to-production conformance gating for Requirements, Unit Plan, and Final Acceptance.

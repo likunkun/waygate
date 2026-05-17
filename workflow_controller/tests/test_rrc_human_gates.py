@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import stat
 import subprocess
 import sys
@@ -318,6 +319,24 @@ def _v0_6_0_requirements_body() -> str:
     )
 
 
+def _v1_8_4_requirements_prompt(tmp_path: Path) -> str:
+    return _render_requirements_draft_prompt(
+        {
+            'requestedOutcome': 'V1.8.4',
+            'feasibleOutcome': 'V1.8.4',
+            'currentUnitId': 'target-v1-8-4',
+            'units': [
+                {
+                    'id': 'target-v1-8-4',
+                    'name': 'proxy-collector V1.8.4',
+                    'passes': False,
+                }
+            ],
+        },
+        tmp_path / 'requirements-body.md',
+    )
+
+
 def test_v0_6_0_requirements_prompt_uses_target_project_infrastructure_scope(tmp_path: Path) -> None:
     prompt = _v0_6_0_requirements_prompt(tmp_path)
     body = _v0_6_0_requirements_body()
@@ -352,6 +371,23 @@ def test_v0_6_0_requirements_prompt_requires_seven_infrastructure_categories(tmp
     ]:
         assert expected in prompt
         assert expected in body
+
+
+def test_requirements_prompt_injects_infrastructure_intake_for_non_v0_6_0_targets(tmp_path: Path) -> None:
+    prompt = _v1_8_4_requirements_prompt(tmp_path)
+
+    assert '## 4.9 目标项目基础设施信息' in prompt
+    assert '目标项目基础设施信息' in prompt
+    for expected in [
+        '代码仓库',
+        '项目部署运行时环境',
+        '调试分析方法',
+        '参考环境',
+        '文档地址',
+        '架构/交互逻辑/接口说明',
+        '依赖信息',
+    ]:
+        assert expected in prompt
 
 
 def test_v0_6_0_repository_context_supports_multi_repo_targets(tmp_path: Path) -> None:
@@ -737,7 +773,36 @@ def _generate_requirements_gate(state_dir: Path) -> None:
     draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
     assert draft_result.returncode == 0, draft_result.stderr
     assert 'currentStep=WAITING_REQUIREMENTS_ACCEPTANCE' in draft_result.stdout
-    assert (state_dir / 'approvals' / 'requirements-and-acceptance.md').exists()
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    assert gate_path.exists()
+    _write_valid_requirements_infrastructure_section(gate_path)
+
+
+def _valid_requirements_infrastructure_section() -> str:
+    return (
+        '## 4.9 目标项目基础设施信息\n\n'
+        '- 代码仓库：测试目标主仓库、相关仓库、workspace、docs、artifacts 和 state-dir 边界已确认。\n'
+        '- 项目部署运行时环境：本地 pytest/subprocess runtime、tmux runner 前置条件和验证命令运行环境已确认。\n'
+        '- 调试分析方法：查看 session.json、events.jsonl、runner stdout/stderr、verification artifacts 和 pytest 输出。\n'
+        '- 参考环境：当前测试 workspace 和历史 controller fixture 作为参考环境，不混同部署环境。\n'
+        '- 文档地址：README、USAGE、ROADMAP、task_plan、progress 和 findings 作为审阅文档来源。\n'
+        '- 架构/交互逻辑/接口说明：controller state、human gate、runner dispatch、approval CLI 和 artifact 接口已记录。\n'
+        '- 依赖信息：Python、pytest、tmux fake runner、dpkg tooling 和 shell runtime 依赖已记录。\n'
+    )
+
+
+def _write_valid_requirements_infrastructure_section(gate_path: Path) -> None:
+    content = gate_path.read_text(encoding='utf-8')
+    section = _valid_requirements_infrastructure_section().rstrip()
+    if '## 4.9 目标项目基础设施信息' in content:
+        content = re.sub(
+            r'(?ms)^## 4\.9 目标项目基础设施信息\n.*?(?=^##\s+|\Z)',
+            section + '\n\n',
+            content,
+        )
+    else:
+        content = content.rstrip() + '\n\n' + section + '\n'
+    gate_path.write_text(content, encoding='utf-8')
 
 
 def test_target_init_requires_requirements_acceptance_gate(tmp_path: Path) -> None:
@@ -890,6 +955,14 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 5. Out of Scope\\n- Future units.\\n\\n"
             "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
             "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 4.9 目标项目基础设施信息\\n"
+            "- 代码仓库：fake target workspace, docs, artifacts, and state-dir are known.\\n"
+            "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
+            "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
+            "- 参考环境：test fixture workspace is the reference environment.\\n"
+            "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+            "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
+            "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
             "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
             encoding="utf-8",
         )
@@ -1040,6 +1113,14 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 5. Out of Scope\\n- Future units.\\n\\n"
             "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
             "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 4.9 目标项目基础设施信息\\n"
+            "- 代码仓库：fake target workspace, docs, artifacts, and state-dir are known.\\n"
+            "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
+            "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
+            "- 参考环境：test fixture workspace is the reference environment.\\n"
+            "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+            "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
+            "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
             "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
             encoding="utf-8",
         )
@@ -1133,6 +1214,14 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 5. Out of Scope\\n- Future units.\\n\\n"
             "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
             "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+            "## 4.9 目标项目基础设施信息\\n"
+            "- 代码仓库：fake target workspace, docs, artifacts, and state-dir are known.\\n"
+            "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
+            "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
+            "- 参考环境：test fixture workspace is the reference environment.\\n"
+            "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+            "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
+            "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
             "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
             encoding="utf-8",
         )
@@ -1491,7 +1580,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
     if match:
         body_path = Path(match.group(1).strip())
         body_path.parent.mkdir(parents=True, exist_ok=True)
-        if "Unit Plan" in prompt:
+        if "Write the Unit Plan Markdown body" in prompt:
             if "please split closure evidence" in prompt:
                 unit_line = "Revised unit plan with separate closure evidence."
                 unit_json = (
@@ -1527,6 +1616,14 @@ if sys.argv[1:2] == ["paste-buffer"]:
                 "## 5. Out of Scope\\n- Future units.\\n\\n"
                 "## 6. Product Design Summary\\n- Core flow is visible to reviewers.\\n\\n"
                 "## 7. Architecture Summary\\n- Module boundaries and data flow are summarized.\\n\\n"
+                "## 4.9 目标项目基础设施信息\\n"
+                "- 代码仓库：fake target workspace, docs, artifacts, and state-dir are known.\\n"
+                "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
+                "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
+                "- 参考环境：test fixture workspace is the reference environment.\\n"
+                "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+                "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
+                "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
                 "## 8. Human Review Checklist\\n- [ ] Requirements reviewed.\\n"
             )
         body_path.write_text(body, encoding="utf-8")
@@ -3158,7 +3255,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
         match = re.search(r"Write the Unit Plan Markdown body to this exact file:\\n(.+)", prompt)
     body_path = Path(match.group(1).strip())
     body_path.parent.mkdir(parents=True, exist_ok=True)
-    if "Unit Plan" in prompt:
+    if "Write the Unit Plan Markdown body" in prompt:
         body = (
             "# Unit Plan Confirmation\\n\\n"
             "## Objective Coverage Matrix\\n- Claude generated unit coverage.\\n\\n"
@@ -3176,6 +3273,14 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "## 3. Acceptance Criteria\\n- Generated acceptance.\\n\\n"
             "## 4. Test Strategy\\n- Generated tests.\\n\\n"
             "## 5. Out of Scope\\n- Future units.\\n\\n"
+            "## 4.9 目标项目基础设施信息\\n"
+            "- 代码仓库：fake target workspace, docs, artifacts, and state-dir are known.\\n"
+            "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
+            "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
+            "- 参考环境：test fixture workspace is the reference environment.\\n"
+            "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+            "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
+            "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
             "## 6. Human Review Checklist\\n- [ ] Requirements reviewed.\\n"
         )
     body_path.write_text(body, encoding="utf-8")

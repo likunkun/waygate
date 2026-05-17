@@ -19,9 +19,12 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.0b_all.deb
+sudo apt install ./dist/waygate_0.6.0c_all.deb
 waygate --help
+waygate doctor
 ```
+
+`waygate doctor` prints the active executable path, imported module path, module version, installed dpkg version, and every `waygate` candidate in `PATH`. If it reports a `~/.local/bin/waygate` shadow before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`.
 
 Run from source:
 
@@ -137,6 +140,14 @@ Print current workflow status.
 
 ```bash
 waygate status --state-dir .rrc-controller-v1.0
+```
+
+### `doctor`
+
+Print installation and PATH diagnostics. This command does not read controller state.
+
+```bash
+waygate doctor
 ```
 
 ### `approve`

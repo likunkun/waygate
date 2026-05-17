@@ -99,7 +99,10 @@ Long sessions             -> planning-with-files throughout
 bash packaging/debian/build-deb.sh
 sudo apt install ./dist/waygate_*_all.deb
 waygate --help
+waygate doctor
 ```
+
+如果 `waygate doctor` 显示 `~/.local/bin/waygate` 这类用户级 wrapper 排在 `/usr/bin/waygate` 前面，请手工改名或删除该用户级文件，然后执行 `hash -r`。Debian 包会提示 shadow 风险，但不会删除用户文件。
 
 源码调试入口：
 

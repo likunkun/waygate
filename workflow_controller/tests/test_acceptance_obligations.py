@@ -119,6 +119,84 @@ def _write_surface_prototype_manifest_for_gate(gate: Path) -> Path:
     return manifest_path
 
 
+def _minimal_requirements_gate_with_infrastructure(infrastructure_section: str | None = None) -> str:
+    content = (
+        '# 需求与验收确认\n\n'
+        '## 1. 需求\n'
+        '- V1.8.4 需要完成 proxy-collector 运行时修复。\n\n'
+        '## 3. 验收标准\n'
+        '- AC-01 [verification: functional]: 代理采集服务按目标环境配置启动并通过验证。\n\n'
+        '## Requirements Traceability Matrix\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| 无 active must AO | AC-01 | covered | functional | 当前没有 active must AO。 |\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-01 | PD-PROXY-01 | TA-PROXY-01 | 目标服务运行和验证。 |\n\n'
+        '## 4.8 已澄清事项、关键假设与待确认风险\n'
+        '- 已澄清事项：以 proxy-collector 目标项目为事实源。\n'
+    )
+    if infrastructure_section is not None:
+        content += '\n' + infrastructure_section.strip() + '\n'
+    return content
+
+
+def _valid_infrastructure_section() -> str:
+    return (
+        '## 4.9 目标项目基础设施信息\n'
+        '- 代码仓库：主仓库 `/home/lichangkun/code/proxy-collector`，state-dir `.rrc-controller-v1.8.4`。\n'
+        '- 项目部署运行时环境：Go service, Makefile, DEB package, systemd unit, local test runtime。\n'
+        '- 调试分析方法：查看 systemd journal、SQLite 文件、config 文件、logs 目录和 verifier 输出。\n'
+        '- 参考环境：远程部署节点和当前生产服务行为作为参考，不混同本地运行环境。\n'
+        '- 文档地址：README、docs/operations、packaging notes 和 deployment runbook。\n'
+        '- 架构/交互逻辑/接口说明：collector 模块、proxy config flow、CLI/systemd interaction 和 API contract。\n'
+        '- 依赖信息：Go toolchain、SQLite、systemd、DEB tooling、network proxy endpoints 和 pytest verifier。\n'
+    )
+
+
+def test_requirements_preflight_rejects_missing_target_infrastructure_section(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='4\\.9.*目标项目基础设施信息'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_rejects_missing_infrastructure_category(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '- 依赖信息：Go toolchain、SQLite、systemd、DEB tooling、network proxy endpoints 和 pytest verifier。\n',
+        '',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='依赖信息'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_rejects_placeholder_infrastructure_category(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '主仓库 `/home/lichangkun/code/proxy-collector`，state-dir `.rrc-controller-v1.8.4`。',
+        'TBD',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='代码仓库.*placeholder|代码仓库.*占位'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_accepts_complete_target_infrastructure_section(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _minimal_requirements_gate_with_infrastructure(_valid_infrastructure_section()),
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
 def test_plannotator_annotations_become_distinct_acceptance_obligations() -> None:
     state: dict = {}
 
@@ -677,7 +755,8 @@ def test_v0_6_0_policy_gate_does_not_require_its_own_web_prototype(tmp_path: Pat
         '| --- | --- | --- | --- |\n'
         '| AC-10 | PD-INFRA-10 | TA-UIDESIGN-01, TA-PREFLIGHT-01 | UI/UX 原型预检。 |\n'
         '| AC-11 | PD-INFRA-11 | TA-WEBPROTO-01, TA-PREFLIGHT-01 | Web 原型预检。 |\n'
-        '| AC-12 | PD-INFRA-12 | TA-WEBPROTO-02 | 人工点击证据。 |\n',
+        '| AC-12 | PD-INFRA-12 | TA-WEBPROTO-02 | 人工点击证据。 |\n\n'
+        + _valid_infrastructure_section(),
         encoding='utf-8',
     )
 

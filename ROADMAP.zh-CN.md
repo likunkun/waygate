@@ -106,6 +106,18 @@
 - Final Acceptance 渲染包含 Surface 和 Entry Point 列的 `Prototype Conformance Matrix`，缺失或未通过的原型到生产 UI 证据会阻断终验。
 - Controller State Patch 支持并保留 `currentUnitIsWebSystem`，与 `currentUnitNeedsUiDesign` 一起进入后续 gate 判断。
 
+### V0.6.0c - Target Infrastructure Intake and Install Diagnostics
+
+目标：让每个目标项目都强制采集基础设施事实，并让已安装 `waygate` 的实际运行来源可诊断。
+
+已交付：
+
+- 目标项目基础设施 intake 适用于每个 Requirements draft，不再只服务 V0.6.0 controller policy work。
+- Requirements 固定包含 `## 4.9 目标项目基础设施信息`，覆盖代码仓库、运行时、调试、参考环境、文档、架构/交互/接口和依赖事实。
+- Requirements approval 会阻断缺失 4.9、缺基础设施类别或类别内容为空/占位。
+- Debian package version、包内 `__version__` 和 `waygate --version` 保持一致。
+- 新增 `waygate doctor`，并在 Debian post-install 对 `~/.local/bin/waygate` 等用户级 wrapper 给出 shadow warning。
+
 ### V0.6.1 - External Spec Intake
 
 目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径。

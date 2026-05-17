@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -21,6 +22,26 @@ from workflow_controller.state_machine.transitions import reconcile_state, valid
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _python_c(code: str) -> str:
+    return shlex.join([sys.executable, '-c', code])
+
+
+def _requirements_infrastructure_section() -> str:
+    return """## 4.9 目标项目基础设施信息
+- 代码仓库：测试目标主仓库、workspace、docs、artifacts 和 state-dir 边界已确认。
+- 项目部署运行时环境：本地 pytest/subprocess runtime、tmux runner 前置条件和验证命令运行环境已确认。
+- 调试分析方法：查看 session.json、events.jsonl、runner stdout/stderr、verification artifacts 和 pytest 输出。
+- 参考环境：当前测试 workspace 和历史 controller fixture 作为参考环境，不混同部署环境。
+- 文档地址：README、USAGE、ROADMAP、task_plan、progress 和 findings 作为审阅文档来源。
+- 架构/交互逻辑/接口说明：controller state、human gate、runner dispatch、approval CLI 和 artifact 接口已记录。
+- 依赖信息：Python、pytest、tmux fake runner、dpkg tooling 和 shell runtime 依赖已记录。
+"""
+
+
+def _requirements_body_with_infrastructure(body: str) -> str:
+    return body.rstrip() + '\n\n' + _requirements_infrastructure_section()
 
 
 def run_rrc(*args: str, cwd: Path | None = None, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -3367,7 +3388,7 @@ def test_drive_prints_verification_state_change_markers(tmp_path: Path) -> None:
                     'id': 'unit-01',
                     'name': 'Delivery',
                     'passes': False,
-                    'verification_commands': ["python -c \"print('verified')\""],
+                    'verification_commands': [_python_c("print('verified')")],
                 },
             ],
         },
@@ -3379,7 +3400,7 @@ def test_drive_prints_verification_state_change_markers(tmp_path: Path) -> None:
 
     rendered = '\n'.join(output)
     assert '[验证] 开始 1 个命令' in rendered
-    assert '[验证] ... 1/1 python -c' in rendered
+    assert f'[验证] ... 1/1 {sys.executable} -c' in rendered
     assert '[验证] 通过 1/1 exit=0' in rendered
     assert '[验证] 完成 通过' in rendered
 
@@ -3409,7 +3430,8 @@ def test_drive_prints_compact_verification_failure_reason(tmp_path: Path) -> Non
                     'name': 'Delivery',
                     'passes': False,
                     'verification_commands': [
-                        "DATABASE_URL=file:test.db python -c \"import sys; print('error: Environment variable not found: DATABASE_URL'); sys.exit(1)\"",
+                        'DATABASE_URL=file:test.db '
+                        + _python_c("import sys; print('error: Environment variable not found: DATABASE_URL'); sys.exit(1)"),
                     ],
                 },
             ],
@@ -3504,7 +3526,7 @@ def test_repeated_verification_failure_blocks_before_another_retry(tmp_path: Pat
                     'name': 'Delivery',
                     'passes': False,
                     'verification_commands': [
-                        'python -c "import sys; print(\'runtime database missing\'); sys.exit(1)"',
+                        _python_c("import sys; print('runtime database missing'); sys.exit(1)"),
                     ],
                 },
             ],
@@ -4465,7 +4487,7 @@ def test_requirements_draft_uses_two_hour_timeout_by_default(
         captured_timeout_seconds.append(request.timeout_seconds)
         body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
         body_path.write_text(
-            """# 需求与验收确认
+            _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: unit]: User can continue after clarification.
@@ -4474,7 +4496,7 @@ def test_requirements_draft_uses_two_hour_timeout_by_default(
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | unit | pytest |
-""",
+"""),
             encoding='utf-8',
         )
         return RunnerResult(
@@ -4579,7 +4601,7 @@ def test_requirements_draft_timeout_resumes_existing_pending_run_without_redispa
 
     body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
     body_path.write_text(
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: unit]: User can resume requirements drafting.
@@ -4588,7 +4610,7 @@ def test_requirements_draft_timeout_resumes_existing_pending_run_without_redispa
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | unit | pytest |
-""",
+"""),
         encoding='utf-8',
     )
     done_path.write_text(
@@ -4671,7 +4693,7 @@ def test_requirements_draft_recovers_legacy_timed_out_summary_when_done_run_and_
         encoding='utf-8',
     )
     body_path.write_text(
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: unit]: Legacy completed run is reviewed without redispatch.
@@ -4680,7 +4702,7 @@ def test_requirements_draft_recovers_legacy_timed_out_summary_when_done_run_and_
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | unit | pytest |
-""",
+"""),
         encoding='utf-8',
     )
     done_path = legacy_run_dir / 'done.json'
@@ -4901,7 +4923,7 @@ def test_requirements_draft_waits_on_existing_timeout_run_until_fresh_body_arriv
         nonlocal sleep_count
         sleep_count += 1
         body_path.write_text(
-            """# 需求与验收确认
+            _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: unit]: Existing run can finish while controller waits.
@@ -4910,7 +4932,7 @@ def test_requirements_draft_waits_on_existing_timeout_run_until_fresh_body_arriv
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | unit | pytest |
-""",
+"""),
             encoding='utf-8',
         )
         done_path.write_text(
@@ -4976,7 +4998,7 @@ def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_re
         force=True,
     )
     bodies = [
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: e2e]: User completes the delivery journey.
@@ -4985,8 +5007,8 @@ def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_re
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
-""",
-        """# 需求与验收确认
+"""),
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: e2e]: User completes the delivery journey.
@@ -5000,7 +5022,7 @@ def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_re
 | Journey | Title | Status | Steps | AC | Verification Layer |
 | --- | --- | --- | --- | --- | --- |
 | J-001 | Delivery happy path | active | Start request -> complete delivery -> see confirmation | AC-1 | e2e |
-""",
+"""),
     ]
     captured_prompts: list[str] = []
 
@@ -5086,7 +5108,7 @@ def test_drive_auto_revises_pending_requirements_gate_before_human_review(
     gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
         gate_path,
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: integration]: Delivery behavior covers only AO-001.
@@ -5095,7 +5117,7 @@ def test_drive_auto_revises_pending_requirements_gate_before_human_review(
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
-""",
+"""),
     )
     captured_prompts: list[str] = []
 
@@ -5106,7 +5128,7 @@ def test_drive_auto_revises_pending_requirements_gate_before_human_review(
         captured_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
         body_path = request.artifact_dir / 'requirements-body.md'
         body_path.write_text(
-            """# 需求与验收确认
+            _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: integration]: Delivery behavior covers AO-001 and AO-002.
@@ -5116,7 +5138,7 @@ def test_drive_auto_revises_pending_requirements_gate_before_human_review(
 | --- | --- | --- | --- | --- |
 | AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
 | AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
-""",
+"""),
             encoding='utf-8',
         )
         return RunnerResult(
@@ -5374,7 +5396,7 @@ def test_unit_plan_draft_auto_revises_controller_invalid_gate_before_human_revie
     requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
         requirements_path,
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: integration]: Delivery behavior covers AO-001 and AO-002.
@@ -5384,7 +5406,7 @@ def test_unit_plan_draft_auto_revises_controller_invalid_gate_before_human_revie
 | --- | --- | --- | --- | --- |
 | AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
 | AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
-""",
+"""),
     )
     approve_gate_file(requirements_path, actor='tester')
     bodies = [
@@ -5477,7 +5499,7 @@ def test_drive_auto_revises_invalid_unit_plan_with_short_precheck_status(
     requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
         requirements_path,
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: integration]: Delivery behavior covers AO-001 and AO-002.
@@ -5487,7 +5509,7 @@ def test_drive_auto_revises_invalid_unit_plan_with_short_precheck_status(
 | --- | --- | --- | --- | --- |
 | AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
 | AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
-""",
+"""),
     )
     approve_gate_file(requirements_path, actor='tester')
     gate_path = state_dir / 'approvals' / 'unit-plan.md'
@@ -6268,7 +6290,7 @@ def test_requirements_approval_blocks_e2e_ac_without_journey_contract(tmp_path: 
     gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
         gate_path,
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: e2e]: User completes the delivery journey.
@@ -6277,7 +6299,7 @@ def test_requirements_approval_blocks_e2e_ac_without_journey_contract(tmp_path: 
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
-""",
+"""),
     )
 
     with pytest.raises(ValueError, match='requirements gate invalid:.*journey'):
@@ -6318,7 +6340,7 @@ def test_requirements_approval_writes_journey_contract_artifact(tmp_path: Path) 
     gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
         gate_path,
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: e2e]: User completes the delivery journey.
@@ -6332,7 +6354,7 @@ def test_requirements_approval_writes_journey_contract_artifact(tmp_path: Path) 
 | Journey | Title | Status | Steps | AC | Verification Layer |
 | --- | --- | --- | --- | --- | --- |
 | J-001 | Delivery happy path | active | Start request -> complete delivery -> see confirmation | AC-1 | e2e |
-""",
+"""),
     )
 
     controller.approve_human_gate('requirements', actor='tester')
@@ -6392,7 +6414,7 @@ def test_run_rejects_preapproved_requirements_missing_ac_verification_layer(tmp_
     gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
         gate_path,
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1: 六步 UX 清楚展示。
@@ -6401,7 +6423,7 @@ def test_run_rejects_preapproved_requirements_missing_ac_verification_layer(tmp_
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | AO-001 | AC-1 | covered |  | pytest tests/test_delivery.py -q |
-""",
+"""),
     )
     approve_gate_file(gate_path, actor='tester')
 
@@ -6505,7 +6527,7 @@ def test_approve_requirements_gate_records_change_request_approver(tmp_path: Pat
     gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     write_gate_file(
         gate_path,
-        """# 需求与验收确认
+        _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
 - AC-1 [verification: unit]: Delivery works.
@@ -6519,7 +6541,7 @@ def test_approve_requirements_gate_records_change_request_approver(tmp_path: Pat
 | AC | Product Design Ref | Technical Architecture Ref | Notes |
 | --- | --- | --- | --- |
 | AC-1 | ## 7. 产品设计概要 | ## 8. 架构概要 | traced |
-""",
+"""),
     )
 
     controller.approve_human_gate('requirements', actor='alice')
@@ -8267,13 +8289,13 @@ def test_approved_bug_fix_gate_runs_bug_fix_and_regression_verification(tmp_path
                     'id': 'unit-01',
                     'name': 'Delivery',
                     'passes': True,
-                    'verification_commands': ['python -c "print(\'PASS regression\')"'],
+                    'verification_commands': [_python_c("print('PASS regression')")],
                     'test_cases': [
                         {
                             'id': 'TC-AC-01-regression',
                             'acceptance_criterion': 'AC-01',
                             'layer': 'unit',
-                            'command': 'python -c "print(\'PASS regression\')"',
+                            'command': _python_c("print('PASS regression')"),
                             'expected': 'retry button is available',
                             'golden_path': True,
                         }
@@ -8293,7 +8315,7 @@ def test_approved_bug_fix_gate_runs_bug_fix_and_regression_verification(tmp_path
         '## Expected Behavior\n- user can retry import.\n\n'
         '## Actual Behavior\n- retry button is missing.\n\n'
         '## Root Cause\n- implementation omitted retry control.\n\n'
-        '## Regression Verification\n- python -c "print(\'PASS regression\')"\n',
+        f'## Regression Verification\n- {_python_c("print(\'PASS regression\')")}\n',
     )
     approve_gate_file(bug_gate, actor='tester')
 

@@ -94,7 +94,7 @@ If the spec has ambiguity, record conservative assumptions and review risks in `
 - 如果只是补正 controller preflight 错误，例如 AC layer、Journey layer、AO 映射、prototype manifest 或 implementation target，不要向用户重复确认已澄清范围；直接修订 Requirements Gate 和相关 artifact。
 - 将新增澄清、沿用澄清和仍需人工确认的风险写入 `## 4.8 已澄清事项、关键假设与待确认风险`。
 """
-    infrastructure_intake_section = _v0_6_0_infrastructure_intake_prompt_section(state)
+    infrastructure_intake_section = _target_project_infrastructure_intake_prompt_section(state)
 
     return f"""为 workflow-controller 生成"需求与验收确认"Markdown 正文。
 
@@ -218,6 +218,18 @@ UI/原型设计约束：
 - 关键假设：列出为避免打断而采用的保守假设，并说明这些假设如何影响需求和验收。
 - 待确认风险：列出仍需人工在 gate 审阅时重点确认的风险；不能把阻断性缺口藏在这里。
 
+## 4.9 目标项目基础设施信息
+
+必须覆盖以下 7 类目标项目基础设施信息。每类都必须写具体事实；如果某类确实不涉及，可以写“不涉及”，但必须附具体理由，不能空置或使用 TBD/待补/不清楚等占位内容。
+
+- 代码仓库：
+- 项目部署运行时环境：
+- 调试分析方法：
+- 参考环境：
+- 文档地址：
+- 架构/交互逻辑/接口说明：
+- 依赖信息：
+
 ## 5. 测试策略（Test Strategy）
 
 按适用情况区分单元测试、功能/API 测试、集成检查和 E2E/人工验收。
@@ -238,13 +250,15 @@ UI/原型设计约束：
 """
 
 
-def _v0_6_0_infrastructure_intake_prompt_section(state: dict[str, Any]) -> str:
-    if not _is_v0_6_0_target(state):
-        return ''
-    return """V0.6.0 Infrastructure Intake Requirements:
-- 本版本目标不是为 `workflow-controller` 自身补一组运维文档，而是让 Waygate 在处理目标项目时具备梳理目标项目基础设施信息的能力。
+def _target_project_infrastructure_intake_prompt_section(state: dict[str, Any]) -> str:
+    del state
+    return """Target Project Infrastructure Intake Requirements:
+- 目标项目基础设施 intake 适用于每个 Waygate 目标项目，不再只服务 V0.6.0 controller 自测目标。
+- 本要求不是为 `workflow-controller` 自身补一组运维文档，而是让 Waygate 在处理目标项目时具备梳理目标项目基础设施信息的能力。
 - Requirements Gate 必须从目标项目视角澄清基础设施信息，不要把当前仓库文档化作为唯一交付。
-- 必须覆盖 7 类基础设施信息：代码仓库、项目部署运行时环境、调试分析方法、参考环境、文档地址、架构、交互逻辑、接口说明、依赖信息。
+- Requirements Gate 必须输出固定审阅段落 `## 4.9 目标项目基础设施信息`。
+- 必须覆盖 7 类基础设施信息：代码仓库、项目部署运行时环境、调试分析方法、参考环境、文档地址、架构/交互逻辑/接口说明（即架构、交互逻辑、接口说明）、依赖信息。
+- 每类都必须写具体事实；如果某类确实不涉及，可以写“不涉及”，但必须附具体理由，不能空置或使用 TBD/待补/不清楚等占位内容。
 - 代码仓库必须回答：当前项目涉及哪些代码库、主仓库、相关仓库、工作区边界、文档目录、生成物和 state-dir 边界。
 - 项目部署运行时环境必须覆盖：本地、测试、预发、生产或等价环境、启动方式、服务依赖、外部 API、数据存储、agent runner 和验证运行时前置条件。
 - 调试分析方法必须覆盖：日志在哪里、如何查看、基本排查思路、状态文件、运行事件、错误输出、monitor 或 trace 入口。
@@ -261,13 +275,3 @@ def _v0_6_0_infrastructure_intake_prompt_section(state: dict[str, Any]) -> str:
 - `prototype-manifest.json` 中的本地图片或 HTML 原型路径必须是真实文件；外部 URL 不能带 token、password、secret、api_key、signature 等 sensitive URL query；linked ACs 必须引用本 Requirements Gate 中存在的 AC。
 - 必须保持 environment/runbook facts、Requirements 和 Unit Plan artifacts 的边界：Requirements Gate 负责明确目标项目需要梳理哪些基础设施事实；Unit Plan 负责决定如何实现；`docs/operations/`、wiki 或外部链接只作为事实来源或落点。
 """
-
-
-def _is_v0_6_0_target(state: dict[str, Any]) -> bool:
-    candidates = [
-        state.get('requestedOutcome'),
-        state.get('feasibleOutcome'),
-        state.get('currentUnitId'),
-        state.get('task_id'),
-    ]
-    return any('v0.6.0' in str(item).lower() or 'v0-6-0' in str(item).lower() for item in candidates if item)
