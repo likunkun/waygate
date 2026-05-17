@@ -2,6 +2,20 @@
 
 ## 会话：2026-05-17
 
+### Requirements Plannotator 主审批对象修复
+- **状态：** implementation verified; packaged as `0.6.0d`。
+- Requirements 阶段的 Plannotator 主审阅/审批对象恢复为 `approvals/requirements-and-acceptance.md`；即使存在 `plannotator-review.html` 和 `prototype-review-manifest.json`，也不会把 HTML bundle 传给 `plannotator annotate`。
+- 原型渲染预览保留：Requirements review 期间继续启动 controller preview server，终端单独输出 `▶ Plannotator 审批页: http://localhost:20000` 和 `▶ 原型渲染预览页: http://127.0.0.1:<port>/plannotator-review.html`。
+- `requirements-last-review.json` / event payload 记录 approval gate、辅助预览文件、manifest 路径和临时 preview URL；approval 文件不写入 `127.0.0.1:<port>` 这类临时 URL。
+- `workflow_controller.__version__` 更新为 `0.6.0d`，并同步 CHANGELOG、ROADMAP、USAGE 中的当前行为说明。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_requirements_plannotator_review_path_uses_approval_gate_even_with_prototype_bundle workflow_controller/tests/test_rrc_controller.py::test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_approval_gate_separate -q` -> `2 passed`
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `7 passed`
+  - `PATH="/tmp/waygate-test-bin:$PATH" python -m pytest workflow_controller/tests -q` -> `438 passed in 65.33s`
+  - `PATH="/tmp/waygate-test-bin:$PATH" bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0d_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0d_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0d / all / python3`
+  - `WAYGATE_LIB_DIR=/tmp/waygate-0.6.0d-extract/usr/lib/waygate /tmp/waygate-0.6.0d-extract/usr/bin/waygate --version` -> `waygate 0.6.0d`
+
 ### 目标项目基础设施 intake 全局化与 Waygate 来源诊断
 - **状态：** implementation verified; system install blocked by interactive sudo。
 - Requirements Draft prompt 不再只对 V0.6.0 注入基础设施 intake；所有目标项目都会要求固定 `## 4.9 目标项目基础设施信息`，覆盖代码仓库、运行时、调试、参考环境、文档、架构/交互/接口和依赖信息。

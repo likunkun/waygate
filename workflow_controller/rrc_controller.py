@@ -2390,7 +2390,7 @@ class RalphRefinerController:
         approved_but_invalid = _approved_gate_invalid_reason(gate, state)
         if check.approved and not approved_but_invalid:
             return None
-        return {
+        gate_info = {
             'gate': gate,
             'path': path,
             'review_path': _plannotator_review_path_for_gate(self.artifacts_dir, gate, path),
@@ -2399,6 +2399,14 @@ class RalphRefinerController:
             'can_revise': can_revise,
             'can_rework': can_rework,
         }
+        if gate == 'requirements':
+            _, prototype_review_manifest_path, prototypes_dir = prototype_review_paths(self.artifacts_dir)
+            prototype_review_path = prototype_review_html_path(self.artifacts_dir)
+            if prototype_review_path.exists() and prototype_review_manifest_path.exists():
+                gate_info['prototype_review_path'] = prototype_review_path
+                gate_info['prototype_review_manifest_path'] = prototype_review_manifest_path
+                gate_info['prototype_review_prototypes_dir'] = prototypes_dir
+        return gate_info
 
     def _handle_drive_gate(
         self,
@@ -2412,9 +2420,17 @@ class RalphRefinerController:
         output_func(f"  文件：{gate_info['path']}")
         review_path = Path(gate_info.get('review_path') or gate_info['path'])
         approval_gate_path = Path(gate_info['path'])
+        prototype_review_path = (
+            Path(gate_info['prototype_review_path'])
+            if gate_info.get('prototype_review_path')
+            else None
+        )
         if review_path != approval_gate_path:
             output_func(f'  审阅文件：{review_path}')
             output_func(f'  确认文件：{approval_gate_path}')
+        if prototype_review_path is not None:
+            output_func(f'  审批文件：{approval_gate_path}')
+            output_func(f'  辅助预览文件：{prototype_review_path}')
         if gate_info.get('reason'):
             output_func(f"  状态：{_gate_reason_label(str(gate_info['reason']))}")
         output_func('  操作：')
@@ -2437,14 +2453,15 @@ class RalphRefinerController:
             if choice in {'v', 'view', 'plannotator'}:
                 prototype_preview_server = None
                 prototype_review_manifest_path = None
+                active_prototype_review_path = None
                 prototype_review_preview_url = None
-                if str(gate_info['gate']) == 'requirements' and review_path != approval_gate_path:
-                    expected_markdown_path, expected_manifest_path, prototypes_dir = prototype_review_paths(self.artifacts_dir)
-                    expected_html_path = prototype_review_html_path(self.artifacts_dir)
-                    if review_path in {expected_markdown_path, expected_html_path} and expected_manifest_path.exists():
+                if str(gate_info['gate']) == 'requirements' and prototype_review_path is not None:
+                    expected_manifest_path = Path(gate_info['prototype_review_manifest_path'])
+                    prototypes_dir = Path(gate_info['prototype_review_prototypes_dir'])
+                    if expected_manifest_path.exists():
                         try:
                             prototype_preview_server = start_prototype_review_preview_server(
-                                review_path=review_path,
+                                review_path=prototype_review_path,
                                 manifest_path=expected_manifest_path,
                                 prototypes_dir=prototypes_dir,
                                 approval_gate_path=approval_gate_path,
@@ -2453,6 +2470,7 @@ class RalphRefinerController:
                             output_func(f'[原型预览] 启动失败：{exc}')
                             continue
                         prototype_review_manifest_path = expected_manifest_path
+                        active_prototype_review_path = prototype_review_path
                         prototype_review_preview_url = prototype_preview_server.preview_url
                 try:
                     try:
@@ -2471,6 +2489,7 @@ class RalphRefinerController:
                         result.summary_path,
                         approval_gate_path=approval_gate_path,
                         review_path=review_path,
+                        prototype_review_path=active_prototype_review_path,
                         prototype_review_manifest_path=prototype_review_manifest_path,
                         prototype_review_preview_url=prototype_review_preview_url,
                     )
@@ -2485,10 +2504,15 @@ class RalphRefinerController:
                     }
                     if prototype_review_manifest_path is not None:
                         event_payload['prototype_review_manifest_path'] = str(prototype_review_manifest_path)
+                    if active_prototype_review_path is not None:
+                        event_payload['prototype_review_path'] = str(active_prototype_review_path)
                     if prototype_review_preview_url:
                         event_payload['prototype_review_preview_url'] = prototype_review_preview_url
                     self.store.append_event('plannotator_review_requested', event_payload)
                     output_func('[Plannotator] 已打开辅助审阅。')
+                    if active_prototype_review_path is not None:
+                        output_func(f'  审批文件：{approval_gate_path}')
+                        output_func(f'  辅助预览文件：{active_prototype_review_path}')
                     color_enabled = bool(getattr(self, '_drive_color_enabled', False))
                     if self.plannotator_port is not None:
                         output_func(_format_plannotator_access_line(
@@ -4059,14 +4083,7 @@ def _should_hide_plannotator_output_line(line: str) -> bool:
     return line.startswith(hidden_prefixes)
 
 
-def _plannotator_review_path_for_gate(artifacts_dir: Path, gate: str, approval_gate_path: Path) -> Path:
-    if gate == 'requirements':
-        review_path, manifest_path, _ = prototype_review_paths(artifacts_dir)
-        html_review_path = prototype_review_html_path(artifacts_dir)
-        if html_review_path.exists() and manifest_path.exists():
-            return html_review_path
-        if review_path.exists() and manifest_path.exists():
-            return review_path
+def _plannotator_review_path_for_gate(_artifacts_dir: Path, gate: str, approval_gate_path: Path) -> Path:
     return approval_gate_path
 
 
@@ -4075,6 +4092,7 @@ def _record_plannotator_review_paths(
     *,
     approval_gate_path: Path,
     review_path: Path,
+    prototype_review_path: Path | None = None,
     prototype_review_manifest_path: Path | None = None,
     prototype_review_preview_url: str | None = None,
 ) -> None:
@@ -4087,6 +4105,8 @@ def _record_plannotator_review_paths(
     summary['review_path'] = str(review_path)
     summary['approval_gate_path'] = str(approval_gate_path)
     summary['full_path'] = str(review_path)
+    if prototype_review_path is not None:
+        summary['prototype_review_path'] = str(prototype_review_path)
     if prototype_review_manifest_path is not None:
         summary['prototype_review_manifest_path'] = str(prototype_review_manifest_path)
     if prototype_review_preview_url:

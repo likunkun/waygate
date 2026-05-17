@@ -68,6 +68,27 @@ def run_rrc_with_pythonpath(*args: str, cwd: Path) -> subprocess.CompletedProces
     )
 
 
+def test_requirements_plannotator_review_path_uses_approval_gate_even_with_prototype_bundle(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    draft_dir = artifacts_dir / 'requirements-draft'
+    approval_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    draft_dir.mkdir(parents=True)
+    approval_path.parent.mkdir(parents=True)
+    (draft_dir / 'plannotator-review.md').write_text('# Prototype review\n', encoding='utf-8')
+    (draft_dir / 'plannotator-review.html').write_text('<!doctype html><p>Prototype review</p>\n', encoding='utf-8')
+    (draft_dir / 'prototype-review-manifest.json').write_text('{"version":"v0.6.0b"}\n', encoding='utf-8')
+    approval_path.write_text('# Requirements\n', encoding='utf-8')
+
+    assert (
+        rrc_controller_module._plannotator_review_path_for_gate(
+            artifacts_dir,
+            'requirements',
+            approval_path,
+        )
+        == approval_path
+    )
+
+
 def test_default_unit_plan_auto_revision_budget_is_five() -> None:
     assert rrc_controller_module.DEFAULT_MAX_UNIT_PLAN_AUTO_REVISIONS == 5
 
@@ -4219,23 +4240,39 @@ print('{"decision":"dismissed"}')
     )
 
     assert result.returncode == 0, result.stderr
-    assert f'审阅文件：{html_review_path}' in result.stdout
-    assert f'确认文件：{approval_path}' in result.stdout
+    assert f'审批文件：{approval_path}' in result.stdout
+    assert f'辅助预览文件：{html_review_path}' in result.stdout
     assert 'Plannotator 审批页: http://localhost:20000' in result.stdout
     assert '原型渲染预览页: http://127.0.0.1:' in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
         'annotate',
-        str(html_review_path),
+        str(approval_path),
         '--gate',
         '--json',
     ]
     summary = json.loads((state_dir / 'plannotator' / 'requirements-last-review.json').read_text(encoding='utf-8'))
-    assert summary['gate_path'] == str(html_review_path)
-    assert summary['review_path'] == str(html_review_path)
+    assert summary['gate_path'] == str(approval_path)
+    assert summary['review_path'] == str(approval_path)
+    assert summary['full_path'] == str(approval_path)
     assert summary['approval_gate_path'] == str(approval_path)
     assert summary['prototype_review_manifest_path'] == str(manifest_path)
+    assert summary['prototype_review_path'] == str(html_review_path)
     assert summary['prototype_review_preview_url'].startswith('http://127.0.0.1:')
     assert summary['prototype_review_preview_url'].endswith('/plannotator-review.html')
+    approval_text = approval_path.read_text(encoding='utf-8')
+    assert '127.0.0.1:' not in approval_text
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    review_event = next(event for event in events if event['type'] == 'plannotator_review_requested')['payload']
+    assert review_event['path'] == str(approval_path)
+    assert review_event['review_path'] == str(approval_path)
+    assert review_event['approval_gate_path'] == str(approval_path)
+    assert review_event['prototype_review_path'] == str(html_review_path)
+    assert review_event['prototype_review_manifest_path'] == str(manifest_path)
+    assert review_event['prototype_review_preview_url'].endswith('/plannotator-review.html')
 
     color_result = run_rrc(
         'drive',

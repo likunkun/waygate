@@ -2,6 +2,12 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0d
+
+- Restored `approvals/requirements-and-acceptance.md` as the Requirements Plannotator approval target even when a prototype review bundle exists.
+- Kept `plannotator-review.html` as an auxiliary rendered prototype preview served by the controller preview server.
+- Recorded approval file, auxiliary preview file, manifest path, and temporary preview URL in Plannotator review metadata without writing temporary localhost URLs into the approval file.
+
 ## 0.6.0c
 
 - Made target-project infrastructure intake apply to every Requirements draft, with fixed section `## 4.9 目标项目基础设施信息`.
@@ -23,7 +29,7 @@ All notable project changes should be recorded here.
 
 - Added Requirements prototype review bundles for Plannotator.
 - Added `prototype-manifest.json` validation, normalized review manifests, copied local prototype assets, and read-only localhost preview links.
-- Routed Requirements Plannotator review to the review bundle while keeping approval on `approvals/requirements-and-acceptance.md`.
+- Kept approval on `approvals/requirements-and-acceptance.md`; newer releases use the rendered prototype HTML only as an auxiliary preview.
 - Hardened UI/UX and Web prototype preflight for missing files, unknown ACs, missing page states/click paths/AC mappings, and sensitive URL query parameters.
 
 ## 0.6.0

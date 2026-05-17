@@ -77,6 +77,7 @@
 - [x] Prototype Surface Conformance 流程修复：`surface_contracts` 覆盖每个 required UI surface，Unit Plan/Final Acceptance 按 `prototype + surface + production target` 验收，避免相邻弹窗或管理面板测试误覆盖真实漏项。
 - [x] Requirements 自动打回连续原因计数修复：`requirementsAutoRevisionMax` 改为限制连续相同 invalid reason；不同预检原因视为有效推进并重置连续计数。
 - [x] V0.6.0c Final Acceptance 已批准：完成目标项目基础设施 intake、`AGENTS.md` 边界、blocked 上游路由过滤和 Requirements approval 后后续流转说明；目标 `Complete V0.6.0c development acceptance using current planning progress` 已 covered，单元 `target-v0-6-0c` 已 passes=true。
+- [x] V0.6.0d Requirements Plannotator 主审批对象修复：Requirements Plannotator 重新 annotate `approvals/requirements-and-acceptance.md`；`plannotator-review.html` 仅作为 controller preview server 的原型渲染辅助预览；全量测试 `438 passed`，已生成 `dist/waygate_0.6.0d_all.deb`。
 - **状态：** complete
 
 ### 阶段 7：控制器可靠性增强

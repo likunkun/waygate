@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-05-17 Requirements Plannotator 主审批对象
+
+- Requirements approval 的唯一事实源必须是 `approvals/requirements-and-acceptance.md`；`plannotator-review.html` 是原型渲染辅助预览页，不能成为 Plannotator gate 的主 annotate 目标。
+- Controller 可以在 Requirements review 期间启动临时 preview server，并把 `prototype_review_preview_url` 写入 `requirements-last-review.json` 和 event payload 供当前会话排查；但该 URL 绑定临时端口，不能注入持久 approval 文件。
+- Requirements Plannotator metadata 应同时记录 `approval_gate_path`、`review_path/full_path` 和辅助 `prototype_review_path`：前者用于审批事实源校验，后者用于说明当前 review session 的原型预览入口。
+- 旧的“存在 bundle 就把 HTML 传给 Plannotator”会让 approval 语义被渲染视图顶替；修复边界应放在 controller review path 选择和 preview server 启动条件上，不改 prototype bundle 生成逻辑。
+
 ## 2026-05-17 基础设施 intake 与安装来源一致性
 
 - 基础设施 intake 是 Waygate 处理目标项目的通用 Requirements 约束，不应由目标版本号触发；只在 V0.6.0 prompt 中注入会导致 V1.8.4 等真实目标项目缺少仓库、运行时、调试、参考环境、文档、架构/接口和依赖事实。

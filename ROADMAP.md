@@ -85,7 +85,7 @@ Delivered work:
 
 - Generate a structured prototype manifest under the Requirements draft artifacts with prototype id, type, path or URL, title, linked ACs, linked journeys, page state, click path, thumbnail or preview hint, and review guidance.
 - Render a Requirements Plannotator review bundle that embeds or links generated prototype images, local HTML prototypes, external prototype URLs, and the AC/Journey mapping table.
-- Route Requirements Plannotator review to the review bundle when it exists, while keeping `approvals/requirements-and-acceptance.md` as the approval gate and source of approval status.
+- Keep `approvals/requirements-and-acceptance.md` as the approval gate and source of approval status while prototype review bundles provide auxiliary review context.
 - Normalize local prototype asset paths into the controller artifact tree so Plannotator can open stable relative links instead of arbitrary agent-generated filesystem paths.
 - Add Requirements preflight checks for missing prototype files, incomplete clickable prototype access method, missing page states, missing click path, missing AC mapping, unknown AC references, and sensitive URL query parameters.
 - Keep approval semantics unchanged: Plannotator Approve still cannot bypass the Requirements quality gate.
@@ -117,6 +117,16 @@ Delivered work:
 - Block Requirements approval when section 4.9 is missing, a category is missing, or category content is empty/placeholder.
 - Keep Debian package version, package module `__version__`, and `waygate --version` aligned.
 - Add `waygate doctor` and Debian post-install shadow warnings for user-level wrappers such as `~/.local/bin/waygate`.
+
+### V0.6.0d - Requirements Plannotator Approval Source Correction
+
+Goal: keep Requirements approval anchored to the approval Markdown while preserving rendered prototype preview help.
+
+Delivered work:
+
+- Make Requirements Plannotator annotate `approvals/requirements-and-acceptance.md` even when `plannotator-review.html` and `prototype-review-manifest.json` exist.
+- Continue starting the controller preview server for `plannotator-review.html` during Requirements review and print the auxiliary preview URL separately from the Plannotator approval URL.
+- Record approval file, auxiliary preview file, manifest path, and temporary preview URL in Plannotator review metadata without injecting temporary localhost URLs into the approval file.
 
 ### V0.6.1 - External Spec Intake
 

@@ -19,7 +19,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.0c_all.deb
+sudo apt install ./dist/waygate_0.6.0d_all.deb
 waygate --help
 waygate doctor
 ```
@@ -77,7 +77,7 @@ waygate go V1.0 --spec ./requirements.md
 
 ## Prototype Review Bundle
 
-For UI/UX or Web-system requirements, the Requirements drafter must write `artifacts/requirements-draft/prototype-manifest.json`. Waygate validates it, copies local image/HTML prototypes into `artifacts/requirements-draft/prototypes/`, renders `plannotator-review.md`, and opens that review bundle in Plannotator. Approval status still belongs to `approvals/requirements-and-acceptance.md`.
+For UI/UX or Web-system requirements, the Requirements drafter must write `artifacts/requirements-draft/prototype-manifest.json`. Waygate validates it, copies local image/HTML prototypes into `artifacts/requirements-draft/prototypes/`, and renders `plannotator-review.md` plus `plannotator-review.html`. Plannotator annotates the approval file `approvals/requirements-and-acceptance.md`; the HTML bundle is exposed as an auxiliary rendered prototype preview URL during the current review session.
 
 The manifest must map each prototype to real AC IDs and include page states plus click paths. URLs with sensitive query keys such as `token`, `password`, `secret`, `api_key`, or `signature` are rejected.
 
