@@ -89,6 +89,7 @@ def run_requirements_drafter(
         role=runner.role,
         env=runner.env,
         timeout_seconds=int(_requirements_draft_resume_timeout_seconds(state)),
+        idle_monitor_enabled=_requirements_draft_idle_monitor_enabled(state, runner.backend),
     ))
     _write_json(summary_path, {
         'status': result.status,
@@ -272,6 +273,13 @@ def _requirements_draft_resume_poll_seconds(state: dict[str, Any]) -> float:
         return max(0.0, float(raw))
     except (TypeError, ValueError):
         return DEFAULT_REQUIREMENTS_DRAFT_RESUME_POLL_SECONDS
+
+
+def _requirements_draft_idle_monitor_enabled(state: dict[str, Any], backend: str) -> bool:
+    spec = state.get('requirementsSpec')
+    if backend in {'tmux-claude', 'tmux-codex'} and not (isinstance(spec, dict) and spec):
+        return False
+    return True
 
 
 def _find_existing_requirements_done_signal(

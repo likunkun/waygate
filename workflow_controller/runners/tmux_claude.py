@@ -273,7 +273,7 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
                     runner_metadata=runner_metadata,
                 )
         now = time.monotonic()
-        if idle_poll_seconds > 0 and now >= next_idle_check:
+        if request.idle_monitor_enabled and idle_poll_seconds > 0 and now >= next_idle_check:
             pane_tail = _capture_tmux_pane(
                 tmux_command=tmux_command,
                 tmux_target=request.tmux_target,

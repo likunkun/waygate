@@ -4516,12 +4516,14 @@ def test_requirements_draft_uses_two_hour_timeout_by_default(
         force=True,
     )
     captured_timeout_seconds: list[int] = []
+    captured_idle_monitor_enabled: list[bool] = []
 
     def fake_make_runner(state: dict) -> RunnerConfig:
         return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
 
     def fake_run_agent_backend(request):
         captured_timeout_seconds.append(request.timeout_seconds)
+        captured_idle_monitor_enabled.append(request.idle_monitor_enabled)
         body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
         body_path.write_text(
             _requirements_body_with_infrastructure("""# 需求与验收确认
@@ -4555,6 +4557,94 @@ def test_requirements_draft_uses_two_hour_timeout_by_default(
     controller.run_once()
 
     assert captured_timeout_seconds == [7200]
+    assert captured_idle_monitor_enabled == [False]
+
+
+def test_requirements_draft_with_spec_keeps_idle_monitor_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    spec_path = tmp_path / 'requirements.md'
+    spec_path.write_text('# Imported requirements\n', encoding='utf-8')
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'requirementsSpec': {
+                'path': str(spec_path),
+                'hash': 'sha256:test',
+                'sourceType': 'waygate-markdown',
+                'importedAt': '2026-05-18T00:00:00Z',
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    captured_idle_monitor_enabled: list[bool] = []
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        captured_idle_monitor_enabled.append(request.idle_monitor_enabled)
+        body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
+        body_path.write_text(
+            _requirements_body_with_infrastructure("""# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: unit]: Imported requirements are drafted.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | unit | pytest |
+"""),
+            encoding='utf-8',
+        )
+        return RunnerResult(
+            backend='tmux-claude',
+            status='done',
+            command=['fake-claude'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=state_dir / 'artifacts' / 'requirements-draft' / 'runs' / 'requirements-draft-run',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+
+    controller.run_once()
+
+    assert captured_idle_monitor_enabled == [True]
 
 
 def test_requirements_draft_timeout_resumes_existing_pending_run_without_redispatch(

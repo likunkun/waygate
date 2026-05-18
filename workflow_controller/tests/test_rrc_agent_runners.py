@@ -1155,6 +1155,61 @@ raise SystemExit(0)
     assert str(result.done_path) in result.stderr
 
 
+def test_tmux_claude_runner_can_disable_idle_monitor_and_wait_for_timeout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Ask the user a clarification question.')
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["capture-pane"]:
+    print("Clarification question is visible; waiting for the human.")
+raise SystemExit(0)
+""",
+    )
+    monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
+    monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_MAX_NUDGES', '0')
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='requirements-draft',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=1,
+        idle_monitor_enabled=False,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'timeout'
+    assert result.returncode == 124
+    assert 'Clarification question is visible' in result.stderr
+    log = tmux_log.read_text(encoding='utf-8')
+    assert log.count('capture-pane -t 1.2') == 1
+    assert 'send-keys -t 1.2 继续' not in log
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    assert not any(event.get('event') == 'agent_nudge_sent' for event in events)
+    assert not any(event.get('event') == 'agent_idle_without_done' for event in events)
+    assert any(event.get('event') == 'timeout' for event in events)
+
+
 def test_tmux_claude_runner_idle_poll_default_is_60s(
     monkeypatch,
 ) -> None:
