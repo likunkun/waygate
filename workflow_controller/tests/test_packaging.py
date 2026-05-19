@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_version_flag_outputs_package_version() -> None:
+    assert __version__ == '0.6.0e'
     result = subprocess.run(
         [sys.executable, '-m', 'workflow_controller.cli', '--version'],
         text=True,
@@ -102,12 +103,26 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     assert './usr/share/doc/waygate/ROADMAP.zh-CN.md' in contents
     assert './usr/share/doc/waygate/docs/architecture.md' in contents
     assert './usr/share/doc/waygate/docs/workflow.zh-CN.md' in contents
+    assert './usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.md' in contents
+    assert './usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.zh-CN.md' in contents
+    assert './usr/share/doc/waygate/docs/operations/recommended-environment.md' in contents
+    assert './usr/share/doc/waygate/docs/operations/recommended-environment.zh-CN.md' in contents
     assert '.local/bin/waygate' in postinst
     assert 'WARNING' in postinst
     assert 'rm -f' not in postinst
 
     readme = (ROOT / 'README.md').read_text(encoding='utf-8')
     readme_zh = (ROOT / 'README.zh-CN.md').read_text(encoding='utf-8')
+    usage = (ROOT / 'USAGE.md').read_text(encoding='utf-8')
+    usage_zh = (ROOT / 'USAGE.zh-CN.md').read_text(encoding='utf-8')
+    roadmap = (ROOT / 'ROADMAP.md').read_text(encoding='utf-8')
+    roadmap_zh = (ROOT / 'ROADMAP.zh-CN.md').read_text(encoding='utf-8')
+    changelog = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
+    changelog_zh = (ROOT / 'CHANGELOG.zh-CN.md').read_text(encoding='utf-8')
+    recommended_env = (ROOT / 'docs/operations/recommended-environment.md').read_text(encoding='utf-8')
+    recommended_env_zh = (ROOT / 'docs/operations/recommended-environment.zh-CN.md').read_text(encoding='utf-8')
+    product_intro = (ROOT / 'docs/product/waygate-introduction-and-best-practices.md').read_text(encoding='utf-8')
+    product_intro_zh = (ROOT / 'docs/product/waygate-introduction-and-best-practices.zh-CN.md').read_text(encoding='utf-8')
     required_english = [
         'Python 3',
         'pytest',
@@ -123,6 +138,35 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
         assert expected in readme
     for expected in ['Python 3', 'pytest', 'tmux', 'Claude Code', 'Codex', 'Plannotator', 'skills', 'dpkg-deb', 'Waygate Markdown spec']:
         assert expected in readme_zh
+    for doc in [readme, readme_zh, usage, usage_zh, roadmap, roadmap_zh, changelog, changelog_zh]:
+        assert 'V0.6.0e' in doc or '0.6.0e' in doc
+        assert 'recommended-environment' in doc or '推荐环境' in doc
+        assert 'doctor' in doc or '环境检测' in doc or '介绍' in doc
+
+    for doc in [recommended_env, recommended_env_zh]:
+        assert 'Python 3.11' in doc
+        assert 'Python 3.12' in doc
+        assert 'Python 3.10' in doc
+        assert 'python3 -m pytest workflow_controller/tests -q' in doc
+        assert 'tmux-claude' in doc
+        assert 'tmux-codex' in doc
+        assert '20000' in doc
+        assert 'skills' in doc or 'skill' in doc
+        assert 'PATH shadow' in doc
+
+    for doc in [product_intro, product_intro_zh]:
+        assert 'Requirements' in doc
+        assert 'Unit Plan' in doc
+        assert 'Builder' in doc
+        assert 'Refiner' in doc
+        assert 'Reviewer' in doc
+        assert 'Verifier' in doc
+        assert 'Final Acceptance' in doc
+        assert 'session.json' in doc
+        assert 'events.jsonl' in doc
+        assert 'approvals/' in doc
+        assert 'artifacts/' in doc
+        assert 'PPT' in doc
 
 
 def test_build_deb_rejects_control_version_mismatch(tmp_path: Path) -> None:

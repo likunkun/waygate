@@ -678,6 +678,32 @@ def test_run_verifier_executes_verification_commands_in_workspace_and_records_re
     }
 
 
+def test_run_verifier_provides_python_command_when_path_has_only_python3(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    pythonless_bin = tmp_path / 'pythonless-bin'
+    pythonless_bin.mkdir()
+    monkeypatch.setenv('PATH', str(pythonless_bin))
+    command = "python -c \"print('python fallback works')\""
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['results'][0]['stdout'].strip() == 'python fallback works'
+
+
 def test_run_verifier_records_failed_command_evidence_row(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()

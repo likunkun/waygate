@@ -2564,6 +2564,7 @@ def test_rrc_go_with_tmux_codex_runner_auto_discovers_codex_pane(
     )
     _prepend_path(monkeypatch, tmp_path)
     monkeypatch.setenv('TMUX', '/tmp/tmux-session')
+    monkeypatch.setenv('TMUX_PANE', '%24')
 
     result = run_rrc_with_pythonpath(
         'go',

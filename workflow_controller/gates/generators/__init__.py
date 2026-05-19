@@ -180,6 +180,7 @@ def _requirements_summary_lines(state: dict[str, Any]) -> list[str]:
         '- 每条 AC 是否声明 verification layer，并能被测试或人工证据验证。',
         '- Product Design / Technical Architecture 引用是否足以支持后续执行。',
         '- Journey Acceptance Matrix 是否覆盖跨单元闭环；不涉及跨流程时确认其为空是合理的。',
+        '- 若当前或后续目标涉及 UI/UX 或 Web，人工确认前必须审阅 prototype evidence、clickable webpage prototype、页面状态、核心点击路径、真实实现目标和 AC 映射；当前非 UI 单元也要明确记录不生成业务原型页面。',
         '',
         '### 验收命令',
         *command_lines,

@@ -128,6 +128,20 @@ Delivered work:
 - Continue starting the controller preview server for `plannotator-review.html` during Requirements review and print the auxiliary preview URL separately from the Plannotator approval URL.
 - Record approval file, auxiliary preview file, manifest path, and temporary preview URL in Plannotator review metadata without injecting temporary localhost URLs into the approval file.
 
+### V0.6.0e - Environment Diagnostics and Introduction Materials
+
+Goal: make the recommended local environment and Waygate introduction materials easy to inspect from source and installed packages.
+
+Delivered work:
+
+- Extend `waygate doctor` with `environment_checks` for Python executable/version, `pytest`, `tmux`, tmux session state, Claude Code, Codex, Plannotator, `dpkg-deb`, and recommended Plannotator port `20000`.
+- Extend `waygate doctor` with common agent skill root scans, installed skill reporting, recommended workflow skill gap warnings, and optional `WAYGATE_SKILL_ROOTS`.
+- Keep Claude Code, Codex, and Plannotator optional: missing tools produce warning/manual action output without failing `doctor`.
+- Add bilingual recommended-environment docs under `docs/operations/`, including `docs/operations/recommended-environment.md`.
+- Add bilingual Waygate introduction and best-practices docs under `docs/product/`, including a 10-12 page PPT outline without generating a `.pptx`.
+- Package the new product and operations docs under `/usr/share/doc/waygate/docs/`.
+- Keep V0.6.1 External Spec Intake and V0.6.2 Strict Test Presence as future planned scope, not V0.6.0e delivery.
+
 ### V0.6.1 - External Spec Intake
 
 Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable.

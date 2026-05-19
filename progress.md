@@ -1,5 +1,25 @@
 # 进度日志
 
+## 会话：2026-05-19
+
+### `waygate doctor` skills 诊断调整
+- **状态：** complete
+- `waygate doctor` 现在扫描常见 agent skill 根目录：`~/.agents/skills`、`~/.codex/skills`、`~/.codex/superpowers/skills`、`~/.config/opencode/skills`，并支持 `WAYGATE_SKILL_ROOTS` 追加自定义目录。
+- 输出新增 `skill_roots`、`installed_skills` 和 `skill_recommendations`；推荐项覆盖 startup、planning、requirements、TDD、debugging、test strategy、refiner 和 verification。
+- `waygate doctor` 的 agent runner 检测只依据 `PATH` 中的 `claude` / `codex` CLI 是否可用。
+- 本次移除非 CLI 本地应用条目扫描与相关说明，保留 CLI 环境检测和 skills 检测。
+- 已完成验证：`python3 -m pytest workflow_controller/tests/test_diagnostics.py -q` -> `7 passed`；`python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `3 passed`；`python3 -m pytest workflow_controller/tests -q` -> `448 passed in 66.85s`。
+
+## 会话：2026-05-18
+
+### V0.6.0e development acceptance 终验同步
+- **状态：** complete
+- Controller Final Acceptance 已批准：`finalAcceptanceAccepted=true`，确认人为 human，hash 为 `sha256:03f58971c4b936c54198ffbbd84f8cf85887158f563c325fac1437cdc4cb83c7`。
+- 当前目标 `Complete V0.6.0e development acceptance using current planning progress` 已标记为 `covered`；单元 `target-v0-6-0e` 已 `passes=true`。
+- Final Acceptance evidence matrix 中 AC-01 到 AC-09 均 passed；Final Scope Audit 显示 AC coverage `9/9`、Journey coverage `6/6`、unexplained changed files `0`。
+- 验证命令均已通过：`python3 -m pytest workflow_controller/tests/test_diagnostics.py -q`、`python3 -m pytest workflow_controller/tests/test_packaging.py -q`、`python3 -m pytest workflow_controller/tests/gates/test_gates_structure.py -q`、`bash packaging/debian/build-deb.sh`、`python3 -m pytest workflow_controller/tests -q`。
+- 本次状态同步更新了 `task_plan.md` 和 `progress.md`；未发现新的 workflow decision、defect 或 risk，因此 `findings.md` 未新增终验记录。
+
 ## 会话：2026-05-17
 
 ### Requirements Plannotator 主审批对象修复

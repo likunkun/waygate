@@ -81,7 +81,11 @@ def _initial_tmux_env(state: dict[str, Any]) -> dict[str, str]:
         and state.get('currentStep') == 'REQUIREMENTS_DRAFT'
         and not state.get('requirementsDraftGenerated')
     ):
-        return {'WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH': '0'}
+        return {
+            'WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH': '0',
+            'RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS': '2.0',
+            'WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG': '1',
+        }
     return {}
 
 

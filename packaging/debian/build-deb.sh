@@ -22,6 +22,8 @@ mkdir -p \
   "${PACKAGE_DIR}/usr/lib/${PACKAGE_NAME}" \
   "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}" \
   "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs" \
+  "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/operations" \
+  "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/product" \
   "${DIST_DIR}"
 
 cp -a "${ROOT_DIR}/workflow_controller" "${PACKAGE_DIR}/usr/lib/${PACKAGE_NAME}/"
@@ -44,6 +46,10 @@ install -m 0644 "${ROOT_DIR}/docs/architecture.md" "${PACKAGE_DIR}/usr/share/doc
 install -m 0644 "${ROOT_DIR}/docs/architecture.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture.zh-CN.md"
 install -m 0644 "${ROOT_DIR}/docs/workflow.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/workflow.md"
 install -m 0644 "${ROOT_DIR}/docs/workflow.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/workflow.zh-CN.md"
+install -m 0644 "${ROOT_DIR}/docs/operations/recommended-environment.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/operations/recommended-environment.md"
+install -m 0644 "${ROOT_DIR}/docs/operations/recommended-environment.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/operations/recommended-environment.zh-CN.md"
+install -m 0644 "${ROOT_DIR}/docs/product/waygate-introduction-and-best-practices.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/product/waygate-introduction-and-best-practices.md"
+install -m 0644 "${ROOT_DIR}/docs/product/waygate-introduction-and-best-practices.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/product/waygate-introduction-and-best-practices.zh-CN.md"
 
 cat > "${PACKAGE_DIR}/DEBIAN/control" <<EOF
 Package: ${PACKAGE_NAME}

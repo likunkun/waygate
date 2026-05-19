@@ -9,8 +9,9 @@ from workflow_controller.acceptance_obligations import (
     append_acceptance_obligations,
     render_acceptance_obligations_markdown,
 )
-from workflow_controller.gates.validators import validate_unit_plan_acceptance_obligation_coverage
+from workflow_controller.gates.generators import format_requirements_gate_body
 from workflow_controller.gates.validators import validate_requirements_acceptance_quality
+from workflow_controller.gates.validators import validate_unit_plan_acceptance_obligation_coverage
 from workflow_controller.gates.validators import validate_unit_plan_design_architecture_traceability
 from workflow_controller.gates.validators import validate_unit_plan_prototype_conformance
 from workflow_controller.prototype_review import validate_final_prototype_conformance
@@ -195,6 +196,26 @@ def test_requirements_preflight_accepts_complete_target_infrastructure_section(t
     )
 
     validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_summary_prototype_review_reminder_is_not_ui_contract(tmp_path: Path) -> None:
+    state = {
+        'requestedOutcome': 'V1.8.4',
+        'feasibleOutcome': 'V1.8.4',
+        'currentUnitId': 'target-v1-8-4',
+        'currentUnitNeedsUiDesign': False,
+        'currentUnitIsWebSystem': False,
+    }
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    body = format_requirements_gate_body(
+        state,
+        _minimal_requirements_gate_with_infrastructure(_valid_infrastructure_section()),
+    )
+    assert 'clickable webpage prototype' in body
+
+    gate.write_text(body, encoding='utf-8')
+
+    validate_requirements_acceptance_quality(gate, state)
 
 
 def test_plannotator_annotations_become_distinct_acceptance_obligations() -> None:

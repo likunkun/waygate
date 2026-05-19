@@ -94,6 +94,7 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
         'RRC_RUN_ID': run_id,
     }
     submit_key = _tmux_submit_key(backend)
+    submit_watchdog_before_tail: str | None = None
     clear_commands = []
     if _tmux_clear_before_dispatch_enabled(env):
         clear_commands = [
@@ -149,12 +150,32 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
             })
             time.sleep(delay_seconds)
         if command == dispatch_commands[1]:
-            delay_seconds = _tmux_submit_delay_seconds(backend)
+            delay_seconds = _tmux_submit_delay_seconds(backend, env)
             _append_event(events_path, {
                 'event': 'tmux_submit_delay',
                 'seconds': delay_seconds,
             })
             time.sleep(delay_seconds)
+            if _tmux_claude_submit_watchdog_enabled(backend, env):
+                submit_watchdog_before_tail = _capture_tmux_pane(
+                    tmux_command=tmux_command,
+                    tmux_target=request.tmux_target,
+                    workspace_dir=request.workspace_dir,
+                    env=env,
+                )
+
+    _retry_initial_claude_submit_if_pane_unchanged(
+        backend=backend,
+        tmux_command=tmux_command,
+        tmux_target=request.tmux_target,
+        workspace_dir=request.workspace_dir,
+        env=env,
+        run_id=run_id,
+        submit_key=submit_key,
+        done_path=done_path,
+        events_path=events_path,
+        before_tail=submit_watchdog_before_tail,
+    )
 
     _retry_submit_if_prompt_still_pending(
         backend=backend,
@@ -419,12 +440,18 @@ def _tmux_command(agent_command: str) -> list[str]:
     return ['tmux']
 
 
-def _tmux_submit_delay_seconds(backend: str) -> float:
+def _tmux_submit_delay_seconds(backend: str, env: dict[str, str] | None = None) -> float:
     backend_env = 'RRC_TMUX_CODEX_SUBMIT_DELAY_SECONDS' if backend == 'tmux-codex' else 'RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS'
     backend_default = DEFAULT_TMUX_CODEX_SUBMIT_DELAY_SECONDS if backend == 'tmux-codex' else DEFAULT_TMUX_SUBMIT_DELAY_SECONDS
     if os.environ.get(backend_env) is not None:
         return _env_float(backend_env, backend_default)
-    return _env_float('RRC_TMUX_SUBMIT_DELAY_SECONDS', backend_default)
+    if env and env.get(backend_env) is not None:
+        return _env_float_from_mapping(env, backend_env, backend_default)
+    if os.environ.get('RRC_TMUX_SUBMIT_DELAY_SECONDS') is not None:
+        return _env_float('RRC_TMUX_SUBMIT_DELAY_SECONDS', backend_default)
+    if env and env.get('RRC_TMUX_SUBMIT_DELAY_SECONDS') is not None:
+        return _env_float_from_mapping(env, 'RRC_TMUX_SUBMIT_DELAY_SECONDS', backend_default)
+    return backend_default
 
 
 def _tmux_codex_submit_retry_delay_seconds() -> float:
@@ -512,6 +539,31 @@ def _env_float(name: str, default: float) -> float:
         return max(0.0, float(raw_value))
     except ValueError:
         return default
+
+
+def _env_float_from_mapping(env: dict[str, str], name: str, default: float) -> float:
+    raw_value = env.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return max(0.0, float(raw_value))
+    except ValueError:
+        return default
+
+
+def _tmux_claude_submit_watchdog_enabled(backend: str, env: dict[str, str] | None = None) -> bool:
+    if backend != 'tmux-claude':
+        return False
+    raw_value = (env or {}).get('WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG')
+    if raw_value is None:
+        raw_value = os.environ.get('WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG')
+    if raw_value is None:
+        raw_value = (env or {}).get('RRC_TMUX_CLAUDE_SUBMIT_WATCHDOG')
+    if raw_value is None:
+        raw_value = os.environ.get('RRC_TMUX_CLAUDE_SUBMIT_WATCHDOG')
+    if raw_value is None:
+        return False
+    return raw_value.strip().lower() not in {'0', 'false', 'no', 'off', 'disabled'}
 
 
 def _new_run_dir(artifact_dir: Path, unit_id: str) -> Path:
@@ -609,6 +661,75 @@ def _retry_submit_if_prompt_still_pending(
     )
     _append_event(events_path, {
         'event': retry_event,
+        'reason': retry_reason,
+        'returncode': completed.returncode,
+    })
+
+
+def _retry_initial_claude_submit_if_pane_unchanged(
+    *,
+    backend: str,
+    tmux_command: list[str],
+    tmux_target: str,
+    workspace_dir: Path,
+    env: dict[str, str],
+    run_id: str,
+    submit_key: str,
+    done_path: Path,
+    events_path: Path,
+    before_tail: str | None,
+) -> None:
+    if not _tmux_claude_submit_watchdog_enabled(backend, env):
+        return
+    if before_tail is None:
+        _append_event(events_path, {
+            'event': 'tmux_claude_submit_watchdog_skipped',
+            'reason': 'no_pre_submit_snapshot',
+        })
+        return
+    if _done_file_has_non_pending_signal(done_path):
+        _append_event(events_path, {
+            'event': 'tmux_claude_submit_watchdog_skipped',
+            'reason': 'done_file_exists',
+        })
+        return
+
+    delay_seconds = _tmux_submit_retry_delay_seconds(backend)
+    if delay_seconds > 0:
+        _append_event(events_path, {
+            'event': 'tmux_claude_submit_watchdog_delay',
+            'seconds': delay_seconds,
+        })
+        time.sleep(delay_seconds)
+    after_tail = _capture_tmux_pane(
+        tmux_command=tmux_command,
+        tmux_target=tmux_target,
+        workspace_dir=workspace_dir,
+        env=env,
+    )
+    if after_tail != before_tail:
+        _append_event(events_path, {
+            'event': 'tmux_claude_submit_watchdog_skipped',
+            'reason': 'pane_changed_after_submit',
+        })
+        return
+    retry_reason = _submit_retry_reason(after_tail, run_id, backend=backend)
+    if retry_reason is None:
+        _append_event(events_path, {
+            'event': 'tmux_claude_submit_watchdog_skipped',
+            'reason': 'agent_already_working',
+        })
+        return
+    completed = subprocess.run(
+        [*tmux_command, 'send-keys', '-t', tmux_target, submit_key],
+        cwd=workspace_dir,
+        capture_output=True,
+        timeout=5,
+        check=False,
+        env=env,
+    )
+    _append_event(events_path, {
+        'event': 'tmux_claude_submit_watchdog_retry',
         'reason': retry_reason,
         'returncode': completed.returncode,
     })

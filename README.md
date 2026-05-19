@@ -1,6 +1,6 @@
 # Waygate
 
-[中文文档](README.zh-CN.md) | [Usage](USAGE.md) | [Architecture](docs/architecture.md) | [Workflow](docs/workflow.md) | [Roadmap](ROADMAP.md)
+[中文文档](README.zh-CN.md) | [Usage](USAGE.md) | [Architecture](docs/architecture.md) | [Workflow](docs/workflow.md) | [Recommended Environment](docs/operations/recommended-environment.md) | [Introduction](docs/product/waygate-introduction-and-best-practices.md) | [Roadmap](ROADMAP.md)
 
 Waygate is a workflow control surface for AI coding delivery.
 
@@ -32,6 +32,7 @@ The point is not to remove the human. The point is to move human attention to th
 | Verification evidence | Verifier output includes structured evidence rows for ACs, test cases, commands, and artifacts. |
 | Final acceptance | Final approval is a gate with evidence, journey coverage, scope audit, and rejection routing. |
 | Bug-fix loop | Final acceptance defects can enter a dedicated bug-fix gate without rewriting requirements. |
+| Environment diagnostics | V0.6.0e extends `waygate doctor` with Python, pytest, tmux, optional agent tools, Plannotator, Debian packaging, skill root scans, and recommended skill gaps. |
 | Debian package | `packaging/debian/build-deb.sh` builds a `waygate` command package. |
 
 ## Local Dependencies
@@ -43,10 +44,12 @@ Real agent execution depends on the selected runner:
 - `tmux-claude` requires `tmux` and Claude Code. Waygate can create a Claude Code pane in tmux when no pane is provided.
 - `tmux-codex` requires `tmux` and an existing Codex pane. Waygate can discover a matching Codex pane in the current tmux session.
 - Plannotator is optional but recommended for browser-assisted human gate review; configure it with `--plannotator-command` and `--plannotator-port`.
-- Project-specific agent skills are loaded by the agent runtime, not by the Debian package; keep required skills installed in the agent environment.
+- Project-specific agent skills are loaded by the agent runtime, not by the Debian package; `waygate doctor` scans common local skill roots and reports advisory gaps.
 - Debian package builds require standard shell tools and `dpkg-deb`.
 
 Waygate Markdown spec intake is available through `--spec <path>` on `init`, `start`, and `go`. In V0.5.6 this supports local Waygate Markdown spec files only; detected external formats are deferred rather than imported silently.
+
+For the V0.6.0e recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
 ## Skills Used by Waygate Agents
 
@@ -102,7 +105,7 @@ waygate --help
 waygate doctor
 ```
 
-If `waygate doctor` reports a user-level wrapper such as `~/.local/bin/waygate` before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`. The Debian package warns about this shadowing but does not delete user files.
+In V0.6.0e, `waygate doctor` reports install provenance, an `environment_checks` section, and skill diagnostics. If it reports a user-level wrapper such as `~/.local/bin/waygate` before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`. The Debian package warns about this shadowing but does not delete user files.
 
 For local development, run from the source tree:
 
@@ -203,6 +206,8 @@ docs/                        # Architecture and workflow documentation
 | CLI usage | [USAGE.md](USAGE.md) | [USAGE.zh-CN.md](USAGE.zh-CN.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) | [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md) |
 | Workflow | [docs/workflow.md](docs/workflow.md) | [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md) |
+| Recommended environment | [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md) | [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md) |
+| Introduction and best practices | [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md) | [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md) |
 | Roadmap | [ROADMAP.md](ROADMAP.md) | [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) |
 
 `task_plan.md`, `progress.md`, and `findings.md` are development history files for this repository. They are useful for maintainers, but they are not required to use Waygate.

@@ -390,14 +390,15 @@ def validate_requirements_acceptance_quality(
                 + '; add Product Design Ref and Technical Architecture Ref for every AC'
             )
 
-    content_declares_prototype_contract = _requirements_declares_prototype_contract(content, state)
-    if _requirements_need_uiux_prototype(state) and not _requirements_has_uiux_prototype_evidence(content):
+    prototype_contract_content = _requirements_prototype_contract_content(content)
+    content_declares_prototype_contract = _requirements_declares_prototype_contract(prototype_contract_content, state)
+    if _requirements_need_uiux_prototype(state) and not _requirements_has_uiux_prototype_evidence(prototype_contract_content):
         issues.append(
             'UI/UX target requires prototype evidence before Requirements human confirmation; '
             'add prototype evidence or reviewable design evidence mapped to Product Design Ref'
         )
 
-    if _requirements_need_clickable_web_prototype(state) and not _requirements_has_clickable_web_prototype_evidence(content):
+    if _requirements_need_clickable_web_prototype(state) and not _requirements_has_clickable_web_prototype_evidence(prototype_contract_content):
         issues.append(
             'Web system requires clickable webpage prototype evidence before Requirements human confirmation; '
             'record access method or URL/start command, page states, click path, and AC mapping'
@@ -423,7 +424,7 @@ def validate_requirements_acceptance_quality(
                     artifacts_dir=artifacts_dir,
                     require_clickable=(
                         _requirements_need_clickable_web_prototype(state)
-                        or _requirements_declares_clickable_web_prototype_contract(content, state)
+                        or _requirements_declares_clickable_web_prototype_contract(prototype_contract_content, state)
                     ),
                     require_implementation_targets=True,
                 )
@@ -807,6 +808,13 @@ def _requirements_declares_prototype_contract(content: str, state: dict[str, Any
         if has_contract_signal:
             return True
     return False
+
+
+def _requirements_prototype_contract_content(content: str) -> str:
+    match = re.search(r'(?m)^##\s+附录 A：完整需求与验收正文\s*$', content)
+    if match:
+        return content[match.end():]
+    return content
 
 
 def _requirements_declares_clickable_web_prototype_contract(content: str, state: dict[str, Any]) -> bool:

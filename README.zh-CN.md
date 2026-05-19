@@ -1,6 +1,6 @@
 # Waygate
 
-[English](README.md) | [使用说明](USAGE.zh-CN.md) | [架构](docs/architecture.zh-CN.md) | [工作流](docs/workflow.zh-CN.md) | [路线图](ROADMAP.zh-CN.md)
+[English](README.md) | [使用说明](USAGE.zh-CN.md) | [架构](docs/architecture.zh-CN.md) | [工作流](docs/workflow.zh-CN.md) | [推荐环境](docs/operations/recommended-environment.zh-CN.md) | [介绍材料](docs/product/waygate-introduction-and-best-practices.zh-CN.md) | [路线图](ROADMAP.zh-CN.md)
 
 Waygate 是一个面向 AI 编程交付的流程控制面。
 
@@ -32,6 +32,7 @@ Waygate 不是要把人移出流程，而是把人的注意力放回真正重要
 | 验证证据 | Verifier 输出结构化 evidence rows，覆盖 AC、Test Case、命令和 artifact。 |
 | 最终验收 | Final Acceptance Gate 展示证据矩阵、Journey 覆盖、Scope Audit 和返工路由。 |
 | Bug Fix Loop | 最终验收缺陷可以进入独立 bug-fix gate，不需要改写原需求。 |
+| 环境检测 | V0.6.0e 扩展 `waygate doctor`，覆盖 Python、pytest、tmux、可选 agent 工具、Plannotator、Debian packaging、skill 根目录扫描和推荐 skill 缺口。 |
 | Debian 包 | `packaging/debian/build-deb.sh` 可构建 `waygate` 命令包。 |
 
 ## 本地依赖
@@ -43,10 +44,12 @@ Waygate 以 Python 3 代码运行。本地开发和验证使用 `python -m pytes
 - `tmux-claude` 需要 `tmux` 和 Claude Code。未指定 pane 时，Waygate 可以在 tmux 中创建 Claude Code pane。
 - `tmux-codex` 需要 `tmux` 和已有 Codex pane。Waygate 可以在当前 tmux session 中发现匹配的 Codex pane。
 - Plannotator 是可选但推荐的浏览器人工 gate 审阅工具，可通过 `--plannotator-command` 和 `--plannotator-port` 配置。
-- 项目需要的 agent skills 由 agent runtime 加载，不由 Debian 包安装；请在 agent 环境中安装所需 skills。
+- 项目需要的 agent skills 由 agent runtime 加载，不由 Debian 包安装；`waygate doctor` 会扫描常见本地 skill 根目录并给出建议性缺口提示。
 - Debian package 构建需要标准 shell 工具和 `dpkg-deb`。
 
 Waygate Markdown spec intake 可通过 `init`、`start`、`go` 的 `--spec <path>` 使用。V0.5.6 只支持本地 Waygate Markdown spec 文件；识别到的外部格式会明确 deferred，不会被静默导入。
+
+V0.6.0e 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
 
 ## Waygate Agent 使用的 Skills
 
@@ -102,7 +105,7 @@ waygate --help
 waygate doctor
 ```
 
-如果 `waygate doctor` 显示 `~/.local/bin/waygate` 这类用户级 wrapper 排在 `/usr/bin/waygate` 前面，请手工改名或删除该用户级文件，然后执行 `hash -r`。Debian 包会提示 shadow 风险，但不会删除用户文件。
+V0.6.0e 的 `waygate doctor` 会输出安装来源、环境检测和 skill 检测。如果它显示 `~/.local/bin/waygate` 这类用户级 wrapper 排在 `/usr/bin/waygate` 前面，请手工改名或删除该用户级文件，然后执行 `hash -r`。Debian 包会提示 shadow 风险，但不会删除用户文件。
 
 源码调试入口：
 
@@ -203,6 +206,8 @@ docs/                        # 架构和流程文档
 | CLI 使用 | [USAGE.md](USAGE.md) | [USAGE.zh-CN.md](USAGE.zh-CN.md) |
 | 架构 | [docs/architecture.md](docs/architecture.md) | [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md) |
 | 工作流 | [docs/workflow.md](docs/workflow.md) | [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md) |
+| 推荐环境 | [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md) | [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md) |
+| 介绍与最佳实践 | [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md) | [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md) |
 | 路线图 | [ROADMAP.md](ROADMAP.md) | [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) |
 
 `task_plan.md`、`progress.md` 和 `findings.md` 是本仓库开发历史文件，对维护者有用，但使用 Waygate 不依赖它们。

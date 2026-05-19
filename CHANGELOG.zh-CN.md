@@ -2,6 +2,15 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.0e
+
+- 扩展 `waygate doctor` 的 `environment_checks`，覆盖 Python、pytest、tmux、tmux session、Claude Code、Codex、Plannotator、`dpkg-deb` 和推荐 Plannotator port `20000`。
+- 扩展 `waygate doctor`，扫描常见 agent skill 根目录、报告已安装 skills、输出推荐 workflow skill 缺口 warning，并支持 `WAYGATE_SKILL_ROOTS` 追加自定义根目录。
+- Claude Code、Codex 和 Plannotator 保持可选，缺失时输出 warning/manual action，不让 `doctor` 失败。
+- 新增 `docs/operations/` 双语推荐环境 recommended-environment 文档和 `docs/product/` 双语 Waygate introduction/best practices 文档，包含 PPT 大纲但不生成 `.pptx`。
+- 更新 README、USAGE、ROADMAP 和包内文档入口，记录 V0.6.0e，同时保持 V0.6.1 和 V0.6.2 为后续范围。
+- Debian 包会把新增 product 与 operations 文档安装到 `/usr/share/doc/waygate/docs/`，并与 `workflow_controller.__version__` 保持版本一致。
+
 ## 0.6.0d
 
 - 即使存在 prototype review bundle，Requirements Plannotator 的审批目标也恢复为 `approvals/requirements-and-acceptance.md`。

@@ -128,6 +128,12 @@ class TestGeneratorsLayer:
         assert '| AC | Product Design Ref | Technical Architecture Ref | Notes |' in body
         assert '## 4.7 Journey Acceptance Matrix' in body
         assert '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |' in body
+        assert 'prototype evidence' in body
+        assert 'clickable webpage prototype' in body
+        assert '页面状态' in body
+        assert '核心点击路径' in body
+        assert '真实实现目标' in body
+        assert 'AC 映射' in body
 
     def test_render_unit_plan_gate_body(self) -> None:
         body = render_unit_plan_gate_body(_minimal_state())

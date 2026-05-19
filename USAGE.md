@@ -4,6 +4,8 @@
 
 This document is the CLI-oriented guide for Waygate. For concepts and architecture, see [docs/workflow.md](docs/workflow.md) and [docs/architecture.md](docs/architecture.md).
 
+For V0.6.0e environment preparation, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For an introduction and best-practices walkthrough, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
+
 ## Prerequisites
 
 Waygate itself is Python code packaged as a Debian package. Real agent execution depends on the runner you choose:
@@ -19,12 +21,12 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.0d_all.deb
+sudo apt install ./dist/waygate_0.6.0e_all.deb
 waygate --help
 waygate doctor
 ```
 
-`waygate doctor` prints the active executable path, imported module path, module version, installed dpkg version, and every `waygate` candidate in `PATH`. If it reports a `~/.local/bin/waygate` shadow before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`.
+`waygate doctor` prints the active executable path, imported module path, module version, installed dpkg version, every `waygate` candidate in `PATH`, environment checks for Python, pytest, tmux, Claude Code, Codex, Plannotator, `dpkg-deb`, skill root scans, installed skills, recommended workflow skill gaps, and the recommended Plannotator port. Waygate runners still need a usable `claude` or `codex` CLI command. If doctor reports a `~/.local/bin/waygate` shadow before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`.
 
 Run from source:
 
@@ -144,7 +146,7 @@ waygate status --state-dir .rrc-controller-v1.0
 
 ### `doctor`
 
-Print installation and PATH diagnostics. This command does not read controller state.
+Print installation, PATH, environment, and skill checks. This command does not read controller state or controller artifacts.
 
 ```bash
 waygate doctor

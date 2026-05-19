@@ -128,6 +128,20 @@
 - Requirements review 期间继续启动 controller preview server，单独打印 `plannotator-review.html` 的辅助预览 URL，与 Plannotator 审批 URL 区分。
 - Plannotator review metadata 记录审批文件、辅助预览文件、manifest 路径和临时 preview URL，但不把临时 localhost URL 注入 approval 文件。
 
+### V0.6.0e - Environment Diagnostics and Introduction Materials
+
+目标：让推荐本地环境和 Waygate 介绍材料在源码与安装包中都容易检查和使用。
+
+已交付：
+
+- 扩展 `waygate doctor` 的 `environment_checks`，覆盖 Python executable/version、`pytest`、`tmux`、tmux session、Claude Code、Codex、Plannotator、`dpkg-deb` 和推荐 Plannotator port `20000`。
+- 扩展 `waygate doctor`，扫描常见 agent skill 根目录、报告已安装 skills、输出推荐 workflow skill 缺口 warning，并支持 `WAYGATE_SKILL_ROOTS`。
+- Claude Code、Codex 和 Plannotator 保持可选；缺失时输出 warning/manual action，不让 `doctor` 失败。
+- 在 `docs/operations/` 新增双语推荐环境 recommended-environment 文档，包括 `docs/operations/recommended-environment.zh-CN.md`。
+- 在 `docs/product/` 新增双语 Waygate introduction and best practices 文档，包含 10-12 页 PPT 大纲，但不生成 `.pptx`。
+- Debian 包会把新增 product 与 operations 文档安装到 `/usr/share/doc/waygate/docs/`。
+- V0.6.1 External Spec Intake 和 V0.6.2 Strict Test Presence 仍是后续 planned scope，不属于 V0.6.0e 当前交付。
+
 ### V0.6.1 - External Spec Intake
 
 目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径。

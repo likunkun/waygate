@@ -3,8 +3,12 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -316,7 +320,6 @@ def run_verification_commands(
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     verification_env = ensure_verification_env_for_state(state, workspace_dir)
-    env = {**os.environ, **verification_env} if verification_env else None
     commands = verification_commands_for_state(state)
     total = len(commands)
     timeout_seconds = int(state.get('verificationTimeoutSeconds') or 1800)
@@ -325,62 +328,81 @@ def run_verification_commands(
         'total': total,
         'env_keys': sorted(verification_env),
     })
-    for index, command in enumerate(commands, start=1):
-        _emit_progress(progress_callback, {
-            'event': 'verification_command_started',
-            'index': index,
-            'total': total,
-            'command': command,
-        })
-        started_at = time.monotonic()
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=workspace_dir,
-                shell=True,
-                executable='/bin/bash',
-                text=True,
-                capture_output=True,
-                timeout=timeout_seconds,
-                check=False,
-                env=env,
-            )
-            result = {
+    with _verification_command_environment(verification_env) as env:
+        for index, command in enumerate(commands, start=1):
+            _emit_progress(progress_callback, {
+                'event': 'verification_command_started',
+                'index': index,
+                'total': total,
                 'command': command,
-                'returncode': completed.returncode,
-                'ok': completed.returncode == 0,
-                'stdout': completed.stdout,
-                'stderr': completed.stderr,
-                'env_keys': sorted(verification_env),
-                'elapsed_seconds': round(time.monotonic() - started_at, 3),
-            }
-        except subprocess.TimeoutExpired as exc:
-            result = {
+            })
+            started_at = time.monotonic()
+            try:
+                completed = subprocess.run(
+                    command,
+                    cwd=workspace_dir,
+                    shell=True,
+                    executable='/bin/bash',
+                    text=True,
+                    capture_output=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                    env=env,
+                )
+                result = {
+                    'command': command,
+                    'returncode': completed.returncode,
+                    'ok': completed.returncode == 0,
+                    'stdout': completed.stdout,
+                    'stderr': completed.stderr,
+                    'env_keys': sorted(verification_env),
+                    'elapsed_seconds': round(time.monotonic() - started_at, 3),
+                }
+            except subprocess.TimeoutExpired as exc:
+                result = {
+                    'command': command,
+                    'returncode': 124,
+                    'ok': False,
+                    'stdout': exc.stdout or '',
+                    'stderr': exc.stderr or f'Command timed out after {timeout_seconds} seconds',
+                    'env_keys': sorted(verification_env),
+                    'elapsed_seconds': round(time.monotonic() - started_at, 3),
+                    'timed_out': True,
+                }
+            results.append(result)
+            _emit_progress(progress_callback, {
+                'event': 'verification_command_finished',
+                'index': index,
+                'total': total,
                 'command': command,
-                'returncode': 124,
-                'ok': False,
-                'stdout': exc.stdout or '',
-                'stderr': exc.stderr or f'Command timed out after {timeout_seconds} seconds',
-                'env_keys': sorted(verification_env),
-                'elapsed_seconds': round(time.monotonic() - started_at, 3),
-                'timed_out': True,
-            }
-        results.append(result)
-        _emit_progress(progress_callback, {
-            'event': 'verification_command_finished',
-            'index': index,
-            'total': total,
-            'command': command,
-            'returncode': result['returncode'],
-            'ok': result['ok'],
-            'elapsed_seconds': result['elapsed_seconds'],
-        })
+                'returncode': result['returncode'],
+                'ok': result['ok'],
+                'elapsed_seconds': result['elapsed_seconds'],
+            })
     _emit_progress(progress_callback, {
         'event': 'verification_finished',
         'total': total,
         'passed': all(result.get('ok') for result in results),
     })
     return results
+
+
+@contextmanager
+def _verification_command_environment(verification_env: dict[str, str]):
+    env = {**os.environ, **verification_env}
+    if shutil.which('python', path=env.get('PATH')):
+        yield env
+        return
+
+    with tempfile.TemporaryDirectory(prefix='waygate-python-') as temp_dir:
+        shim = Path(temp_dir) / 'python'
+        try:
+            shim.symlink_to(sys.executable)
+        except OSError:
+            shim.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n', encoding='utf-8')
+            shim.chmod(0o755)
+        env['PATH'] = temp_dir + os.pathsep + env.get('PATH', '')
+        yield env
 
 
 def _required_env_keys_for_verification_command(command: str) -> set[str]:

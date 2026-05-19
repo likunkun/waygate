@@ -1,5 +1,13 @@
 # 发现与决策
 
+## 2026-05-19 `waygate doctor` skills 诊断
+
+- Skills 诊断应保持全局环境视角，不绑定当前 `session.json` 或 unit；这样 `waygate doctor` 可用于安装/排障前置检查，而不会把当前 workflow scope 误当作全局事实。
+- `SKILL.md` 文件存在只能证明本机常见 skill 根目录可读，不能证明某个 Claude/Codex/OpenCode runtime 在当前会话中一定会加载该 skill；因此 skill 缺口输出为 warning/manual action，不让 `doctor` 失败。
+- 推荐 skill 组按 Waygate 常用 workflow 能力表达：startup、planning、requirements、builder TDD、debugging、test strategy、refiner 和 verification。`test-strategy` / `testing-strategy` 作为等价候选处理。
+- Agent runner 可用性仍依赖 `PATH` 中的 `claude` 或 `codex` CLI；`waygate doctor` 保持为 CLI 环境检测和 skills 检测。
+- 非 CLI 本地应用条目不属于 runner readiness 事实源；`doctor` 不应扫描或输出这类条目。
+
 ## 2026-05-17 Requirements Plannotator 主审批对象
 
 - Requirements approval 的唯一事实源必须是 `approvals/requirements-and-acceptance.md`；`plannotator-review.html` 是原型渲染辅助预览页，不能成为 Plannotator gate 的主 annotate 目标。

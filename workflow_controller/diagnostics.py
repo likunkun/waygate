@@ -9,6 +9,17 @@ from typing import Callable
 
 from workflow_controller import __version__
 
+RECOMMENDED_SKILL_GROUPS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ('startup', ('using-superpowers', 'superpowers:using-superpowers'), 'Install a startup skill so agents check applicable skills before acting.'),
+    ('planning', ('writing-plans', 'superpowers:writing-plans', 'planning-with-files'), 'Install a planning skill for auditable unit plans and long-running work.'),
+    ('requirements', ('brainstorming', 'superpowers:brainstorming'), 'Install brainstorming for requirements discovery and scope shaping.'),
+    ('builder_tdd', ('test-driven-development', 'superpowers:test-driven-development'), 'Install TDD support for builder and bug-fix work.'),
+    ('debugging', ('systematic-debugging', 'superpowers:systematic-debugging'), 'Install systematic debugging for runner, verifier, and defect investigations.'),
+    ('test_strategy', ('test-strategy', 'testing-strategy'), 'Install test-strategy or testing-strategy for Requirements and Unit Plan test matrices.'),
+    ('refiner', ('code-simplifier',), 'Install code-simplifier for post-builder cleanup and maintainability review.'),
+    ('verification', ('verification-before-completion', 'superpowers:verification-before-completion'), 'Install verification-before-completion so agents do not claim success without evidence.'),
+)
+
 
 def render_doctor_report(
     *,
@@ -28,6 +39,10 @@ def render_doctor_report(
         'dpkg_version': dpkg_version,
         'path_candidates': candidates,
         'warnings': _doctor_warnings(candidates, module_version=__version__, dpkg_version=dpkg_version),
+        'environment_checks': _environment_checks(environment),
+        'skill_roots': _skill_root_checks(environment),
+        'installed_skills': _installed_skill_checks(environment),
+        'skill_recommendations': _skill_recommendations(environment),
     }
     return _format_doctor_report(info)
 
@@ -103,6 +118,161 @@ def _doctor_warnings(candidates: list[str], *, module_version: str, dpkg_version
     return warnings
 
 
+def _environment_checks(env: dict[str, str]) -> list[str]:
+    path = env.get('PATH')
+    return [
+        f'python: status=ok executable={sys.executable} version={_python_version()}',
+        _command_check('pytest', 'pytest', path, required=True),
+        _command_check('tmux', 'tmux', path, required=True),
+        _tmux_session_check(env),
+        _command_check(
+            'Claude Code',
+            'claude',
+            path,
+            required=False,
+            manual_action='Install Claude Code or choose a subprocess runner for tasks that do not need Claude.',
+        ),
+        _command_check(
+            'Codex',
+            'codex',
+            path,
+            required=False,
+            manual_action='Install Codex CLI or use another configured agent runner.',
+        ),
+        _command_check(
+            'Plannotator',
+            'plannotator',
+            path,
+            required=False,
+            manual_action='Install Plannotator for browser-assisted gate review, or use terminal/manual approval.',
+        ),
+        _command_check('dpkg-deb', 'dpkg-deb', path, required=True),
+        'recommended_plannotator_port: 20000',
+    ]
+
+
+def _python_version() -> str:
+    return '.'.join(str(part) for part in sys.version_info[:3])
+
+
+def _command_check(
+    label: str,
+    command: str,
+    path: str | None,
+    *,
+    required: bool,
+    manual_action: str | None = None,
+) -> str:
+    discovered = shutil.which(command, path=path)
+    if discovered:
+        return f'{label}: status=ok path={discovered}'
+    if required:
+        return f'{label}: status=warning path=missing manual_action=Install `{command}` before running verification that depends on it.'
+    action = manual_action or f'Install `{command}` if this workflow path needs it.'
+    return f'{label}: status=warning path=missing manual_action={action}'
+
+
+def _tmux_session_check(env: dict[str, str]) -> str:
+    if env.get('TMUX'):
+        return 'tmux_session: status=ok active=true'
+    return 'tmux_session: status=warning active=false manual_action=Run inside tmux before using tmux-claude or tmux-codex runners.'
+
+
+def _skill_roots(env: dict[str, str]) -> list[Path]:
+    home = Path(env.get('HOME') or str(Path.home())).expanduser()
+    codex_home = Path(env.get('CODEX_HOME') or home / '.codex').expanduser()
+    config_home = Path(env.get('XDG_CONFIG_HOME') or home / '.config').expanduser()
+    explicit_roots = [
+        Path(root).expanduser()
+        for root in env.get('WAYGATE_SKILL_ROOTS', '').split(os.pathsep)
+        if root
+    ]
+    roots = [
+        home / '.agents' / 'skills',
+        codex_home / 'skills',
+        codex_home / 'superpowers' / 'skills',
+        config_home / 'opencode' / 'skills',
+        *explicit_roots,
+    ]
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(root)
+    return deduped
+
+
+def _skill_root_checks(env: dict[str, str]) -> list[str]:
+    return [
+        f'{root}: status={"found" if root.is_dir() else "missing"}'
+        for root in _skill_roots(env)
+    ]
+
+
+def _discover_skills(env: dict[str, str]) -> dict[str, list[str]]:
+    discovered: dict[str, list[str]] = {}
+    for root in _skill_roots(env):
+        if not root.is_dir():
+            continue
+        for skill_file in sorted(root.rglob('SKILL.md')):
+            if not skill_file.is_file():
+                continue
+            skill_name = _skill_name_from_file(skill_file)
+            discovered.setdefault(skill_name, []).append(str(skill_file))
+    return discovered
+
+
+def _skill_name_from_file(skill_file: Path) -> str:
+    try:
+        text = skill_file.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return skill_file.parent.name
+    for line in text.splitlines()[:20]:
+        stripped = line.strip()
+        if stripped.startswith('name:'):
+            name = stripped.partition(':')[2].strip().strip('"\'')
+            if name:
+                return name
+    return skill_file.parent.name
+
+
+def _installed_skill_checks(env: dict[str, str]) -> list[str]:
+    discovered = _discover_skills(env)
+    if not discovered:
+        return []
+    checks: list[str] = []
+    for name in sorted(discovered):
+        paths = sorted(discovered[name])
+        suffix = f' duplicates={len(paths)}' if len(paths) > 1 else ''
+        checks.append(f'{name}: status=ok path={paths[0]}{suffix}')
+    return checks
+
+
+def _skill_recommendations(env: dict[str, str]) -> list[str]:
+    installed = set(_discover_skills(env))
+    normalized_installed = installed | {name.split(':', 1)[1] for name in installed if ':' in name}
+    checks: list[str] = []
+    for group, candidates, manual_action in RECOMMENDED_SKILL_GROUPS:
+        matched = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate in installed or candidate in normalized_installed or candidate.split(':')[-1] in normalized_installed
+            ),
+            None,
+        )
+        if matched:
+            checks.append(f'{group}: status=ok matched={matched}')
+        else:
+            checks.append(
+                f'{group}: status=warning missing={"/".join(candidates)} manual_action={manual_action}'
+            )
+    return checks
+
+
 def _is_packaged_waygate(path: str) -> bool:
     normalized = path.replace('\\', '/')
     return normalized.endswith('/usr/bin/waygate')
@@ -131,4 +301,22 @@ def _format_doctor_report(info: dict[str, object]) -> str:
     if isinstance(warnings, list) and warnings:
         lines.append('warnings:')
         lines.extend(f'- {warning}' for warning in warnings)
+    environment_checks = info.get('environment_checks')
+    if isinstance(environment_checks, list) and environment_checks:
+        lines.append('environment_checks:')
+        lines.extend(f'- {check}' for check in environment_checks)
+    skill_roots = info.get('skill_roots')
+    if isinstance(skill_roots, list) and skill_roots:
+        lines.append('skill_roots:')
+        lines.extend(f'- {root}' for root in skill_roots)
+    installed_skills = info.get('installed_skills')
+    lines.append('installed_skills:')
+    if isinstance(installed_skills, list) and installed_skills:
+        lines.extend(f'- {skill}' for skill in installed_skills)
+    else:
+        lines.append('- none')
+    skill_recommendations = info.get('skill_recommendations')
+    if isinstance(skill_recommendations, list) and skill_recommendations:
+        lines.append('skill_recommendations:')
+        lines.extend(f'- {recommendation}' for recommendation in skill_recommendations)
     return '\n'.join(lines) + '\n'

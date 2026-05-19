@@ -178,6 +178,69 @@ if sys.argv[1:2] == ["capture-pane"]:
     assert skipped_event['reason'] == 'disabled_for_tmux_claude'
 
 
+def test_tmux_claude_initial_submit_watchdog_retries_when_pane_is_unchanged(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Ask the user a requirements clarification question.')
+    tmux_log = tmp_path / 'tmux.log'
+    submit_count_path = tmp_path / 'submit-count.txt'
+    monkeypatch.setenv('RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_CLAUDE_SUBMIT_RETRY_DELAY_SECONDS', '0')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    path = Path({str(submit_count_path)!r})
+    count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
+    path.write_text(str(count + 1), encoding="utf-8")
+    if count >= 1:
+        Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+            json.dumps({{"status": "done", "summary": "retry submitted", "run_id": os.environ["RRC_RUN_ID"]}}),
+            encoding="utf-8",
+        )
+if sys.argv[1:2] == ["capture-pane"]:
+    print("› workflow-controller dispatch.")
+    print("RUN_ID: " + os.environ["RRC_RUN_ID"])
+""",
+    )
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='requirements-draft',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        env={'WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG': '1'},
+        timeout_seconds=5,
+        idle_monitor_enabled=False,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    assert result.done_payload['summary'] == 'retry submitted'
+    log = tmux_log.read_text(encoding='utf-8')
+    assert log.count('send-keys -t 1.2 C-m') == 2
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    retry_event = next(event for event in events if event.get('event') == 'tmux_claude_submit_watchdog_retry')
+    assert retry_event['reason'] == 'prompt_still_in_input'
+
+
 def test_tmux_runner_precreates_done_file_before_dispatch(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -277,6 +340,52 @@ if args[:1] == ["send-keys"] and args[-1:] == ["C-m"]:
         ['paste-buffer', '-t', '%24'],
         ['send-keys', '-t', '%24', 'C-m'],
     ]
+
+
+def test_tmux_claude_runner_uses_submit_delay_from_request_env(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    sleep_calls: list[float] = []
+    monkeypatch.delenv('RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS', raising=False)
+    monkeypatch.delenv('RRC_TMUX_SUBMIT_DELAY_SECONDS', raising=False)
+    monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
+    Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
+        json.dumps({"status": "done", "summary": "finished", "run_id": os.environ["RRC_RUN_ID"]}),
+        encoding="utf-8",
+    )
+""",
+    )
+
+    result = run_agent_backend(RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(fake_tmux),
+        tmux_target='%24',
+        env={
+            'WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH': '0',
+            'RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS': '2.0',
+        },
+        timeout_seconds=5,
+    ))
+
+    assert result.status == 'done'
+    assert sleep_calls == [2.0]
 
 
 def test_tmux_dispatch_clears_input_before_submit_and_idle_nudge_does_not(
@@ -1250,6 +1359,8 @@ def test_make_runner_disables_initial_clear_for_auto_created_requirements_pane()
     })
 
     assert runner.env['WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH'] == '0'
+    assert runner.env['RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS'] == '2.0'
+    assert runner.env['WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG'] == '1'
 
 
 def test_make_runner_defaults_test_strategist_to_codex_subprocess() -> None:

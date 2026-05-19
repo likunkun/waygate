@@ -2,6 +2,15 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0e
+
+- Extended `waygate doctor` with `environment_checks` for Python, pytest, tmux, tmux session, Claude Code, Codex, Plannotator, `dpkg-deb`, and recommended Plannotator port `20000`.
+- Extended `waygate doctor` with common agent skill root scans, installed skill reporting, recommended workflow skill gap warnings, and optional `WAYGATE_SKILL_ROOTS`.
+- Kept Claude Code, Codex, and Plannotator optional by reporting warning/manual action entries without failing `doctor`.
+- Added bilingual recommended-environment docs under `docs/operations/` and Waygate introduction/best-practices docs under `docs/product/`, including a PPT outline without generating `.pptx`.
+- Updated README, USAGE, ROADMAP, and package docs links for V0.6.0e while keeping V0.6.1 and V0.6.2 as future scope.
+- Packaged the new product and operations docs under `/usr/share/doc/waygate/docs/` and aligned the package version with `workflow_controller.__version__`.
+
 ## 0.6.0d
 
 - Restored `approvals/requirements-and-acceptance.md` as the Requirements Plannotator approval target even when a prototype review bundle exists.
