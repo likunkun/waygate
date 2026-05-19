@@ -723,20 +723,48 @@ def _requirements_target_infrastructure_issues(content: str) -> list[str]:
 
 def _requirements_infrastructure_category_text(section: str, label: str, aliases: tuple[str, ...]) -> str:
     matches: list[str] = []
-    for line in section.splitlines():
+    lines = section.splitlines()
+    for index, line in enumerate(lines):
+        heading = _requirements_markdown_heading(line)
+        if not heading:
+            continue
+        heading_level, heading_text = heading
+        normalized_heading = _normalized_requirements_text(heading_text)
+        if not _requirements_infrastructure_category_matches(normalized_heading, label, aliases):
+            continue
+        category_lines = [line]
+        for nested_line in lines[index + 1:]:
+            nested_heading = _requirements_markdown_heading(nested_line)
+            if nested_heading and nested_heading[0] <= heading_level:
+                break
+            category_lines.append(nested_line)
+        matches.append('\n'.join(category_lines))
+
+    for line in lines:
+        if _requirements_markdown_heading(line):
+            continue
         normalized = _normalized_requirements_text(line)
         if not normalized or _is_markdown_table_separator(normalized):
             continue
-        if label == '架构/交互逻辑/接口说明':
-            if (
-                any(_normalized_requirements_text(alias) in normalized for alias in aliases)
-                or all(term in normalized for term in ['架构', '交互', '接口'])
-            ):
-                matches.append(line)
-            continue
-        if any(_normalized_requirements_text(alias) in normalized for alias in aliases):
+        if _requirements_infrastructure_category_matches(normalized, label, aliases):
             matches.append(line)
     return '\n'.join(matches)
+
+
+def _requirements_markdown_heading(line: str) -> tuple[int, str] | None:
+    match = re.match(r'^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$', line)
+    if not match:
+        return None
+    return len(match.group(1)), match.group(2).strip()
+
+
+def _requirements_infrastructure_category_matches(normalized: str, label: str, aliases: tuple[str, ...]) -> bool:
+    if label == '架构/交互逻辑/接口说明':
+        return (
+            any(_normalized_requirements_text(alias) in normalized for alias in aliases)
+            or all(term in normalized for term in ['架构', '交互', '接口'])
+        )
+    return any(_normalized_requirements_text(alias) in normalized for alias in aliases)
 
 
 def _requirements_infrastructure_category_is_placeholder(text: str, aliases: tuple[str, ...]) -> bool:
@@ -744,12 +772,12 @@ def _requirements_infrastructure_category_is_placeholder(text: str, aliases: tup
     if not cleaned:
         return True
     lowered = cleaned.lower()
-    if re.fullmatch(r'(?:tbd|todo|pending|unknown|n/?a|none|null|-|—|_)+', lowered):
+    if re.fullmatch(r'(?:tbd|todo|pending|unknown|n/?a|none|null|待补|不清楚|未知|待确认|暂缺|暂无|无|没有|不涉及|-|—|_)+', lowered):
         return True
-    placeholder_terms = ['tbd', 'todo', 'pending', '待补', '不清楚', '未知', '待确认', '暂缺', '暂无']
+    placeholder_terms = ['tbd', 'todo', 'pending', '待补', '不清楚', '待确认', '暂缺', '暂无']
     if any(term in lowered for term in placeholder_terms):
         return True
-    if lowered in {'无', '不涉及', '没有', 'none'}:
+    if lowered in {'无', '不涉及', '没有', '未知', 'unknown', 'none'}:
         return True
     if '不涉及' in lowered:
         reason = lowered.replace('不涉及', '')
@@ -760,6 +788,7 @@ def _requirements_infrastructure_category_is_placeholder(text: str, aliases: tup
 
 def _normalized_infrastructure_category_content(text: str, aliases: tuple[str, ...]) -> str:
     cleaned = re.sub(r'(?m)^\s*[-*+]\s*', '', text)
+    cleaned = re.sub(r'(?m)^\s{0,3}#{1,6}\s*', '', cleaned)
     cleaned = cleaned.replace('|', ' ')
     for alias in aliases:
         cleaned = re.sub(re.escape(alias), ' ', cleaned, flags=re.IGNORECASE)

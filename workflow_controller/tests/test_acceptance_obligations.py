@@ -156,6 +156,26 @@ def _valid_infrastructure_section() -> str:
     )
 
 
+def _valid_nested_infrastructure_section() -> str:
+    return (
+        '## 4.9 目标项目基础设施信息\n'
+        '### 代码仓库\n'
+        '主仓库 `/home/lichangkun/code/proxy-collector`，state-dir `.rrc-controller-v1.9.2`。\n'
+        '### 项目部署运行时环境\n'
+        '- Go service、Makefile、DEB package、systemd unit 和本地测试 runtime。\n'
+        '### 调试分析方法\n'
+        '- 查看 systemd journal、SQLite 文件、config 文件、logs 目录和 verifier 输出。\n'
+        '### 参考环境\n'
+        '- 远程部署节点和当前生产服务行为作为参考，不混同本地运行环境。\n'
+        '### 文档地址\n'
+        '- README、docs/operations、packaging notes 和 deployment runbook。\n'
+        '### 架构、交互逻辑、接口说明\n'
+        '- collector 模块、proxy config flow、CLI/systemd interaction 和 API contract。\n'
+        '### 依赖信息\n'
+        '- Go toolchain、SQLite、systemd、DEB tooling、network proxy endpoints 和 pytest verifier。\n'
+    )
+
+
 def test_requirements_preflight_rejects_missing_target_infrastructure_section(tmp_path: Path) -> None:
     gate = tmp_path / 'requirements-and-acceptance.md'
     gate.write_text(_minimal_requirements_gate_with_infrastructure(), encoding='utf-8')
@@ -188,6 +208,18 @@ def test_requirements_preflight_rejects_placeholder_infrastructure_category(tmp_
         validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
 
 
+def test_requirements_preflight_accepts_unknown_as_concrete_infrastructure_value(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        'collector 模块、proxy config flow、CLI/systemd interaction 和 API contract。',
+        'collector 模块、proxy config flow、CLI/systemd interaction、API contract、'
+        '缺失进程返回 `未知进程`，缺失公网库返回 `public unknown`。',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.9.2'})
+
+
 def test_requirements_preflight_accepts_complete_target_infrastructure_section(tmp_path: Path) -> None:
     gate = tmp_path / 'requirements-and-acceptance.md'
     gate.write_text(
@@ -196,6 +228,29 @@ def test_requirements_preflight_accepts_complete_target_infrastructure_section(t
     )
 
     validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_accepts_infrastructure_section_with_nested_headings(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _minimal_requirements_gate_with_infrastructure(_valid_nested_infrastructure_section()),
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.9.2'})
+
+
+def test_requirements_preflight_rejects_empty_nested_infrastructure_category(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_nested_infrastructure_section().replace(
+        '### 代码仓库\n'
+        '主仓库 `/home/lichangkun/code/proxy-collector`，state-dir `.rrc-controller-v1.9.2`。\n',
+        '### 代码仓库\n',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='代码仓库.*placeholder|代码仓库.*占位'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.9.2'})
 
 
 def test_requirements_summary_prototype_review_reminder_is_not_ui_contract(tmp_path: Path) -> None:

@@ -374,17 +374,20 @@ def _markdown_section(content: str, heading_contains: str) -> str:
     lines = gate_body(content).splitlines()
     heading_lower = heading_contains.lower()
     start: int | None = None
+    start_level: int | None = None
     for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith('##') and heading_lower in stripped.lower():
+        heading = re.match(r'^\s{0,3}(#{2,6})\s+(.+?)\s*#*\s*$', line)
+        if heading and heading_lower in line.lower():
             start = index + 1
+            start_level = len(heading.group(1))
             break
     if start is None:
         return ''
 
     section: list[str] = []
     for line in lines[start:]:
-        if line.strip().startswith('##'):
+        heading = re.match(r'^\s{0,3}(#{1,6})\s+.+?\s*#*\s*$', line)
+        if heading and start_level is not None and len(heading.group(1)) <= start_level:
             break
         section.append(line)
     return '\n'.join(section)
