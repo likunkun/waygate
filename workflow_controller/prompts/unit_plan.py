@@ -76,6 +76,9 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - 如果已批准 requirements 包含 active Journey，closure/E2E test case 必须在 JSON `test_cases[]` 中显式写 Journey 映射字段。推荐使用 `covers_journeys: ["J-001"]` 或 `journey_ids: ["J-001"]`；`journey_refs` / `journeyRefs` 只是历史兼容别名，不作为推荐输出字段。
 - Journey 映射不能只放在 Markdown prose、Journey Acceptance Matrix、设计引用或架构引用中；controller 只从 `test_cases[]` 的结构化字段生成 Journey 合约和证据。
 - Verifier 会从 test cases 生成 `verification.json` 的 `evidence_rows`；因此每个 test case 的 AC、AO、layer、command/evidence、expected 和 `golden_path` 必须可直接审计。
+- 每个浏览器或运行时测试用例必须声明或可推导 `environment_kind`：真实本地 E2E 使用 `local_real`，只读生产验收使用 `production_readonly`；只有 `component_mock` / `contract_mock` / `visual` 辅助测试可以设置 `allows_mock: true` 和 `mocked_routes`。
+- `layer=e2e`、`golden_path: true`、`prototype_conformance`、Journey closure 或 Web 系统验收测试不得 mock/stub 核心业务 API。包含 `page.route("**/api/...")`、`route.fulfill()`、mock API server、fixture-only server 或 `route_common(page, ...)` 的浏览器测试只能作为非 E2E 辅助证据，不能覆盖 AC/Journey/golden path/prototype surface。
+- 真实 E2E 测试必须写 `entrypoint` 或 `real_entrypoint`（真实页面/route/命令入口），并使用真实服务/API 与真实测试数据准备；截图只能作为补充 artifact，不能替代 DOM/API/行为断言。
 - 至少一个 E2E test case 必须标记 `golden_path: true`，表示人工最终验收前必须先跑通的核心正常流程。
 - `verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`），并包含实际执行这些 E2E 测试和 golden path 的命令；不接受"截图留证"或人工步骤作为完成条件。
 - `done_when` 必须是"测试命令退出码为 0 且断言覆盖 AC"，不接受"截图已上传"、"人工确认"或"浏览器路径已验证"。
@@ -178,6 +181,11 @@ E2E 层的测试用例必须有可执行 `command`（Playwright/pytest 命令）
           "product_design_refs": ["<Product Design Ref from requirements>"],
           "technical_architecture_refs": ["<Technical Architecture Ref from requirements>"],
           "layer": "unit|functional|integration|e2e|manual",
+          "environment_kind": "local_real|production_readonly|component_mock|contract_mock|visual",
+          "entrypoint": "<real page route, URL, or command entrypoint>",
+          "allows_mock": false,
+          "mocked_routes": [],
+          "uses_core_api_mock": false,
           "golden_path": true,
           "fixture": "<test data or setup path for runtime tests>",
           "command": "<verification command if automated>",

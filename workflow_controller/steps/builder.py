@@ -4,6 +4,16 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from workflow_controller.evidence_policy import (
+    MOCK_ENVIRONMENT_KINDS,
+    REAL_E2E_ENVIRONMENT_KINDS,
+    browser_runtime_fields,
+    case_declared_mocked_routes,
+    case_environment_kind,
+    case_real_entrypoint,
+    case_requires_real_e2e,
+    command_core_api_mock_routes,
+)
 from workflow_controller.runners import make_runner, run_agent_backend, RunnerRequest
 from workflow_controller.gates import check_gate_file
 from workflow_controller.gates.parsers import _unit_test_cases
@@ -691,6 +701,7 @@ def run_verifier(
                 state=state,
                 results=[],
                 evidence_files=['green-test.txt'],
+                workspace_dir=None,
             ),
             'verified_at': _now_iso(),
         }
@@ -711,9 +722,10 @@ def run_verifier(
     commands = verification_commands_for_state(state)
     if workspace_path and commands:
         unit_dir.mkdir(parents=True, exist_ok=True)
+        workspace_dir = Path(workspace_path)
         results = run_verification_commands(
             state,
-            Path(workspace_path),
+            workspace_dir,
             progress_callback=progress_callback,
         )
         issues = [
@@ -721,6 +733,13 @@ def run_verifier(
             for result in results
             if not result['ok']
         ]
+        evidence_rows = _verification_evidence_rows(
+            state=state,
+            results=results,
+            evidence_files=['green-test.txt', 'verification.json'],
+            workspace_dir=workspace_dir,
+        )
+        issues.extend(_evidence_row_policy_issues(evidence_rows))
         combined_stdout = '\n'.join(result['stdout'] for result in results if result.get('stdout'))
         combined_stderr = '\n'.join(result['stderr'] for result in results if result.get('stderr'))
         evidence = 'PASSED\n' if not issues else 'FAILED\n'
@@ -736,11 +755,7 @@ def run_verifier(
             'results': results,
             'evidence_files': ['green-test.txt'],
             'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
-            'evidence_rows': _verification_evidence_rows(
-                state=state,
-                results=results,
-                evidence_files=['green-test.txt', 'verification.json'],
-            ),
+            'evidence_rows': evidence_rows,
             'verified_at': _now_iso(),
         }
         _add_journey_evidence(
@@ -769,6 +784,13 @@ def run_verifier(
         if 'PASS' not in green_content.upper():
             issues.append(_issue('green_test_not_passing', 'green-test.txt does not show a passing result'))
 
+    evidence_rows = _verification_evidence_rows(
+        state=state,
+        results=[],
+        evidence_files=evidence_files,
+        workspace_dir=None,
+    )
+    issues.extend(_evidence_row_policy_issues(evidence_rows))
     verification_payload = {
         'unit_id': current_unit_id,
         'passed': not issues,
@@ -776,11 +798,7 @@ def run_verifier(
         'commands': ['inspect green-test.txt for pass evidence'],
         'evidence_files': evidence_files,
         'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
-        'evidence_rows': _verification_evidence_rows(
-            state=state,
-            results=[],
-            evidence_files=evidence_files,
-        ),
+        'evidence_rows': evidence_rows,
         'verified_at': _now_iso(),
     }
     _add_journey_evidence(
@@ -799,6 +817,7 @@ def _verification_evidence_rows(
     state: dict[str, Any],
     results: list[dict[str, Any]],
     evidence_files: list[str],
+    workspace_dir: Path | None,
 ) -> list[dict[str, Any]]:
     unit_id = str(state.get('currentUnitId') or 'unknown-unit')
     unit = _find_unit(state, unit_id)
@@ -821,6 +840,7 @@ def _verification_evidence_rows(
             result_index=result_index,
             result=result,
             evidence_files=evidence_files,
+            workspace_dir=workspace_dir,
         ))
     return rows
 
@@ -833,7 +853,28 @@ def _evidence_row_from_test_case(
     result_index: int | None,
     result: dict[str, Any] | None,
     evidence_files: list[str],
+    workspace_dir: Path | None,
 ) -> dict[str, Any]:
+    mocked_routes = _dedupe_strings([
+        *case_declared_mocked_routes(case),
+        *command_core_api_mock_routes(command, workspace_dir=workspace_dir),
+    ])
+    uses_core_api_mock = bool(
+        case.get('uses_core_api_mock') is True
+        or case.get('usesCoreApiMock') is True
+        or mocked_routes
+    )
+    runtime_fields = browser_runtime_fields(case=case, result=result)
+    environment_kind = case_environment_kind(case, result=result)
+    requires_real_e2e = case_requires_real_e2e(case)
+    status = _evidence_status(
+        command,
+        result,
+        requires_real_e2e=requires_real_e2e,
+        environment_kind=environment_kind,
+        uses_core_api_mock=uses_core_api_mock,
+        runtime_fields=runtime_fields,
+    )
     return {
         'unit_id': unit_id,
         'test_case_id': _optional_str(case.get('id') or case.get('name')),
@@ -843,11 +884,16 @@ def _evidence_row_from_test_case(
         'command': command,
         'manual_evidence': _optional_str(case.get('evidence')),
         'expected': _optional_str(case.get('expected') or case.get('expected_result') or case.get('expectedResult')),
-        'status': _evidence_status(command, result),
+        'status': status,
         'result_index': result_index,
         'returncode': result.get('returncode') if isinstance(result, dict) else None,
         'artifact_refs': _artifact_refs_for_evidence_row(command, result, evidence_files),
         'golden_path': case.get('golden_path') is True,
+        'environment_kind': environment_kind,
+        'real_entrypoint': case_real_entrypoint(case, command),
+        'uses_core_api_mock': uses_core_api_mock,
+        'mocked_routes': mocked_routes,
+        **runtime_fields,
     }
 
 
@@ -871,6 +917,14 @@ def _evidence_row_from_command_result(
         'returncode': result.get('returncode'),
         'artifact_refs': _dedupe_strings(evidence_files),
         'golden_path': False,
+        'environment_kind': 'local_real',
+        'real_entrypoint': _optional_str(result.get('command')),
+        'uses_core_api_mock': False,
+        'mocked_routes': [],
+        'browser_console_errors': _string_list(result.get('browser_console_errors')),
+        'page_errors': _string_list(result.get('page_errors')),
+        'request_failures': _string_list(result.get('request_failures')),
+        'screenshot_refs': _string_list(result.get('screenshot_refs')),
     }
 
 
@@ -889,10 +943,26 @@ def _matching_verification_result(
     return None, None
 
 
-def _evidence_status(command: str | None, result: dict[str, Any] | None) -> str:
+def _evidence_status(
+    command: str | None,
+    result: dict[str, Any] | None,
+    *,
+    requires_real_e2e: bool = False,
+    environment_kind: str = 'local_real',
+    uses_core_api_mock: bool = False,
+    runtime_fields: dict[str, list[str]] | None = None,
+) -> str:
     if command:
         if result is None:
             return 'missing'
+        if requires_real_e2e and (
+            uses_core_api_mock
+            or environment_kind in MOCK_ENVIRONMENT_KINDS
+            or environment_kind not in REAL_E2E_ENVIRONMENT_KINDS
+        ):
+            return 'invalid'
+        if requires_real_e2e and _runtime_error_count(runtime_fields or {}) > 0:
+            return 'failed'
         return 'passed' if result.get('ok') else 'failed'
     return 'manual'
 
@@ -905,6 +975,39 @@ def _artifact_refs_for_evidence_row(
     if command and result is not None:
         return _dedupe_strings([*evidence_files, 'verification.json'])
     return _dedupe_strings(evidence_files)
+
+
+def _evidence_row_policy_issues(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for row in rows:
+        status = str(row.get('status') or '').strip().lower()
+        if status == 'invalid':
+            issues.append(
+                _issue(
+                    'invalid_e2e_evidence',
+                    'Invalid E2E evidence for '
+                    f"{row.get('test_case_id') or row.get('acceptance_criterion') or 'unknown-test'}: "
+                    'core API mock/stubbed browser evidence cannot satisfy real E2E, golden_path, '
+                    'or prototype conformance',
+                )
+            )
+        elif status == 'failed' and _runtime_error_count(row) > 0:
+            issues.append(
+                _issue(
+                    'browser_runtime_error',
+                    'Browser runtime error(s) captured for '
+                    f"{row.get('test_case_id') or row.get('acceptance_criterion') or 'unknown-test'}",
+                )
+            )
+    return issues
+
+
+def _runtime_error_count(payload: dict[str, Any]) -> int:
+    return (
+        len(_string_list(payload.get('browser_console_errors')))
+        + len(_string_list(payload.get('page_errors')))
+        + len(_string_list(payload.get('request_failures')))
+    )
 
 
 def _add_journey_evidence(

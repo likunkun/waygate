@@ -4,7 +4,9 @@
 
 This document is the CLI-oriented guide for Waygate. For concepts and architecture, see [docs/workflow.md](docs/workflow.md) and [docs/architecture.md](docs/architecture.md).
 
-For V0.6.0e environment preparation, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For an introduction and best-practices walkthrough, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
+For V0.6.0h environment preparation, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For an introduction and best-practices walkthrough, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
+
+V0.6.0f tightens browser acceptance evidence: Playwright or browser tests that mock/stub core business APIs cannot be used as E2E, golden path, prototype conformance, or production-readiness evidence.
 
 ## Prerequisites
 
@@ -21,12 +23,13 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.0e_all.deb
+sudo apt install ./dist/waygate_0.6.0h_all.deb
 waygate --help
 waygate doctor
+waygate doctor --color auto
 ```
 
-`waygate doctor` prints the active executable path, imported module path, module version, installed dpkg version, every `waygate` candidate in `PATH`, environment checks for Python, pytest, tmux, Claude Code, Codex, Plannotator, `dpkg-deb`, skill root scans, installed skills, recommended workflow skill gaps, and the recommended Plannotator port. Waygate runners still need a usable `claude` or `codex` CLI command. If doctor reports a `~/.local/bin/waygate` shadow before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`.
+`waygate doctor` starts with `summary:`, `focus:`, and `action_required:` before the detailed checklist. The `focus:` layer groups the first things humans should look at, such as P1 tmux config fixes, install provenance warnings, environment risks, and skill gaps. Use `--color auto|always|never` to highlight status, P1 focus items, manual actions, and section headers; non-TTY output remains plain by default. It prints the active executable path, imported module path, module version, installed dpkg version, every `waygate` candidate in `PATH`, environment checks for Python, pytest, tmux, Claude Code, Codex, Plannotator, `dpkg-deb`, `tmux_config` checks for `~/.tmux.conf`, skill root scans, installed skills, README-aligned recommended workflow skill gaps, `claude_assets`, and the recommended Plannotator port. Waygate runners still need a usable `claude` or `codex` CLI command. If doctor reports a `~/.local/bin/waygate` shadow before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`.
 
 Run from source:
 
@@ -80,6 +83,8 @@ waygate go V1.0 --spec ./requirements.md
 ## Prototype Review Bundle
 
 For UI/UX or Web-system requirements, the Requirements drafter must write `artifacts/requirements-draft/prototype-manifest.json`. Waygate validates it, copies local image/HTML prototypes into `artifacts/requirements-draft/prototypes/`, and renders `plannotator-review.md` plus `plannotator-review.html`. Plannotator annotates the approval file `approvals/requirements-and-acceptance.md`; the HTML bundle is exposed as an auxiliary rendered prototype preview URL during the current review session.
+
+By default, Waygate displays the Plannotator approval page as `http://0.0.0.0:<port>` and the prototype preview as `http://0.0.0.0:<preview-port>/plannotator-review.html`. `0.0.0.0` is a listening/display address; when opening from a remote browser, replace it with the IP or hostname of the machine running Waygate. `WAYGATE_PREVIEW_HOST` overrides the controller preview host, and Waygate passes `PLANNOTATOR_HOST=0.0.0.0` to Plannotator by default. Whether that host changes Plannotator's internal bind behavior depends on the Plannotator binary.
 
 The manifest must map each prototype to real AC IDs and include page states plus click paths. URLs with sensitive query keys such as `token`, `password`, `secret`, `api_key`, or `signature` are rejected.
 
@@ -150,6 +155,7 @@ Print installation, PATH, environment, and skill checks. This command does not r
 
 ```bash
 waygate doctor
+waygate doctor --color always
 ```
 
 ### `approve`

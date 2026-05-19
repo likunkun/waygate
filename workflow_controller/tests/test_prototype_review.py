@@ -423,7 +423,11 @@ def test_prototype_manifest_validation_blocks_unknown_ac_missing_interaction_and
     assert 'sensitive URL query parameter: token' in message
 
 
-def test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_and_approval_gate(tmp_path: Path) -> None:
+def test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_and_approval_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv('WAYGATE_PREVIEW_HOST', raising=False)
     artifacts_dir = tmp_path / 'artifacts'
     draft_dir = artifacts_dir / 'requirements-draft'
     prototype_dir = draft_dir / 'prototypes' / 'checkout-flow'
@@ -447,20 +451,23 @@ def test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_
         prototypes_dir=draft_dir / 'prototypes',
         approval_gate_path=approval_path,
     )
+    request_base_url = server.base_url.replace('0.0.0.0', '127.0.0.1')
     try:
-        markdown_response = urllib.request.urlopen(f'{server.base_url}/plannotator-review.md', timeout=2)
+        assert server.base_url.startswith('http://0.0.0.0:')
+        assert server.preview_url.startswith('http://0.0.0.0:')
+        markdown_response = urllib.request.urlopen(f'{request_base_url}/plannotator-review.md', timeout=2)
         assert markdown_response.read().decode() == '# Review\n'
         assert markdown_response.headers.get_content_type() == 'text/markdown'
         assert markdown_response.headers.get_content_charset() == 'utf-8'
-        html_response = urllib.request.urlopen(f'{server.base_url}/plannotator-review.html', timeout=2)
+        html_response = urllib.request.urlopen(f'{request_base_url}/plannotator-review.html', timeout=2)
         assert html_response.read().decode() == '<!doctype html><p>Review</p>\n'
         assert html_response.headers.get_content_type() == 'text/html'
         assert html_response.headers.get_content_charset() == 'utf-8'
-        assert urllib.request.urlopen(f'{server.base_url}/prototype-review-manifest.json', timeout=2).read().decode() == '{"version": "v0.6.0b"}\n'
-        assert urllib.request.urlopen(f'{server.base_url}/prototypes/checkout-flow/index.html', timeout=2).read().decode() == '<button>OK</button>\n'
-        assert urllib.request.urlopen(f'{server.base_url}/requirements-and-acceptance.md', timeout=2).read().decode() == '# Approval\n'
+        assert urllib.request.urlopen(f'{request_base_url}/prototype-review-manifest.json', timeout=2).read().decode() == '{"version": "v0.6.0b"}\n'
+        assert urllib.request.urlopen(f'{request_base_url}/prototypes/checkout-flow/index.html', timeout=2).read().decode() == '<button>OK</button>\n'
+        assert urllib.request.urlopen(f'{request_base_url}/requirements-and-acceptance.md', timeout=2).read().decode() == '# Approval\n'
         with pytest.raises(urllib.error.HTTPError) as excinfo:
-            urllib.request.urlopen(f'{server.base_url}/../secret.txt', timeout=2)
+            urllib.request.urlopen(f'{request_base_url}/../secret.txt', timeout=2)
         assert excinfo.value.code == 404
     finally:
         server.close()

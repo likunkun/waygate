@@ -96,6 +96,14 @@ def _passed_row(ac_id: str, ao_ids: list[str]) -> dict:
         'returncode': 0,
         'artifact_refs': ['artifacts/unit-01/verification.json'],
         'golden_path': True,
+        'environment_kind': 'local_real',
+        'real_entrypoint': '/delivery',
+        'uses_core_api_mock': False,
+        'mocked_routes': [],
+        'browser_console_errors': [],
+        'page_errors': [],
+        'request_failures': [],
+        'screenshot_refs': [],
     }
 
 
@@ -114,6 +122,14 @@ def _manual_row(ac_id: str, ao_ids: list[str], manual_evidence: str | None, arti
         'returncode': None,
         'artifact_refs': artifact_refs,
         'golden_path': False,
+        'environment_kind': 'local_real',
+        'real_entrypoint': None,
+        'uses_core_api_mock': False,
+        'mocked_routes': [],
+        'browser_console_errors': [],
+        'page_errors': [],
+        'request_failures': [],
+        'screenshot_refs': [],
     }
 
 

@@ -30,9 +30,10 @@ Waygate 不是要把人移出流程，而是把人的注意力放回真正重要
 | Runner 支持 | 支持 subprocess、`tmux-claude`、`tmux-codex`；可以自动识别已有 tmux pane。 |
 | 精修与评审 | Builder 之后可进入 CodeSimplifier/Refiner 和 Reviewer。 |
 | 验证证据 | Verifier 输出结构化 evidence rows，覆盖 AC、Test Case、命令和 artifact。 |
+| 真实 E2E 证据 | V0.6.0f 阻止带核心 API mock/stub 的浏览器测试覆盖 E2E、golden path、prototype conformance 或生产证据。 |
 | 最终验收 | Final Acceptance Gate 展示证据矩阵、Journey 覆盖、Scope Audit 和返工路由。 |
 | Bug Fix Loop | 最终验收缺陷可以进入独立 bug-fix gate，不需要改写原需求。 |
-| 环境检测 | V0.6.0e 扩展 `waygate doctor`，覆盖 Python、pytest、tmux、可选 agent 工具、Plannotator、Debian packaging、skill 根目录扫描和推荐 skill 缺口。 |
+| 环境检测 | V0.6.0h 扩展 `waygate doctor`，提供摘要优先输出、`focus:`、`action_required`、`--color auto|always|never`、`tmux_config`、Python、pytest、tmux、可选 agent 工具、Plannotator、Debian packaging、skill 根目录扫描、`.claude` asset 数量和与 README 对齐的推荐 skill 缺口。 |
 | Debian 包 | `packaging/debian/build-deb.sh` 可构建 `waygate` 命令包。 |
 
 ## 本地依赖
@@ -43,13 +44,14 @@ Waygate 以 Python 3 代码运行。本地开发和验证使用 `python -m pytes
 
 - `tmux-claude` 需要 `tmux` 和 Claude Code。未指定 pane 时，Waygate 可以在 tmux 中创建 Claude Code pane。
 - `tmux-codex` 需要 `tmux` 和已有 Codex pane。Waygate 可以在当前 tmux session 中发现匹配的 Codex pane。
-- Plannotator 是可选但推荐的浏览器人工 gate 审阅工具，可通过 `--plannotator-command` 和 `--plannotator-port` 配置。
+- `waygate doctor` 会检查 `~/.tmux.conf` 中是否包含推荐的 `mouse on`、`history-limit 100000`、`@scroll-speed 5` 和 `@copy-mode-vi` 配置；它只报告 manual action，不会修改或 reload 你的 tmux 配置。
+- Plannotator 是可选但推荐的浏览器人工 gate 审阅工具，可通过 `--plannotator-command` 和 `--plannotator-port` 配置。Waygate 默认用 `0.0.0.0` 展示 Plannotator 和 prototype preview URL，便于远程审阅；远程浏览器通常需要把该 host 替换成运行 Waygate 的机器 IP。
 - 项目需要的 agent skills 由 agent runtime 加载，不由 Debian 包安装；`waygate doctor` 会扫描常见本地 skill 根目录并给出建议性缺口提示。
 - Debian package 构建需要标准 shell 工具和 `dpkg-deb`。
 
 Waygate Markdown spec intake 可通过 `init`、`start`、`go` 的 `--spec <path>` 使用。V0.5.6 只支持本地 Waygate Markdown spec 文件；识别到的外部格式会明确 deferred，不会被静默导入。
 
-V0.6.0e 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
+V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
 
 ## Waygate Agent 使用的 Skills
 
@@ -105,7 +107,7 @@ waygate --help
 waygate doctor
 ```
 
-V0.6.0e 的 `waygate doctor` 会输出安装来源、环境检测和 skill 检测。如果它显示 `~/.local/bin/waygate` 这类用户级 wrapper 排在 `/usr/bin/waygate` 前面，请手工改名或删除该用户级文件，然后执行 `hash -r`。Debian 包会提示 shadow 风险，但不会删除用户文件。
+V0.6.0h 的 `waygate doctor` 会先输出 `summary:`、`focus:` 和 `action_required:`，把最高优先级风险和需要人工处理的事项放在详细清单前面。使用 `waygate doctor --color auto|always|never` 可以给状态、P1 关注项、action 和 section 标题上色，方便人工扫描；非 TTY 输出默认保持纯文本。它还会输出安装来源、环境检测、`tmux_config`、`skill_recommendations` 和 `claude_assets`。如果它显示 `~/.local/bin/waygate` 这类用户级 wrapper 排在 `/usr/bin/waygate` 前面，请手工改名或删除该用户级文件，然后执行 `hash -r`。Debian 包会提示 shadow 风险，但不会删除用户文件。
 
 源码调试入口：
 

@@ -142,6 +142,45 @@
 - Debian 包会把新增 product 与 operations 文档安装到 `/usr/share/doc/waygate/docs/`。
 - V0.6.1 External Spec Intake 和 V0.6.2 Strict Test Presence 仍是后续 planned scope，不属于 V0.6.0e 当前交付。
 
+### V0.6.0f - Real E2E Evidence Gate
+
+目标：防止带 mock/stub 的浏览器测试被当成真实 E2E、golden path、prototype conformance 或生产一致性证据。
+
+已交付：
+
+- Unit Plan 预检会阻断 E2E、golden path、prototype conformance、Journey closure 和 Web 系统验收测试中对 `**/api/...` 等核心业务 API 的 browser mock/stub。
+- 规范 test case metadata：`environment_kind`、`entrypoint` / `real_entrypoint`、`allows_mock`、`mocked_routes`；mock 只能用于非 E2E 的 component/contract/visual 辅助测试。
+- Verifier evidence rows 新增 environment kind、真实入口、核心 API mock 状态、mocked routes、browser console errors、page errors、request failures 和 screenshot refs。
+- 命令退出码为 0 的 mocked browser E2E 也会被分类为 invalid evidence；真实 E2E 中记录到浏览器运行错误时验证失败。
+- Final Acceptance 和 Prototype Conformance 矩阵展示环境、mock 状态与 runtime errors，并要求 prototype/golden path 必须有真实 E2E evidence。
+- Requirements 或人工反馈要求远程日志、生产页面或部署后验证时，要求显式 `production_readonly` 证据。
+
+### V0.6.0g - Doctor Coverage and Remote Review Reachability
+
+目标：完成 V0.6.0f 人类可读收尾记录，并提升环境诊断和远程浏览器审阅原型的可达性。
+
+已交付：
+
+- 在人类可读项目记录中记录 V0.6.0f 已交付，不手工把历史 `.rrc-controller-v0.6.0f/session.json` 改成 `DONE`。
+- `waygate doctor` 新增 `claude_assets` 检查，覆盖 `~/.claude/commands`、`~/.claude/agents`、`~/.claude/rules`、`~/.claude/plugins`；输出仅包含路径、状态和数量。
+- 推荐 skill warning 与 README 推荐基线对齐，覆盖 persistent planning、startup、brainstorming、writing plans、TDD、debugging、test strategy、refiner、verification、code review、plan execution、webapp/browser verification，以及 `frontend-design` / `ui-ux-pro-max`。
+- Controller prototype preview URL 默认展示为 `http://0.0.0.0:<port>/plannotator-review.html`，并支持 `WAYGATE_PREVIEW_HOST` 覆盖。
+- 默认向 Plannotator 传入 `PLANNOTATOR_HOST=0.0.0.0`，并把审批页显示为 `http://0.0.0.0:<port>`。
+- 文档说明 `0.0.0.0` 是监听/展示地址；远程浏览器通常需要替换成运行 Waygate 主机的 IP，Plannotator 实际 bind 行为仍取决于 Plannotator 本体。
+
+### V0.6.0h - tmux Recommended Config and Doctor Information Hierarchy
+
+目标：把推荐 tmux 工作站配置纳入 `waygate doctor`，并让人工处理事项更容易扫描。
+
+已交付：
+
+- 新增 `tmux_config` 检查，固定读取 `~/.tmux.conf`，覆盖 `mouse on`、`history-limit 100000`、`@scroll-speed 5` 和 `@copy-mode-vi 'on'`。
+- 支持解析 `set -g key value` 与 `set-option -g key value`，包括简单引号值；doctor 只报告推荐 key，不输出无关配置行。
+- `doctor` 保持只读：缺失或不匹配的 tmux 配置只产生 warning 和 manual action，Waygate 不修改也不 reload tmux 配置。
+- Doctor 输出顶部新增 `summary:`、`focus:` 和 `action_required:`，再展示安装来源、环境与详细清单。
+- 新增 `waygate doctor --color auto|always|never`，让 TTY 用户能用颜色识别状态、P1 关注项、manual action 和 section 标题；非 TTY 输出默认保持纯文本。
+- 保留既有详细 section，包括 `environment_checks`、`skill_recommendations` 和 `claude_assets`，方便继续排障。
+
 ### V0.6.1 - External Spec Intake
 
 目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径。

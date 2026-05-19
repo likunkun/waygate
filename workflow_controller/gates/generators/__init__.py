@@ -236,7 +236,7 @@ def _unit_plan_summary_lines(state: dict[str, Any]) -> list[str]:
         *command_lines,
         '',
         '### Controller/Critic 检查摘要',
-        '- Controller 会在进入人工确认前预检 Controller State Patch、AO 覆盖、测试用例覆盖、验证环境、Golden Path 和 Journey 映射。',
+        '- Controller 会在进入人工确认前预检 Controller State Patch、AO 覆盖、测试用例覆盖、验证环境、Golden Path、真实 E2E/mock 边界和 Journey 映射。',
         '- Critic：未配置独立审批模型；最终确认仍由人或 controller 规则完成。',
     ]
 
@@ -557,8 +557,8 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         '',
         '## 附录 B：测试用例矩阵（Test Case Matrix）',
         '',
-        '| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |',
-        '|---|---|---|---|---|---|---|---|',
+        '| 验收标准 | 测试用例 | 层级 | Environment | Real Entry | Core API Mock | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |',
+        '|---|---|---|---|---|---|---|---|---|---|---|',
     ])
     for unit in state.get('units', []):
         test_cases = _unit_test_cases(unit)
@@ -584,13 +584,16 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
                 'technical_architecture_ref',
                 'technicalArchitectureRef',
             )
+            environment_kind = str(case.get('environment_kind') or case.get('environmentKind') or 'local_real')
+            real_entrypoint = str(case.get('real_entrypoint') or case.get('realEntrypoint') or case.get('entrypoint') or '未指定')
+            core_api_mock = 'yes' if case.get('uses_core_api_mock') is True or case.get('usesCoreApiMock') is True else 'no'
             fixture = str(case.get('fixture') or case.get('test_data') or case.get('testData') or '未指定')
             command_or_evidence = str(case.get('command') or case.get('evidence') or '未指定')
             expected = str(case.get('expected') or case.get('expected_result') or case.get('expectedResult') or '未指定')
             golden_path = ' · Golden Path' if case.get('golden_path') is True else ''
-            lines.append(f'| {criterion} | {case_id}{golden_path} | {layer} | {product_design_refs} | {technical_architecture_refs} | {fixture} | {command_or_evidence} | {expected} |')
-    if lines[-1] == '|---|---|---|---|---|---|---|---|':
-        lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | 补充产品设计引用 | 补充技术架构引用 | 补充 fixture 或测试数据 | 补充命令或人工证据 | 补充预期结果 |')
+            lines.append(f'| {criterion} | {case_id}{golden_path} | {layer} | {environment_kind} | {real_entrypoint} | {core_api_mock} | {product_design_refs} | {technical_architecture_refs} | {fixture} | {command_or_evidence} | {expected} |')
+    if lines[-1] == '|---|---|---|---|---|---|---|---|---|---|---|':
+        lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | local_real/production_readonly/component_mock/contract_mock/visual | 真实页面或命令入口 | no | 补充产品设计引用 | 补充技术架构引用 | 补充 fixture 或测试数据 | 补充命令或人工证据 | 补充预期结果 |')
     lines.extend([
         '',
         '## 附录 C：执行单元',
@@ -631,6 +634,7 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         '- [ ] 每个目标都映射到一个或多个单元。',
         '- [ ] 每个单元都声明了足够的验证证据。',
         '- [ ] E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言，并至少标记一个 Golden Path 正常流程。',
+        '- [ ] E2E/golden_path/prototype/Journey/Web 系统验收使用真实入口、真实服务/API 和真实测试数据；mock/stub API 只作为非 E2E 辅助测试。',
         '- [ ] fragment 单元没有声称完整场景闭环。',
         '- [ ] closure 单元包含功能或 E2E 闭环证据。',
     ])
@@ -766,14 +770,15 @@ def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> lis
         '',
         '拒绝时请引用矩阵中的 AO、AC、Test Case 或 Evidence，便于路由到 requirements、unit_plan、defect_fix 或 implementation。',
         '',
-        '| AO | AC | Test Case | Layer | Status | Evidence | Expected | Artifacts | Golden Path |',
-        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| AO | AC | Test Case | Layer | Environment | Real Entry | Core API Mock | Runtime Errors | Status | Evidence | Expected | Artifacts | Golden Path |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ]
     if not rows:
-        lines.append('| 未指定 | 未指定 | 未指定 | 未指定 | missing | verification.json 未包含 evidence_rows | 请检查 Verifier evidence schema | verification.json | no |')
+        lines.append('| 未指定 | 未指定 | 未指定 | 未指定 | 未指定 | 未指定 | unknown | unknown | missing | verification.json 未包含 evidence_rows | 请检查 Verifier evidence schema | verification.json | no |')
         return lines
 
     for row in rows:
+        runtime_errors = _runtime_error_cell(row)
         lines.append(
             '| '
             + ' | '.join([
@@ -781,6 +786,10 @@ def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> lis
                 _markdown_cell(row.get('acceptance_criterion') or '未指定'),
                 _markdown_cell(row.get('test_case_id') or '未指定'),
                 _markdown_cell(row.get('layer') or '未指定'),
+                _markdown_cell(row.get('environment_kind') or '未指定'),
+                _markdown_cell(row.get('real_entrypoint') or '未指定'),
+                'yes' if row.get('uses_core_api_mock') is True else 'no',
+                _markdown_cell(runtime_errors),
                 _markdown_cell(row.get('status') or 'missing'),
                 _markdown_cell(_evidence_cell(row)),
                 _markdown_cell(row.get('expected') or '未指定'),
@@ -816,8 +825,8 @@ def _prototype_conformance_matrix_lines(state: dict[str, Any], artifacts_dir: Pa
         '',
         '## Prototype Conformance Matrix',
         '',
-        '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Command | Status |',
-        '| --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ]
     for row in rows:
         command = str(row.get('command') or '').strip()
@@ -830,6 +839,9 @@ def _prototype_conformance_matrix_lines(state: dict[str, Any], artifacts_dir: Pa
                 _markdown_cell(_join_strings(row.get('linked_acceptance_criteria')) or '未指定'),
                 _markdown_cell(row.get('production_target') or '未指定'),
                 _markdown_cell(row.get('test_case_id') or 'missing'),
+                _markdown_cell(row.get('environment_kind') or '未指定'),
+                'yes' if row.get('uses_core_api_mock') is True else 'no',
+                _markdown_cell(str(row.get('runtime_errors') or 0)),
                 _markdown_cell(f'`{command}`' if command else 'missing'),
                 _markdown_cell(row.get('status') or 'missing'),
             ])
@@ -880,6 +892,22 @@ def _evidence_cell(row: dict[str, Any]) -> str:
     return manual_evidence or '未指定'
 
 
+def _runtime_error_cell(row: dict[str, Any]) -> str:
+    total = 0
+    details: list[str] = []
+    for field, label in [
+        ('browser_console_errors', 'console'),
+        ('page_errors', 'page'),
+        ('request_failures', 'request'),
+    ]:
+        values = row.get(field)
+        count = len(values) if isinstance(values, list) else (1 if values else 0)
+        total += count
+        if count:
+            details.append(f'{label}:{count}')
+    return ', '.join(details) if details else 'none'
+
+
 def _join_strings(value: Any) -> str:
     if isinstance(value, list):
         return ', '.join(str(item).strip() for item in value if str(item).strip())
@@ -908,8 +936,16 @@ def _golden_path_result_lines(state: dict[str, Any], verification: dict[str, Any
     ]
     for case in golden_cases:
         command = str(case.get('command') or '').strip()
+        evidence = _find_matching_evidence_row(case, verification.get('evidence_rows') or [])
         result = _find_matching_command_result(command, results)
-        if result is None:
+        if evidence is not None:
+            status = str(evidence.get('status') or 'missing')
+            suffix = ''
+            if evidence.get('uses_core_api_mock') is True:
+                suffix = ' (core API mock)'
+            elif _runtime_error_cell(evidence) != 'none':
+                suffix = f' (runtime errors: {_runtime_error_cell(evidence)})'
+        elif result is None:
             status = 'missing'
             suffix = ''
         else:
@@ -923,6 +959,23 @@ def _golden_path_result_lines(state: dict[str, Any], verification: dict[str, Any
             f"- 期望：{case.get('expected') or '未指定'}",
         ])
     return lines
+
+
+def _find_matching_evidence_row(case: dict[str, Any], rows: list[Any]) -> dict[str, Any] | None:
+    case_id = str(case.get('id') or '').strip()
+    command = str(case.get('command') or '').strip()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if case_id and str(row.get('test_case_id') or '').strip() == case_id:
+            return row
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_command = str(row.get('command') or '').strip()
+        if command and (command == row_command or command in row_command or row_command in command):
+            return row
+    return None
 
 
 

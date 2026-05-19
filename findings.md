@@ -1,5 +1,22 @@
 # 发现与决策
 
+## 2026-05-19 V0.6.0h tmux 推荐配置与 Doctor 信息层级
+
+- `waygate doctor` 的 tmux 配置检查必须保持只读；它只能报告 `found/missing/ok/warning` 和 manual action，不能自动写入 `~/.tmux.conf`，也不能 reload tmux。
+- 推荐 tmux 配置本轮固定为 `mouse on`、`history-limit 100000`、`@scroll-speed 5` 和 `@copy-mode-vi 'on'`；其中 `@copy-mode-vi` 继续按自定义 option 检查，不替换成 tmux 标准 `mode-keys vi`。
+- Doctor 只读取 `HOME/.tmux.conf`，解析 `set -g key value` / `set-option -g key value` 和简单引号值；同一 key 多次出现时，后出现的有效配置为准。
+- 为避免泄露本机配置或 secret，`tmux_config` 只输出推荐 key 的 expected/actual，不输出整份 `.tmux.conf`，也不输出无关配置行。
+- CLI 在非 TTY 和 `--color never` 下仍保持纯文本；本轮 UI/UX 改进落在信息层级与终端高亮上：顶部 `summary:`、`focus:` 和 `action_required:` 放状态、优先关注项与人工处理事项，既有详细 section 保留在后面，兼容用户排障习惯。
+- `waygate doctor --color auto|always|never` 只改变 ANSI 展示，不改变诊断语义；`auto` 仅在 TTY 启用颜色，避免污染日志、管道和测试快照。
+
+## 2026-05-19 V0.6.0g Doctor / 远程审阅可达性
+
+- `.rrc-controller-v0.6.0f/session.json` 当前仍是历史遗留 active state；它不能被手工改成 DONE 来制造 gate/state transition。V0.6.0f 收尾只记录在人类可读项目记录、CHANGELOG/ROADMAP 和真实验证证据中。
+- README 推荐基线中包含 `frontend-design` 或 `ui-ux-pro-max`，因此 doctor 推荐组如果声称与 README 对齐，就必须覆盖 UI-heavy requirements 这一组；只覆盖 workflow 类 skills 会造成文档与诊断分叉。
+- `.claude` 不是通用 skill root；doctor 只应把 `~/.claude/commands`、`agents`、`rules`、`plugins` 当作 Claude runtime assets 做路径/状态/数量检查，不能递归读取 cache、file-history、token、配置内容或环境变量值。
+- Controller prototype preview 绑定 `0.0.0.0` 能提升远程审阅可达性，但 `0.0.0.0` 本身不是远程浏览器应直接使用的主机名；文档和终端输出必须提醒用户通常要替换成运行 Waygate 的机器 IP 或 hostname。
+- `PLANNOTATOR_HOST=0.0.0.0` 是兼容性 env：Waygate 可以传给 Plannotator 并用它展示审批页，但 Plannotator 二进制是否支持该 env、是否真的改变内部 bind，不属于 Waygate 可强制保证的事实。
+
 ## 2026-05-19 `waygate doctor` skills 诊断
 
 - Skills 诊断应保持全局环境视角，不绑定当前 `session.json` 或 unit；这样 `waygate doctor` 可用于安装/排障前置检查，而不会把当前 workflow scope 误当作全局事实。

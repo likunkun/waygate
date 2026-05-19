@@ -15,6 +15,7 @@ from workflow_controller.rrc_real_runtime import (
     infer_execution_workspace,
     run_agent_for_current_step,
 )
+import workflow_controller.steps.builder as builder_module
 from workflow_controller.steps.builder import run_builder, run_verifier
 
 
@@ -675,6 +676,14 @@ def test_run_verifier_executes_verification_commands_in_workspace_and_records_re
         'returncode': 0,
         'artifact_refs': ['green-test.txt', 'verification.json'],
         'golden_path': True,
+        'environment_kind': 'local_real',
+        'real_entrypoint': command,
+        'uses_core_api_mock': False,
+        'mocked_routes': [],
+        'browser_console_errors': [],
+        'page_errors': [],
+        'request_failures': [],
+        'screenshot_refs': [],
     }
 
 
@@ -737,6 +746,111 @@ def test_run_verifier_records_failed_command_evidence_row(tmp_path: Path) -> Non
     assert verification['evidence_rows'][0]['status'] == 'failed'
     assert verification['evidence_rows'][0]['result_index'] == 0
     assert verification['evidence_rows'][0]['returncode'] == 7
+
+
+def test_run_verifier_marks_mocked_browser_e2e_evidence_invalid(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    test_dir = workspace / 'tests' / 'e2e'
+    test_dir.mkdir(parents=True)
+    spec_path = test_dir / 'delivery.spec.ts'
+    spec_path.write_text(
+        """
+import { test } from '@playwright/test';
+
+test('delivery', async ({ page }) => {
+  await page.route('**/api/orders', route =>
+    route.fulfill({ status: 200, json: { id: 'stubbed' } })
+  );
+  await page.goto('/orders');
+});
+""",
+        encoding='utf-8',
+    )
+    command = "DATABASE_URL=file:test.db python -c \"print('passed')\" tests/e2e/delivery.spec.ts"
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'test_cases': [
+                    {
+                        'id': 'TC-AC1-E2E',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'order id #100 is rendered from the real API',
+                        'golden_path': True,
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification failed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['passed'] is False
+    row = verification['evidence_rows'][0]
+    assert row['status'] == 'invalid'
+    assert row['uses_core_api_mock'] is True
+    assert row['mocked_routes'] == ['**/api/orders']
+
+
+def test_run_verifier_records_browser_runtime_errors_and_fails_e2e(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    command = 'npx playwright test tests/e2e/runtime.spec.ts'
+
+    def fake_run_verification_commands(state, workspace_dir, progress_callback=None):
+        return [
+            {
+                'command': command,
+                'returncode': 0,
+                'ok': True,
+                'stdout': '',
+                'stderr': '',
+                'browser_console_errors': ['TypeError: failed to render course card'],
+                'page_errors': [],
+                'request_failures': [],
+                'screenshot_refs': ['screenshots/runtime.png'],
+            }
+        ]
+
+    monkeypatch.setattr(builder_module, 'run_verification_commands', fake_run_verification_commands)
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'test_cases': [
+                    {
+                        'id': 'TC-AC1-E2E',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'course card renders the published status',
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification failed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['passed'] is False
+    row = verification['evidence_rows'][0]
+    assert row['status'] == 'failed'
+    assert row['browser_console_errors'] == ['TypeError: failed to render course card']
+    assert row['screenshot_refs'] == ['screenshots/runtime.png']
 
 
 def test_run_verifier_supports_bash_source_in_approved_verification_command(tmp_path: Path) -> None:

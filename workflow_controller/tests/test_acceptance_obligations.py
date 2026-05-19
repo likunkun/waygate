@@ -785,6 +785,33 @@ def test_v0_6_0_web_system_requires_clickable_webpage_prototype(tmp_path: Path) 
     validate_requirements_acceptance_quality(gate, {'currentUnitIsWebSystem': True})
 
 
+def test_v0_6_0_web_system_accepts_clickable_prototype_evidence_table_section(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 1. 需求\n'
+        '目标项目是 Web 系统，需要浏览器可见体验。\n\n'
+        '## 3. 验收标准\n'
+        '- AC-11 [verification: functional]: Web 系统必须提供可点击网页原型。\n\n'
+        '## Design/Architecture Traceability Matrix\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-11 | PD-INFRA-11 | TA-WEBPROTO-01, TA-PREFLIGHT-01 | Web 原型预检。 |\n\n'
+        '## 4.10 Web 可点击原型证据（clickable webpage prototype evidence）\n\n'
+        '| Field | Evidence |\n'
+        '| --- | --- |\n'
+        '| URL / access method | `file:///tmp/prototype.html`；浏览器直接打开本地 HTML 文件即可点击。 |\n'
+        '| page states | Dashboard；Settings；Preview。 |\n'
+        '| click path | 打开 HTML 原型 -> 点击 Dashboard -> 点击 Settings -> 点击 Preview。 |\n'
+        '| AC mapping | AC-11 映射到 Dashboard、Settings、Preview 三个页面状态。 |\n',
+        encoding='utf-8',
+    )
+
+    _write_prototype_manifest_for_gate(gate, prototype_type='html', ac='AC-11')
+
+    validate_requirements_acceptance_quality(gate, {'currentUnitIsWebSystem': True})
+
+
 def test_v0_6_0_web_prototype_manual_evidence_maps_to_ac(tmp_path: Path) -> None:
     gate = tmp_path / 'requirements-and-acceptance.md'
     gate.write_text(

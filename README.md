@@ -30,9 +30,10 @@ The point is not to remove the human. The point is to move human attention to th
 | Runner support | Subprocess, `tmux-claude`, and `tmux-codex` runners. Existing tmux panes can be detected automatically. |
 | Refinement and review | Builder output can pass through CodeSimplifier/Refiner and Reviewer roles before verification. |
 | Verification evidence | Verifier output includes structured evidence rows for ACs, test cases, commands, and artifacts. |
+| Real E2E evidence | V0.6.0f blocks mocked/stubbed core API browser tests from satisfying E2E, golden path, prototype conformance, or production evidence. |
 | Final acceptance | Final approval is a gate with evidence, journey coverage, scope audit, and rejection routing. |
 | Bug-fix loop | Final acceptance defects can enter a dedicated bug-fix gate without rewriting requirements. |
-| Environment diagnostics | V0.6.0e extends `waygate doctor` with Python, pytest, tmux, optional agent tools, Plannotator, Debian packaging, skill root scans, and recommended skill gaps. |
+| Environment diagnostics | V0.6.0h extends `waygate doctor` with summary-first output, `focus:`, `action_required`, `--color auto|always|never`, `tmux_config`, Python, pytest, tmux, optional agent tools, Plannotator, Debian packaging, skill root scans, `.claude` asset counts, and README-aligned recommended skill gaps. |
 | Debian package | `packaging/debian/build-deb.sh` builds a `waygate` command package. |
 
 ## Local Dependencies
@@ -43,13 +44,14 @@ Real agent execution depends on the selected runner:
 
 - `tmux-claude` requires `tmux` and Claude Code. Waygate can create a Claude Code pane in tmux when no pane is provided.
 - `tmux-codex` requires `tmux` and an existing Codex pane. Waygate can discover a matching Codex pane in the current tmux session.
-- Plannotator is optional but recommended for browser-assisted human gate review; configure it with `--plannotator-command` and `--plannotator-port`.
+- `waygate doctor` checks `~/.tmux.conf` for the recommended `mouse on`, `history-limit 100000`, `@scroll-speed 5`, and `@copy-mode-vi` settings; it reports manual actions but never edits or reloads your tmux config.
+- Plannotator is optional but recommended for browser-assisted human gate review; configure it with `--plannotator-command` and `--plannotator-port`. Waygate displays Plannotator and prototype preview URLs with `0.0.0.0` by default for remote review, and remote browsers usually need that host replaced with the machine IP.
 - Project-specific agent skills are loaded by the agent runtime, not by the Debian package; `waygate doctor` scans common local skill roots and reports advisory gaps.
 - Debian package builds require standard shell tools and `dpkg-deb`.
 
 Waygate Markdown spec intake is available through `--spec <path>` on `init`, `start`, and `go`. In V0.5.6 this supports local Waygate Markdown spec files only; detected external formats are deferred rather than imported silently.
 
-For the V0.6.0e recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
+For the V0.6.0h recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
 ## Skills Used by Waygate Agents
 
@@ -105,7 +107,7 @@ waygate --help
 waygate doctor
 ```
 
-In V0.6.0e, `waygate doctor` reports install provenance, an `environment_checks` section, and skill diagnostics. If it reports a user-level wrapper such as `~/.local/bin/waygate` before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`. The Debian package warns about this shadowing but does not delete user files.
+In V0.6.0h, `waygate doctor` starts with `summary:`, `focus:`, and `action_required:` so the most important risks and manual fixes are visible before the detailed inventory. Use `waygate doctor --color auto|always|never` to color status, P1 focus items, actions, and section headers for human scanning while keeping non-TTY output plain by default. It reports install provenance, `environment_checks`, `tmux_config`, `skill_recommendations`, and `claude_assets`. If it reports a user-level wrapper such as `~/.local/bin/waygate` before `/usr/bin/waygate`, rename or remove the user-level wrapper and run `hash -r`. The Debian package warns about this shadowing but does not delete user files.
 
 For local development, run from the source tree:
 

@@ -63,6 +63,7 @@ def run_plannotator_gate_review(
     state_dir: Path,
     command: str = 'plannotator',
     port: int | None = 20000,
+    host: str | None = None,
     timeout_seconds: int = 30,
 ) -> PlannotatorReviewResult:
     if not gate_path.exists():
@@ -84,6 +85,8 @@ def run_plannotator_gate_review(
     env = os.environ.copy()
     if port is not None:
         env['PLANNOTATOR_PORT'] = str(port)
+    plannotator_host = (host or env.get('PLANNOTATOR_HOST') or '0.0.0.0').strip() or '0.0.0.0'
+    env['PLANNOTATOR_HOST'] = plannotator_host
     with stdout_path.open('w', encoding='utf-8') as stdout_file, stderr_path.open('w', encoding='utf-8') as stderr_file:
         process = subprocess.Popen(
             full_command,
@@ -108,6 +111,7 @@ def run_plannotator_gate_review(
                 gate_path=gate_path,
                 full_command=full_command,
                 plannotator_port=env.get('PLANNOTATOR_PORT'),
+                plannotator_host=env.get('PLANNOTATOR_HOST'),
                 returncode=returncode,
                 stdout=stdout,
                 stderr=stderr,
@@ -143,6 +147,7 @@ def run_plannotator_gate_review(
                 gate_path=gate_path,
                 full_command=full_command,
                 plannotator_port=env.get('PLANNOTATOR_PORT'),
+                plannotator_host=env.get('PLANNOTATOR_HOST'),
                 returncode=None,
                 stdout=stdout,
                 stderr=stderr,
@@ -177,6 +182,7 @@ def run_plannotator_gate_review(
                 gate_path=gate_path,
                 full_command=full_command,
                 plannotator_port=env.get('PLANNOTATOR_PORT'),
+                plannotator_host=env.get('PLANNOTATOR_HOST'),
                 returncode=process.returncode,
                 stdout=stdout,
                 stderr=stderr,
@@ -216,6 +222,7 @@ def _write_summary(
     gate_path: Path,
     full_command: list[str],
     plannotator_port: str | None,
+    plannotator_host: str | None,
     returncode: int | None,
     stdout: str,
     stderr: str,
@@ -232,6 +239,7 @@ def _write_summary(
                 'gate_path': str(gate_path),
                 'command': full_command,
                 'plannotator_port': plannotator_port,
+                'plannotator_host': plannotator_host,
                 'returncode': returncode,
                 'stdout': stdout,
                 'stderr': stderr,

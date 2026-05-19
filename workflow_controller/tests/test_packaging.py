@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_version_flag_outputs_package_version() -> None:
-    assert __version__ == '0.6.0e'
+    assert __version__ == '0.6.0h'
     result = subprocess.run(
         [sys.executable, '-m', 'workflow_controller.cli', '--version'],
         text=True,
@@ -139,9 +139,27 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     for expected in ['Python 3', 'pytest', 'tmux', 'Claude Code', 'Codex', 'Plannotator', 'skills', 'dpkg-deb', 'Waygate Markdown spec']:
         assert expected in readme_zh
     for doc in [readme, readme_zh, usage, usage_zh, roadmap, roadmap_zh, changelog, changelog_zh]:
-        assert 'V0.6.0e' in doc or '0.6.0e' in doc
+        assert 'V0.6.0h' in doc or '0.6.0h' in doc
         assert 'recommended-environment' in doc or '推荐环境' in doc
         assert 'doctor' in doc or '环境检测' in doc or '介绍' in doc
+
+    packaged_docs = '\n'.join(
+        [readme, readme_zh, usage, usage_zh, roadmap, roadmap_zh, changelog, changelog_zh, recommended_env, recommended_env_zh]
+    )
+    for expected in [
+        '.tmux.conf',
+        'mouse on',
+        'history-limit 100000',
+        '@scroll-speed 5',
+        '@copy-mode-vi',
+        'tmux_config',
+        'summary:',
+        'focus:',
+        'action_required',
+        '--color',
+        '0.6.0h',
+    ]:
+        assert expected in packaged_docs
 
     for doc in [recommended_env, recommended_env_zh]:
         assert 'Python 3.11' in doc
@@ -152,6 +170,8 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
         assert 'tmux-codex' in doc
         assert '20000' in doc
         assert 'skills' in doc or 'skill' in doc
+        assert 'ui-ux-pro-max' in doc
+        assert 'claude_assets' in doc
         assert 'PATH shadow' in doc
 
     for doc in [product_intro, product_intro_zh]:

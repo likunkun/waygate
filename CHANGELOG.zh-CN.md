@@ -2,6 +2,31 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.0h
+
+- `waygate doctor` 新增 `tmux_config` section，检查推荐 `~/.tmux.conf` 配置：`mouse on`、`history-limit 100000`、`@scroll-speed 5` 和 `@copy-mode-vi 'on'`。
+- tmux 配置诊断保持只读：warning 会展示 expected/actual 和 manual action，但 Waygate 不修改也不 reload tmux 配置。
+- Doctor 输出改为先展示 `summary:`、`focus:` 和 `action_required:`，再展示安装来源、PATH、环境、skills 和 Claude assets 等详细 section。
+- 新增 `waygate doctor --color auto|always|never`，高亮状态、P1 关注项、manual action 和 section 标题，方便人工扫描；非 TTY 输出默认保持纯文本。
+- 保留既有详细 section 便于排障，同时把 PATH shadow、版本不一致、缺工具、缺 skill 和 tmux 配置事项提升到顶部。
+- README、USAGE、路线图、推荐环境文档和包版本同步到 `0.6.0h`。
+
+## 0.6.0g
+
+- `waygate doctor` 新增 `claude_assets` section，报告 `~/.claude/commands`、`agents`、`rules`、`plugins` 的路径、状态和数量，不读取内容。
+- `skill_recommendations` 与 README 推荐基线对齐，补齐 code review、plan execution、webapp testing，以及 UI-heavy requirements 所需的 `frontend-design` / `ui-ux-pro-max`。
+- Controller prototype preview server 默认绑定并展示 `0.0.0.0`，让原型审阅 URL 更适合远程浏览器访问。
+- 默认向 Plannotator 子进程传入 `PLANNOTATOR_HOST=0.0.0.0`，并用同一 host 展示 Plannotator 审批页。
+- 文档说明 `0.0.0.0` 是监听/展示地址，远程浏览器通常需要替换为运行 Waygate 主机的 IP。
+
+## 0.6.0f
+
+- Unit Plan 人工确认新增真实 E2E 证据门禁：mock/stub 核心业务 API 的浏览器测试不能覆盖 E2E、golden path、prototype conformance、Journey closure 或 Web 系统验收。
+- Verifier evidence rows 新增 environment kind、真实入口、核心 API mock 状态、mocked routes、浏览器 console/page/request 运行错误和截图引用字段。
+- 即使命令退出码为 0，带核心 API mock 的浏览器 E2E 证据也会标记为 `invalid`；真实 E2E 中记录到 console/page/request runtime error 时验证失败。
+- Final Acceptance 与 Prototype Conformance 矩阵新增环境、mock 和 runtime error 列，并用真实 E2E 证据阻断非真实 prototype/golden-path 终验。
+- 当 Requirements 或人工反馈要求远程日志、生产页面或部署后验证时，必须使用 `environment_kind=production_readonly` 的只读生产证据，不能用本地测试替代。
+
 ## 0.6.0e
 
 - 扩展 `waygate doctor` 的 `environment_checks`，覆盖 Python、pytest、tmux、tmux session、Claude Code、Codex、Plannotator、`dpkg-deb` 和推荐 Plannotator port `20000`。

@@ -4109,6 +4109,7 @@ print('{"decision":"dismissed"}')
     )
     fake_plannotator.chmod(0o755)
     monkeypatch.setenv('PLANNOTATOR_LOG', str(plannotator_log))
+    monkeypatch.delenv('PLANNOTATOR_HOST', raising=False)
 
     result = run_rrc(
         'drive',
@@ -4122,7 +4123,7 @@ print('{"decision":"dismissed"}')
 
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
-    assert 'http://localhost:20000' in result.stdout
+    assert 'http://0.0.0.0:20000' in result.stdout
     assert 'Open this link on your local machine to annotate:' not in result.stdout
     assert 'https://share.plannotator.ai/#fake' not in result.stdout
     assert '请在 Plannotator 浏览器里选择 Approve 或 Close。Approve 会自动继续。' in result.stdout
@@ -4229,6 +4230,7 @@ print('{"decision":"dismissed"}')
     )
     fake_plannotator.chmod(0o755)
     monkeypatch.setenv('PLANNOTATOR_LOG', str(plannotator_log))
+    monkeypatch.delenv('PLANNOTATOR_HOST', raising=False)
 
     result = run_rrc(
         'drive',
@@ -4243,8 +4245,8 @@ print('{"decision":"dismissed"}')
     assert result.returncode == 0, result.stderr
     assert f'审批文件：{approval_path}' in result.stdout
     assert f'辅助预览文件：{html_review_path}' in result.stdout
-    assert 'Plannotator 审批页: http://localhost:20000' in result.stdout
-    assert '原型渲染预览页: http://127.0.0.1:' in result.stdout
+    assert 'Plannotator 审批页: http://0.0.0.0:20000' in result.stdout
+    assert '原型渲染预览页: http://0.0.0.0:' in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
         'annotate',
         str(approval_path),
@@ -4258,10 +4260,11 @@ print('{"decision":"dismissed"}')
     assert summary['approval_gate_path'] == str(approval_path)
     assert summary['prototype_review_manifest_path'] == str(manifest_path)
     assert summary['prototype_review_path'] == str(html_review_path)
-    assert summary['prototype_review_preview_url'].startswith('http://127.0.0.1:')
+    assert summary['prototype_review_preview_url'].startswith('http://0.0.0.0:')
     assert summary['prototype_review_preview_url'].endswith('/plannotator-review.html')
     approval_text = approval_path.read_text(encoding='utf-8')
     assert '127.0.0.1:' not in approval_text
+    assert '0.0.0.0:' not in approval_text
     events = [
         json.loads(line)
         for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
@@ -4298,8 +4301,8 @@ print('{"decision":"dismissed"}')
     ]
     assert approval_lines and '\x1b[' in approval_lines[0]
     assert preview_lines and '\x1b[' in preview_lines[0]
-    assert 'Plannotator 审批页: http://localhost:20000' in color_result.stdout
-    assert '原型渲染预览页: http://127.0.0.1:' in color_result.stdout
+    assert 'Plannotator 审批页: http://0.0.0.0:20000' in color_result.stdout
+    assert '原型渲染预览页: http://0.0.0.0:' in color_result.stdout
 
 
 def test_drive_auto_approves_gate_when_plannotator_approves(
@@ -6002,7 +6005,7 @@ import os
 from pathlib import Path
 
 Path(os.environ['PLANNOTATOR_ENV_LOG']).write_text(
-    json.dumps({'port': os.environ.get('PLANNOTATOR_PORT')}),
+    json.dumps({'port': os.environ.get('PLANNOTATOR_PORT'), 'host': os.environ.get('PLANNOTATOR_HOST')}),
     encoding='utf-8',
 )
 print('Open this link on your local machine to annotate:')
@@ -6012,6 +6015,7 @@ print('https://share.plannotator.ai/#fake-port')
     )
     fake_plannotator.chmod(0o755)
     monkeypatch.setenv('PLANNOTATOR_ENV_LOG', str(env_log))
+    monkeypatch.delenv('PLANNOTATOR_HOST', raising=False)
 
     result = run_rrc(
         'drive',
@@ -6026,13 +6030,15 @@ print('https://share.plannotator.ai/#fake-port')
     )
 
     assert result.returncode == 0, result.stderr
-    assert 'http://localhost:20000' in result.stdout
-    assert json.loads(env_log.read_text(encoding='utf-8')) == {'port': '20000'}
+    assert 'http://0.0.0.0:20000' in result.stdout
+    assert json.loads(env_log.read_text(encoding='utf-8')) == {'port': '20000', 'host': '0.0.0.0'}
 
 
 def test_drive_waits_for_plannotator_approval_after_printing_link(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.delenv('PLANNOTATOR_HOST', raising=False)
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
     controller.init_state(
@@ -6124,7 +6130,7 @@ print('{"decision":"approved"}', flush=True)
 
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
-    assert 'http://localhost:20000' in result.stdout
+    assert 'http://0.0.0.0:20000' in result.stdout
     assert 'Open this link on your local machine to annotate:' not in result.stdout
     assert 'https://share.plannotator.ai/#long-running' not in result.stdout
     assert '等待 Plannotator 操作结果' in result.stdout

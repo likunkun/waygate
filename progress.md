@@ -2,6 +2,39 @@
 
 ## 会话：2026-05-19
 
+### V0.6.0h tmux 推荐配置与 Doctor CLI 信息层级
+- **状态：** complete
+- `waygate doctor` 顶部新增 `summary:`、`focus:` 和 `action_required:`，先展示 overall status、warning/manual action 数量、P1/P2/P3 关注项和需要人工处理的事项，再保留 executable/module/dpkg/PATH、`warnings`、`environment_checks`、`tmux_config`、skills 和 `claude_assets` 详细清单。
+- `waygate doctor --color auto|always|never` 已支持给状态、P1 关注项、manual action 和 section 标题上色；非 TTY 输出默认保持纯文本，便于日志和脚本消费。
+- 新增 `tmux_config` 诊断：固定读取 `HOME/.tmux.conf`，检查 `set -g mouse on`、`set -g history-limit 100000`、`set -g @scroll-speed 5` 和 `set -g @copy-mode-vi 'on'`；支持 `set` / `set-option`、简单引号解析和同 key 后写覆盖。
+- Doctor 对 tmux 配置保持只读：缺失或不匹配时输出 `status=warning`、expected/actual 和 manual action，不修改用户配置、不 reload tmux，也不输出无关配置行。
+- 文档已同步 README / README.zh-CN / USAGE / USAGE.zh-CN / ROADMAP / ROADMAP.zh-CN / CHANGELOG / CHANGELOG.zh-CN / docs/operations recommended environment；版本更新为 `0.6.0h`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_diagnostics.py -q` -> `14 passed`
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `3 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `464 passed in 70.92s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0h_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0h_all.deb Version` -> `0.6.0h`
+  - `WAYGATE_LIB_DIR=/tmp/waygate-0.6.0h-extract/usr/lib/waygate /tmp/waygate-0.6.0h-extract/usr/bin/waygate --version` -> `waygate 0.6.0h`
+
+### V0.6.0f 收尾与 V0.6.0g Doctor / 远程审阅可达性
+- **状态：** complete
+- V0.6.0f 已按人类可读记录收尾：代码版本、CHANGELOG 和 ROADMAP 均记录真实 E2E evidence gate 已交付；历史 `.rrc-controller-v0.6.0f/session.json` 仍保持原 active state，没有手工改成 DONE。
+- V0.6.0g 已实施：`waygate doctor` 新增 `claude_assets`，只报告 `~/.claude/commands`、`agents`、`rules`、`plugins` 的路径、状态和数量，不读取 cache、file-history、secret 或环境变量值。
+- `skill_recommendations` 已与 README 推荐基线对齐，补齐 code review、plan execution、webapp testing，以及 README 中已有的 `frontend-design` / `ui-ux-pro-max` UI-heavy requirements 推荐组。
+- Controller prototype preview server 默认绑定并展示 `0.0.0.0`；Requirements Plannotator 输出现在显示 `Plannotator 审批页: http://0.0.0.0:<port>` 和 `原型渲染预览页: http://0.0.0.0:<preview-port>/plannotator-review.html`。
+- Waygate 默认向 Plannotator 子进程传入 `PLANNOTATOR_HOST=0.0.0.0`，并保留 `PLANNOTATOR_PORT`；文档注明远程浏览器通常要把 `0.0.0.0` 替换为运行 Waygate 主机的 IP，且 Plannotator 内部 bind 是否受该 env 影响取决于 Plannotator 本体。
+- `workflow_controller.__version__` 更新为 `0.6.0g`，已生成 `dist/waygate_0.6.0g_all.deb`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_diagnostics.py -q` -> `9 passed`
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `7 passed`
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `3 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `459 passed in 69.83s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0g_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0g_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0g / all / python3`
+  - `WAYGATE_LIB_DIR=/tmp/waygate-0.6.0g-extract/usr/lib/waygate /tmp/waygate-0.6.0g-extract/usr/bin/waygate --version` -> `waygate 0.6.0g`
+- 当前环境没有 `python` 命令，因此全量验证使用 `python3 -m pytest ...` 执行。
+
 ### `waygate doctor` skills 诊断调整
 - **状态：** complete
 - `waygate doctor` 现在扫描常见 agent skill 根目录：`~/.agents/skills`、`~/.codex/skills`、`~/.codex/superpowers/skills`、`~/.config/opencode/skills`，并支持 `WAYGATE_SKILL_ROOTS` 追加自定义目录。

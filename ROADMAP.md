@@ -142,6 +142,45 @@ Delivered work:
 - Package the new product and operations docs under `/usr/share/doc/waygate/docs/`.
 - Keep V0.6.1 External Spec Intake and V0.6.2 Strict Test Presence as future planned scope, not V0.6.0e delivery.
 
+### V0.6.0f - Real E2E Evidence Gate
+
+Goal: prevent mocked/stubbed browser tests from being accepted as real E2E, golden path, prototype conformance, or production-consistency evidence.
+
+Delivered work:
+
+- Add Unit Plan validation that blocks E2E, golden path, prototype conformance, Journey closure, and Web-system acceptance test cases when their browser scripts mock or stub core business API routes such as `**/api/...`.
+- Standardize test case metadata around `environment_kind`, `entrypoint` / `real_entrypoint`, `allows_mock`, and `mocked_routes`, with mocks limited to non-E2E component/contract/visual auxiliary tests.
+- Extend verifier evidence rows with environment kind, real entrypoint, core API mock status, mocked routes, browser console errors, page errors, request failures, and screenshot references.
+- Classify successful mocked browser E2E commands as invalid evidence and fail real E2E evidence when browser runtime errors are recorded.
+- Expand Final Acceptance and Prototype Conformance matrices so environment, mock status, and runtime errors are visible, and require real E2E evidence for prototype and golden path acceptance.
+- Require explicit `production_readonly` evidence when Requirements or feedback demand remote logs, production pages, or post-deploy verification.
+
+### V0.6.0g - Doctor Coverage and Remote Review Reachability
+
+Goal: close V0.6.0f documentation gaps while making environment diagnostics and Plannotator prototype review more useful from remote browsers.
+
+Delivered work:
+
+- Record V0.6.0f as delivered in human-readable project records without manually changing the historical `.rrc-controller-v0.6.0f/session.json` to `DONE`.
+- Extend `waygate doctor` with `claude_assets` checks for `~/.claude/commands`, `~/.claude/agents`, `~/.claude/rules`, and `~/.claude/plugins`; output is limited to path, status, and count.
+- Align recommended skill warnings with the README baseline, including persistent planning, startup, brainstorming, writing plans, TDD, debugging, test strategy, refiner, verification, code review, plan execution, webapp/browser verification, and `frontend-design` / `ui-ux-pro-max`.
+- Make controller prototype preview URLs default to `http://0.0.0.0:<port>/plannotator-review.html`, with `WAYGATE_PREVIEW_HOST` as the override.
+- Pass `PLANNOTATOR_HOST=0.0.0.0` to Plannotator by default and display the approval URL as `http://0.0.0.0:<port>`.
+- Document that `0.0.0.0` is a listening/display address; remote browsers usually need to replace it with the Waygate host IP, and Plannotator bind behavior still depends on the Plannotator binary.
+
+### V0.6.0h - tmux Recommended Config and Doctor Information Hierarchy
+
+Goal: make the recommended tmux workstation setup visible in `waygate doctor` while making manual actions easier to scan.
+
+Delivered work:
+
+- Add `tmux_config` checks for `~/.tmux.conf`, covering `mouse on`, `history-limit 100000`, `@scroll-speed 5`, and `@copy-mode-vi 'on'`.
+- Parse `set -g key value` and `set-option -g key value`, including simple quoted values, while reporting only recommended keys and never printing unrelated config lines.
+- Keep `doctor` read-only: missing or mismatched tmux config produces warnings and manual actions, but Waygate does not edit or reload tmux config.
+- Reorder doctor output with top-level `summary:`, `focus:`, and `action_required:` sections before detailed provenance and environment sections.
+- Add `waygate doctor --color auto|always|never` so TTY users can see status, P1 focus items, manual actions, and section headers in color while non-TTY output remains plain by default.
+- Preserve existing detailed sections, including `environment_checks`, `skill_recommendations`, and `claude_assets`, for troubleshooting continuity.
+
 ### V0.6.1 - External Spec Intake
 
 Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable.

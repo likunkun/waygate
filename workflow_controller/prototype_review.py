@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import html
 import mimetypes
+import os
 import posixpath
 import re
 import shutil
@@ -12,6 +13,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
+
+from workflow_controller.evidence_policy import (
+    case_environment_kind,
+    case_real_entrypoint,
+    evidence_row_real_e2e_issue,
+)
 
 
 PROTOTYPE_REVIEW_VERSION = 'v0.6.0b'
@@ -419,6 +426,7 @@ def start_prototype_review_preview_server(
     manifest_path: Path,
     prototypes_dir: Path,
     approval_gate_path: Path,
+    host: str | None = None,
 ) -> PrototypePreviewServer:
     allowed = {
         f'/{review_path.name}': review_path.resolve(),
@@ -453,14 +461,16 @@ def start_prototype_review_preview_server(
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             return
 
-    httpd = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    bind_host = (host or os.environ.get('WAYGATE_PREVIEW_HOST') or '0.0.0.0').strip() or '0.0.0.0'
+    httpd = ThreadingHTTPServer((bind_host, 0), Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
-    host, port = httpd.server_address[:2]
+    server_host, port = httpd.server_address[:2]
+    display_host = bind_host if bind_host not in {'', '::'} else server_host
     return PrototypePreviewServer(
         httpd=httpd,
         thread=thread,
-        base_url=f'http://{host}:{port}',
+        base_url=f'http://{display_host}:{port}',
         review_name=review_path.name,
     )
 
@@ -923,17 +933,32 @@ def prototype_conformance_matrix_rows(
                 'status': 'missing',
                 'expected': '',
                 'artifact_refs': [],
+                'environment_kind': '',
+                'real_entrypoint': '',
+                'uses_core_api_mock': False,
+                'runtime_errors': 0,
+                'evidence_issue': 'missing',
             })
             continue
         for case in matched_cases:
             evidence = _matching_evidence_row(case, evidence_rows)
+            effective_evidence = _prototype_effective_evidence_row(case, evidence)
+            evidence_issue = evidence_row_real_e2e_issue(effective_evidence) if effective_evidence else 'missing'
+            status = 'passed' if effective_evidence and not evidence_issue else str((evidence or {}).get('status') or 'missing')
+            if evidence_issue and status == 'passed':
+                status = f'invalid: {evidence_issue}'
             rows.append({
                 **base_row,
                 'test_case_id': str(case.get('id') or '').strip(),
-                'command': str(case.get('command') or (evidence or {}).get('command') or '').strip(),
-                'status': str((evidence or {}).get('status') or 'missing'),
-                'expected': str(case.get('expected') or (evidence or {}).get('expected') or '').strip(),
-                'artifact_refs': (evidence or {}).get('artifact_refs') or [],
+                'command': str(case.get('command') or (effective_evidence or {}).get('command') or '').strip(),
+                'status': status,
+                'expected': str(case.get('expected') or (effective_evidence or {}).get('expected') or '').strip(),
+                'artifact_refs': (effective_evidence or {}).get('artifact_refs') or [],
+                'environment_kind': str((effective_evidence or {}).get('environment_kind') or '').strip(),
+                'real_entrypoint': str((effective_evidence or {}).get('real_entrypoint') or '').strip(),
+                'uses_core_api_mock': bool((effective_evidence or {}).get('uses_core_api_mock')),
+                'runtime_errors': _prototype_runtime_error_count(effective_evidence or {}),
+                'evidence_issue': evidence_issue,
             })
     return rows
 
@@ -960,7 +985,7 @@ def validate_final_prototype_conformance(
     incomplete = [
         group_rows[0]
         for group_rows in grouped.values()
-        if not any(row.get('status') == 'passed' for row in group_rows)
+        if not any(row.get('status') == 'passed' and not row.get('evidence_issue') for row in group_rows)
     ]
     if not incomplete:
         return
@@ -973,19 +998,20 @@ def validate_final_prototype_conformance(
 
 def _prototype_conformance_row_summary(row: dict[str, Any]) -> str:
     surface_id = str(row.get('surface_id') or '').strip()
+    status = row.get('evidence_issue') or row.get('status') or 'missing'
     if surface_id:
         return 'prototype {prototype} surface {surface} target {target} via {case}: {status}'.format(
             prototype=row.get('prototype_id') or 'unknown-prototype',
             surface=surface_id,
             target=row.get('production_target') or 'unknown-target',
             case=row.get('test_case_id') or 'missing-test-case',
-            status=row.get('status') or 'missing',
+            status=status,
         )
     return '{prototype} -> {target} via {case}: {status}'.format(
         prototype=row.get('prototype_id') or 'unknown-prototype',
         target=row.get('production_target') or 'unknown-target',
         case=row.get('test_case_id') or 'missing-test-case',
-        status=row.get('status') or 'missing',
+        status=status,
     )
 
 
@@ -1194,6 +1220,34 @@ def _matching_evidence_row(case: dict[str, Any], evidence_rows: list[dict[str, A
         if command and str(row.get('command') or '').strip() == command:
             return row
     return None
+
+
+def _prototype_effective_evidence_row(
+    case: dict[str, Any],
+    evidence: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if evidence is None:
+        return None
+    row = dict(evidence)
+    row.setdefault('layer', case.get('layer'))
+    row.setdefault('environment_kind', case_environment_kind(case))
+    row.setdefault('real_entrypoint', case_real_entrypoint(case, str(row.get('command') or case.get('command') or '')))
+    row.setdefault('uses_core_api_mock', False)
+    row.setdefault('mocked_routes', [])
+    for field in ('browser_console_errors', 'page_errors', 'request_failures', 'screenshot_refs'):
+        row.setdefault(field, [])
+    return row
+
+
+def _prototype_runtime_error_count(row: dict[str, Any]) -> int:
+    total = 0
+    for field in ('browser_console_errors', 'page_errors', 'request_failures'):
+        value = row.get(field)
+        if isinstance(value, list):
+            total += len(value)
+        elif value:
+            total += 1
+    return total
 
 
 def _load_manifest(manifest_path: Path) -> dict[str, Any]:

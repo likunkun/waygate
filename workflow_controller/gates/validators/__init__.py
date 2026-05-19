@@ -9,6 +9,18 @@ from workflow_controller.acceptance_obligations import (
     active_must_obligations,
     covered_obligation_ids_from_state_and_text,
 )
+from workflow_controller.evidence_policy import (
+    MOCK_ENVIRONMENT_KINDS,
+    REAL_E2E_ENVIRONMENT_KINDS,
+    BROWSER_RUNTIME_FIELDS,
+    case_allows_mock,
+    case_declares_core_api_mock,
+    case_declared_mocked_routes,
+    case_environment_kind,
+    case_requires_real_e2e,
+    command_core_api_mock_routes,
+    evidence_row_real_e2e_issue,
+)
 from workflow_controller.gates.parsers import (
     ALLOWED_COVERAGE_STATUSES,
     CONTROLLER_STATE_PATCH_HEADING,
@@ -45,8 +57,16 @@ VERIFICATION_EVIDENCE_ROW_FIELDS = {
     'returncode',
     'artifact_refs',
     'golden_path',
+    'environment_kind',
+    'real_entrypoint',
+    'uses_core_api_mock',
+    'mocked_routes',
+    'browser_console_errors',
+    'page_errors',
+    'request_failures',
+    'screenshot_refs',
 }
-VERIFICATION_EVIDENCE_ROW_STATUSES = {'passed', 'failed', 'missing', 'manual'}
+VERIFICATION_EVIDENCE_ROW_STATUSES = {'passed', 'failed', 'missing', 'manual', 'invalid'}
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +118,17 @@ def validate_verification_evidence_schema(verification_path: Path) -> dict[str, 
             raise ValueError(f'Verification evidence row {index} artifact_refs must be a list: {verification_path}')
         if not isinstance(row.get('golden_path'), bool):
             raise ValueError(f'Verification evidence row {index} golden_path must be a boolean: {verification_path}')
+        if not isinstance(row.get('environment_kind'), str):
+            raise ValueError(f'Verification evidence row {index} environment_kind must be a string: {verification_path}')
+        if row.get('real_entrypoint') is not None and not isinstance(row.get('real_entrypoint'), str):
+            raise ValueError(f'Verification evidence row {index} real_entrypoint must be a string or null: {verification_path}')
+        if not isinstance(row.get('uses_core_api_mock'), bool):
+            raise ValueError(f'Verification evidence row {index} uses_core_api_mock must be a boolean: {verification_path}')
+        for runtime_field in ('mocked_routes', *BROWSER_RUNTIME_FIELDS):
+            if not isinstance(row.get(runtime_field), list):
+                raise ValueError(
+                    f'Verification evidence row {index} {runtime_field} must be a list: {verification_path}'
+                )
     return verification
 
 
@@ -483,6 +514,90 @@ def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
                 )
     if missing:
         raise ValueError('unit plan verification_env is incomplete: ' + '; '.join(missing))
+
+
+def validate_unit_plan_real_e2e_evidence_policy(
+    requirements_path: Path,
+    state: dict[str, Any],
+) -> None:
+    workspace_dir = _state_workspace_dir(state)
+    e2e_ac_ids: set[str] = set()
+    requirements_content = ''
+    if requirements_path.exists():
+        requirements_content = gate_body(requirements_path.read_text(encoding='utf-8'))
+        e2e_ac_ids = {
+            ac_id for ac_id, layer in _requirements_acceptance_criterion_layers(requirements_content).items()
+            if layer == 'e2e'
+        }
+
+    issues: list[str] = []
+    real_or_production_cases: list[dict[str, Any]] = []
+    production_required = _requirements_request_production_readonly_evidence(requirements_content, state)
+    state_web_system = bool(state.get('currentUnitIsWebSystem'))
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict) or bool(unit.get('passes')):
+            continue
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        unit_web_system = state_web_system or bool(unit.get('currentUnitIsWebSystem') or unit.get('web_system'))
+        for case in _unit_test_cases(unit):
+            if not isinstance(case, dict):
+                continue
+            case_id = str(case.get('id') or case.get('name') or 'unknown-test')
+            command = str(case.get('command') or '').strip()
+            environment_kind = case_environment_kind(case)
+            mocked_routes = _case_core_api_mock_routes(case, command, workspace_dir)
+            requires_real = case_requires_real_e2e(
+                case,
+                current_unit_is_web_system=unit_web_system,
+                e2e_acceptance_criteria=e2e_ac_ids,
+            )
+            if environment_kind in REAL_E2E_ENVIRONMENT_KINDS:
+                real_or_production_cases.append(case)
+            if not mocked_routes and not case_declares_core_api_mock(case):
+                continue
+            if requires_real:
+                issues.append(
+                    f'unit {unit_id} test case {case_id} uses core API mock(s) '
+                    f'{mocked_routes or case_declared_mocked_routes(case) or ["declared"]}; '
+                    'real E2E, golden_path, prototype_conformance, and web-system acceptance evidence '
+                    'must use real services/API'
+                )
+                continue
+            if not case_allows_mock(case) or environment_kind not in MOCK_ENVIRONMENT_KINDS:
+                issues.append(
+                    f'unit {unit_id} test case {case_id} declares core API mock(s) '
+                    f'{mocked_routes or case_declared_mocked_routes(case) or ["declared"]} but is not marked as '
+                    'allows_mock=true with environment_kind component_mock, contract_mock, or visual'
+                )
+
+    if production_required:
+        if not any(case_environment_kind(case) == 'production_readonly' for case in real_or_production_cases):
+            issues.append(
+                'requirements or feedback request production/remote verification; '
+                'add a read-only production evidence test case with environment_kind=production_readonly'
+            )
+    if issues:
+        raise ValueError('unit plan real E2E evidence policy is incomplete: ' + '; '.join(issues))
+
+
+def validate_final_real_e2e_evidence(
+    *,
+    state: dict[str, Any],
+    artifacts_dir: Path,
+) -> None:
+    issues: list[str] = []
+    for row in _final_verification_evidence_rows(state, artifacts_dir):
+        if not isinstance(row, dict):
+            continue
+        if row.get('golden_path') is not True:
+            continue
+        issue = evidence_row_real_e2e_issue(row)
+        if issue:
+            issues.append(
+                f"golden_path {row.get('test_case_id') or row.get('acceptance_criterion') or 'unknown-test'}: {issue}"
+            )
+    if issues:
+        raise ValueError('real E2E evidence is incomplete: ' + '; '.join(issues))
 
 
 def apply_unit_plan_state_patch_from_gate(state: dict[str, Any], gate_path: Path) -> dict[str, Any]:
@@ -880,39 +995,55 @@ def _requirements_need_clickable_web_prototype(state: dict[str, Any]) -> bool:
 
 
 def _requirements_has_uiux_prototype_evidence(content: str) -> bool:
-    for line in content.splitlines():
-        normalized = _normalized_requirements_text(line)
-        if not _requirements_line_is_evidence_candidate(normalized):
-            continue
-        if any(keyword in normalized for keyword in ['prototype', '原型', 'design evidence', '设计说明']):
+    for evidence in _requirements_evidence_candidate_texts(content):
+        if any(keyword in evidence for keyword in ['prototype', '原型', 'design evidence', '设计说明']):
             return True
     return False
 
 
 def _requirements_has_clickable_web_prototype_evidence(content: str) -> bool:
-    evidence_lines = [
-        _normalized_requirements_text(line)
-        for line in content.splitlines()
-        if _requirements_line_is_evidence_candidate(_normalized_requirements_text(line))
-    ]
-    if not evidence_lines:
+    evidence_blocks = _requirements_evidence_candidate_texts(content)
+    if not evidence_blocks:
         return False
-    evidence = '\n'.join(evidence_lines)
+    evidence = '\n'.join(evidence_blocks)
     if not any(keyword in evidence for keyword in ['clickable webpage prototype', '可点击网页原型', 'web prototype evidence']):
         return False
-    if any(keyword in evidence for keyword in ['静态截图', 'text-only', '纯文字', '不可点击', 'non-clickable', 'wireframe']):
+    has_static_only_marker = any(keyword in evidence for keyword in ['静态截图', 'text-only', '纯文字', '不可点击', 'non-clickable', 'wireframe'])
+    has_static_only_rejection = any(keyword in evidence for keyword in ['不能作为', '不接受', '不得', 'not accept', 'cannot be used'])
+    if has_static_only_marker and not has_static_only_rejection:
         return False
 
     has_access_method = bool(
-        re.search(r'https?://', evidence)
-        or any(keyword in evidence for keyword in ['start command', '启动命令', '访问方式', 'prototype url', 'local html'])
+        re.search(r'https?://|file://', evidence)
+        or any(keyword in evidence for keyword in ['access method', 'start command', '启动命令', '访问方式', 'prototype url', 'local html'])
     )
     has_page_states = any(keyword in evidence for keyword in ['page states', 'pages ', '页面状态', '关键页面', 'observed page states'])
     has_click_path = any(keyword in evidence for keyword in ['click path', 'clicked ', '点击路径', '核心点击路径'])
     has_ac_mapping = bool(_requirements_ac_ids_in_text(evidence)) and any(
-        keyword in evidence for keyword in ['maps to', 'mapped evidence', '映射', '关联 ac']
+        keyword in evidence for keyword in ['maps to', 'mapped evidence', 'ac mapping', '映射', '关联 ac']
     )
     return has_access_method and has_page_states and has_click_path and has_ac_mapping
+
+
+def _requirements_evidence_candidate_texts(content: str) -> list[str]:
+    lines = content.splitlines()
+    evidence_blocks: list[str] = []
+    for index, line in enumerate(lines):
+        normalized = _normalized_requirements_text(line)
+        if not _requirements_line_is_evidence_candidate(normalized):
+            continue
+
+        block_lines = [line]
+        heading = _requirements_markdown_heading(line)
+        if heading:
+            heading_level, _heading_text = heading
+            for nested_line in lines[index + 1:]:
+                nested_heading = _requirements_markdown_heading(nested_line)
+                if nested_heading and nested_heading[0] <= heading_level:
+                    break
+                block_lines.append(nested_line)
+        evidence_blocks.append(_normalized_requirements_text('\n'.join(block_lines)))
+    return evidence_blocks
 
 
 def _requirements_line_is_evidence_candidate(normalized_line: str) -> bool:
@@ -1456,3 +1587,87 @@ def _required_env_keys_for_verification_command(command: str) -> set[str]:
 
 def _command_sets_env(command: str, key: str) -> bool:
     return re.search(rf'(?:^|[;&\s])(?:export\s+)?{re.escape(key)}\s*=', command) is not None
+
+
+def _state_workspace_dir(state: dict[str, Any]) -> Path | None:
+    raw = state.get('executionWorkspacePath') or state.get('workspacePath')
+    if not raw:
+        return None
+    path = Path(str(raw))
+    return path if path.exists() else None
+
+
+def _case_core_api_mock_routes(
+    case: dict[str, Any],
+    command: str,
+    workspace_dir: Path | None,
+) -> list[str]:
+    routes = [
+        *case_declared_mocked_routes(case),
+        *command_core_api_mock_routes(command, workspace_dir=workspace_dir),
+    ]
+    if case_declares_core_api_mock(case) and not routes:
+        routes.append('declared core API mock')
+    return _dedupe_strings(routes)
+
+
+def _requirements_request_production_readonly_evidence(content: str, state: dict[str, Any]) -> bool:
+    text = '\n'.join([
+        content,
+        str(state.get('requestedOutcome') or ''),
+        str(state.get('feasibleOutcome') or ''),
+        str(state.get('finalAcceptanceRejectionFeedback') or ''),
+        str(state.get('unitPlanRevisionFeedback') or ''),
+    ]).lower()
+    markers = [
+        'remote log',
+        'remote logs',
+        'production page',
+        'production environment',
+        'post-deploy',
+        'post deploy',
+        'deployed page',
+        'deployment verification',
+        '远程日志',
+        '生产页面',
+        '生产环境',
+        '部署后验证',
+        '部署后',
+    ]
+    return any(marker in text for marker in markers)
+
+
+def _final_verification_evidence_rows(state: dict[str, Any], artifacts_dir: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    current_unit_id = str(state.get('currentUnitId') or '').strip()
+    candidate_dirs = []
+    if current_unit_id:
+        candidate_dirs.append(Path(artifacts_dir) / current_unit_id)
+    candidate_dirs.extend(path.parent for path in sorted(Path(artifacts_dir).rglob('verification.json')))
+    seen: set[Path] = set()
+    for unit_dir in candidate_dirs:
+        path = unit_dir / 'verification.json'
+        resolved = path.resolve()
+        if resolved in seen or not path.exists():
+            continue
+        seen.add(resolved)
+        try:
+            payload = _load_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        for row in payload.get('evidence_rows') or []:
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result

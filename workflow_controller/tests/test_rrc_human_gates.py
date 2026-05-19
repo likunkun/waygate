@@ -21,6 +21,7 @@ from workflow_controller.gates.generators import (
 from workflow_controller.prompts.builder import _render_builder_execution_prompt
 from workflow_controller.prompts.requirements import _render_requirements_draft_prompt
 from workflow_controller.prompts.unit_plan import _render_unit_plan_draft_prompt
+from workflow_controller.prototype_review import validate_final_prototype_conformance
 from workflow_controller.steps.builder import prepare_builder_prompt
 
 
@@ -287,7 +288,7 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '如 agent 在 tmux pane 中向用户提问' in requirements_body
     assert '每个 active must AO' in requirements_body
     assert '截图或人工观察不能替代断言' in requirements_body
-    assert '| 验收标准 | 测试用例 | 层级 | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
+    assert '| 验收标准 | 测试用例 | 层级 | Environment | Real Entry | Core API Mock | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
     assert 'E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言' in unit_plan_body
 
 
@@ -1512,6 +1513,75 @@ def test_revise_requirements_gate_can_rewind_from_plan_approved_with_reason(tmp_
     assert reason in change_request['reason']
 
 
+def test_revise_requirements_gate_can_rewind_from_ui_design_done_with_reason(tmp_path: Path) -> None:
+    workspace, _ = _make_target_workspace(tmp_path)
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'target-v1-9-2',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'UI_DESIGN_DONE',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'V1.9.2',
+            'feasibleOutcome': 'V1.9.2',
+            'scopeApproved': True,
+            'agentRunner': 'subprocess',
+            'workspacePath': str(workspace),
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req-approved',
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:unit-approved',
+            'unitPlanAcceptedBy': 'human',
+            'unitPlanDraftGenerated': True,
+            'currentUnitNeedsUiDesign': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '- Must deliver the approved UI workflow.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '- Keep the approved UI implementation plan.\n',
+        encoding='utf-8',
+    )
+    reason = 'V1.9.2 要扩展为打包、远程部署。'
+
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--reason',
+        reason,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'gate=requirements status=revised' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsAccepted'] is False
+    assert state['unitPlanAccepted'] is False
+    revision = json.loads((state_dir / 'artifacts' / 'requirements-revisions' / 'revision-1.json').read_text(encoding='utf-8'))
+    assert reason in revision['feedback']
+    assert '这是 approved Requirements 后的需求变更，不是 Unit Plan 返工' in revision['feedback']
+
+
 def test_revise_requirements_gate_rejects_direct_final_acceptance_rewind(tmp_path: Path) -> None:
     workspace, _ = _make_target_workspace(tmp_path)
     state_dir = tmp_path / '.rrc-controller'
@@ -2599,6 +2669,112 @@ def test_unit_plan_approval_accepts_closure_unit_with_golden_path(tmp_path: Path
     assert state['currentStep'] == 'PLAN_CREATED'
 
 
+def test_unit_plan_approval_rejects_mocked_browser_e2e_core_api_route(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    workspace = tmp_path / 'workspace'
+    test_dir = workspace / 'tests' / 'e2e'
+    test_dir.mkdir(parents=True)
+    (test_dir / 'delivery.spec.ts').write_text(
+        """
+import { test } from '@playwright/test';
+
+test('delivery flow', async ({ page }) => {
+  await page.route('**/api/orders', route =>
+    route.fulfill({ status: 200, json: { id: 'stubbed' } })
+  );
+  await page.goto('/orders');
+});
+""",
+        encoding='utf-8',
+    )
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-e2e',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'executionWorkspacePath': str(workspace),
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'currentUnitIsWebSystem': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-e2e'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-e2e', 'name': 'E2E delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    requirements_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        requirements_path,
+        """# Requirements & Acceptance Confirmation
+
+## 3. Acceptance Criteria
+- AC-01 [verification: e2e]: User can complete the normal delivery flow.
+
+## 4. Test Strategy
+- Playwright E2E tests cover AC-01.
+""",
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    command = 'DATABASE_URL=file:test.db npx playwright test tests/e2e/delivery.spec.ts'
+    unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(
+        unit_plan_path,
+        '# Unit Plan Confirmation\n\n'
+        '## Controller State Patch\n\n'
+        '```json\n'
+        + json.dumps(
+            {
+                'currentUnitId': 'unit-e2e',
+                'objectiveCoverage': [
+                    {'objective': 'Delivery objective', 'units': ['unit-e2e'], 'status': 'partial'}
+                ],
+                'currentUnitIsWebSystem': True,
+                'units': [
+                    {
+                        'id': 'unit-e2e',
+                        'name': 'E2E delivery',
+                        'passes': False,
+                        'workflow_validation_level': 'closure',
+                        'test_cases': [
+                            {
+                                'id': 'TC-AC-01-golden-path',
+                                'acceptance_criterion': 'AC-01',
+                                'layer': 'e2e',
+                                'golden_path': True,
+                                'fixture': 'tests/fixtures/delivery.json',
+                                'command': command,
+                                'expected': 'User completes normal delivery flow and sees confirmation #D-100',
+                            }
+                        ],
+                        'verification_commands': [command],
+                    }
+                ],
+            }
+        )
+        + '\n```\n',
+    )
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'core API mock' in state['blockedReason']
+    assert '**/api/orders' in state['blockedReason']
+
+
 
 def test_unit_plan_approval_rejects_static_only_verification_without_test_cases(tmp_path: Path) -> None:
     state_dir = tmp_path / '.rrc-controller'
@@ -2861,6 +3037,14 @@ def test_final_acceptance_gate_renders_v035_evidence_matrix(tmp_path: Path) -> N
                     'returncode': 0,
                     'artifact_refs': ['green-test.txt', 'verification.json'],
                     'golden_path': True,
+                    'environment_kind': 'local_real',
+                    'real_entrypoint': '/delivery',
+                    'uses_core_api_mock': False,
+                    'mocked_routes': [],
+                    'browser_console_errors': [],
+                    'page_errors': [],
+                    'request_failures': [],
+                    'screenshot_refs': [],
                 },
                 {
                     'unit_id': 'unit-01',
@@ -2876,6 +3060,14 @@ def test_final_acceptance_gate_renders_v035_evidence_matrix(tmp_path: Path) -> N
                     'returncode': None,
                     'artifact_refs': ['approvals/unit-plan.md'],
                     'golden_path': False,
+                    'environment_kind': 'local_real',
+                    'real_entrypoint': None,
+                    'uses_core_api_mock': False,
+                    'mocked_routes': [],
+                    'browser_console_errors': [],
+                    'page_errors': [],
+                    'request_failures': [],
+                    'screenshot_refs': [],
                 },
             ],
         }),
@@ -2886,9 +3078,9 @@ def test_final_acceptance_gate_renders_v035_evidence_matrix(tmp_path: Path) -> N
 
     content = gate_path.read_text(encoding='utf-8')
     assert '## 验收证据矩阵（Final Acceptance Evidence Matrix）' in content
-    assert '| AO | AC | Test Case | Layer | Status | Evidence | Expected | Artifacts | Golden Path |' in content
-    assert '| AO-001 | AC-1 | TC-AC1-GOLDEN | e2e | passed | `pytest tests/test_delivery.py -q` | delivery is visible with status complete | green-test.txt, verification.json | yes |' in content
-    assert '| AO-002 | AC-2 | TC-AC2-MANUAL | manual | manual | approvals/unit-plan.md confirms manual acceptance | manual acceptance is recorded | approvals/unit-plan.md | no |' in content
+    assert '| AO | AC | Test Case | Layer | Environment | Real Entry | Core API Mock | Runtime Errors | Status | Evidence | Expected | Artifacts | Golden Path |' in content
+    assert '| AO-001 | AC-1 | TC-AC1-GOLDEN | e2e | local_real | /delivery | no | none | passed | `pytest tests/test_delivery.py -q` | delivery is visible with status complete | green-test.txt, verification.json | yes |' in content
+    assert '| AO-002 | AC-2 | TC-AC2-MANUAL | manual | local_real | 未指定 | no | none | manual | approvals/unit-plan.md confirms manual acceptance | manual acceptance is recorded | approvals/unit-plan.md | no |' in content
     assert '拒绝时请引用矩阵中的 AO、AC、Test Case 或 Evidence' in content
 
 
@@ -3066,8 +3258,112 @@ def test_final_acceptance_gate_renders_prototype_conformance_matrix(tmp_path: Pa
 
     content = gate_path.read_text(encoding='utf-8')
     assert '## Prototype Conformance Matrix' in content
-    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Command | Status |' in content
-    assert '| teacher-dashboard | - | - | AC-21 | route:/dashboard/teacher | TC-PROTO-TEACHER | `npx playwright test tests/e2e/teacher-dashboard.spec.ts` | passed |' in content
+    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
+    assert '| teacher-dashboard | - | - | AC-21 | route:/dashboard/teacher | TC-PROTO-TEACHER | local_real | no | 0 | `npx playwright test tests/e2e/teacher-dashboard.spec.ts` | passed |' in content
+
+
+def test_final_prototype_conformance_rejects_mock_browser_evidence(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    approvals_dir = tmp_path / 'approvals'
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    prototype_dir = artifacts_dir / 'requirements-draft'
+    prototype_dir.mkdir(parents=True)
+    prototype_html = prototype_dir / 'teacher.html'
+    prototype_html.write_text('<button>Preview</button>\n', encoding='utf-8')
+    (prototype_dir / 'prototype-manifest.json').write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'teacher-dashboard',
+                        'type': 'html',
+                        'path': str(prototype_html),
+                        'title': 'Teacher dashboard',
+                        'linked_acceptance_criteria': ['AC-21'],
+                        'linked_journeys': ['J-01'],
+                        'page_states': ['Dashboard', 'Preview'],
+                        'click_path': ['Open dashboard', 'Click Preview'],
+                        'implementation_targets': [{'kind': 'route', 'path': '/dashboard/teacher'}],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'passed': True,
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-TEACHER',
+                        'acceptance_criterion': 'AC-21',
+                        'acceptance_obligations': [],
+                        'layer': 'e2e',
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts',
+                        'manual_evidence': '',
+                        'expected': 'route /dashboard/teacher preserves dashboard and preview state ordering',
+                        'status': 'passed',
+                        'result_index': 0,
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'golden_path': True,
+                        'environment_kind': 'contract_mock',
+                        'real_entrypoint': '/dashboard/teacher',
+                        'uses_core_api_mock': True,
+                        'mocked_routes': ['**/api/courses'],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'screenshot_refs': [],
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'currentUnitId': 'unit-01',
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-TEACHER',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts',
+                        'expected': 'route /dashboard/teacher preserves dashboard and preview state ordering',
+                        'prototype_conformance': ['teacher-dashboard'],
+                        'production_targets': ['/dashboard/teacher'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    try:
+        validate_final_prototype_conformance(
+            state=state,
+            artifacts_dir=artifacts_dir,
+            requirements_path=requirements_path,
+        )
+    except ValueError as exc:
+        assert 'prototype conformance is incomplete' in str(exc)
+        assert 'core API mock' in str(exc)
+    else:
+        raise AssertionError('mocked browser evidence must not satisfy prototype conformance')
 
 
 def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path) -> None:
@@ -3180,8 +3476,8 @@ def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path
     gate_path = ensure_final_acceptance_gate(state, approvals_dir, artifacts_dir, force=True)
 
     content = gate_path.read_text(encoding='utf-8')
-    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Command | Status |' in content
-    assert '| v291-course-ops-prototype-contract | assignment-management-dialog | CourseCard -> 分配管理 | AC-21 | component:OpenMAIC/components/course/AssignManageDialog.tsx | TC-PROTO-ASSIGN-MANAGE-DIALOG | `npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium` | passed |' in content
+    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
+    assert '| v291-course-ops-prototype-contract | assignment-management-dialog | CourseCard -> 分配管理 | AC-21 | component:OpenMAIC/components/course/AssignManageDialog.tsx | TC-PROTO-ASSIGN-MANAGE-DIALOG | local_real | no | 0 | `npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium` | passed |' in content
 
 
 def test_builder_prompt_includes_final_acceptance_defect_list_for_defect_fix_units(tmp_path: Path) -> None:

@@ -92,11 +92,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--version', action='version', version=f'waygate {__version__}')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
-    subparsers.add_parser(
+    doctor_parser = subparsers.add_parser(
         'doctor',
         help='Print installation and PATH diagnostics',
         allow_abbrev=False,
     )
+    doctor_parser.add_argument('--color', choices=COLOR_MODES, default='auto', help='Color doctor output: auto, always, or never')
 
     init_parser = subparsers.add_parser(
         'init',
@@ -256,7 +257,7 @@ def main() -> None:
     args = parse_args()
 
     if args.command == 'doctor':
-        print(render_doctor_report(), end='')
+        print(render_doctor_report(color_mode=args.color), end='')
         return
 
     controller = RalphRefinerController(

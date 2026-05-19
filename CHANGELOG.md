@@ -2,6 +2,31 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0h
+
+- Added a `tmux_config` section to `waygate doctor` for the recommended `~/.tmux.conf` settings: `mouse on`, `history-limit 100000`, `@scroll-speed 5`, and `@copy-mode-vi 'on'`.
+- Made tmux config diagnostics read-only: warnings include expected/actual values and manual actions, but Waygate does not edit or reload tmux config.
+- Reworked doctor output to put `summary:`, `focus:`, and `action_required:` before detailed provenance, PATH, environment, skill, and Claude asset sections.
+- Added `waygate doctor --color auto|always|never` to highlight status, P1 focus items, manual actions, and section headers for human scanning while preserving plain non-TTY output by default.
+- Kept detailed doctor sections stable for troubleshooting while promoting PATH shadow, version mismatch, missing tools, missing skills, and tmux config actions to the top.
+- Updated README, USAGE, roadmap, recommended-environment docs, and package version to `0.6.0h`.
+
+## 0.6.0g
+
+- Extended `waygate doctor` with a `claude_assets` section for `~/.claude/commands`, `agents`, `rules`, and `plugins`, reporting only path, status, and count.
+- Aligned `skill_recommendations` with the README baseline, including code review, plan execution, webapp testing, and `frontend-design` / `ui-ux-pro-max` for UI-heavy requirements.
+- Made the controller prototype preview server default to `0.0.0.0` and display remote-friendly prototype review URLs.
+- Passed `PLANNOTATOR_HOST=0.0.0.0` to Plannotator by default and displayed the Plannotator approval URL with the same host.
+- Documented that `0.0.0.0` is a bind/display address and remote browsers usually need the Waygate host IP.
+
+## 0.6.0f
+
+- Added real E2E evidence policy gates for Unit Plan approval: mocked/stubbed core API browser tests cannot satisfy E2E, golden path, prototype conformance, Journey closure, or Web-system acceptance evidence.
+- Extended verifier evidence rows with environment kind, real entrypoint, core API mock status, mocked routes, browser runtime errors, request failures, and screenshot references.
+- Marked mocked browser E2E evidence as `invalid` even when the command exits successfully, and failed real E2E evidence when console/page/request runtime errors are recorded.
+- Expanded Final Acceptance and Prototype Conformance matrices with environment, mock, and runtime-error columns, and blocked prototype/golden-path acceptance on non-real E2E evidence.
+- Kept remote/production checks explicit through `environment_kind=production_readonly` when requirements or feedback demand read-only production verification.
+
 ## 0.6.0e
 
 - Extended `waygate doctor` with `environment_checks` for Python, pytest, tmux, tmux session, Claude Code, Codex, Plannotator, `dpkg-deb`, and recommended Plannotator port `20000`.

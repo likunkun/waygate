@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40）、V0.5.4 人工评审防串聊与强制 Requirements 澄清（阶段 46）、V0.5.6 Spec Intake & Dependency Documentation 终验批准、V0.6.0 Infrastructure Knowledge Base 终验批准、V0.6.0a Prototype Review Bundle for Plannotator 实施、V0.6.0b Prototype Conformance Gate 实施、Prototype Surface Conformance 流程修复、V0.6.0c 目标项目基础设施 intake / `AGENTS.md` 边界 / blocked 上游路由 / 后续流转说明终验批准、V0.6.0d Requirements Plannotator 主审批对象修复、V0.6.0e Environment Diagnostics and Introduction Materials 终验批准，以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40）、V0.5.4 人工评审防串聊与强制 Requirements 澄清（阶段 46）、V0.5.6 Spec Intake & Dependency Documentation 终验批准、V0.6.0 Infrastructure Knowledge Base 终验批准、V0.6.0a Prototype Review Bundle for Plannotator 实施、V0.6.0b Prototype Conformance Gate 实施、Prototype Surface Conformance 流程修复、V0.6.0c 目标项目基础设施 intake / `AGENTS.md` 边界 / blocked 上游路由 / 后续流转说明终验批准、V0.6.0d Requirements Plannotator 主审批对象修复、V0.6.0e Environment Diagnostics and Introduction Materials 终验批准、V0.6.0f Real E2E Evidence Gate 收尾记录、V0.6.0g Doctor Coverage and Remote Review Reachability 实施、V0.6.0h tmux 推荐配置与 Doctor CLI 信息层级实施，以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
 
 ## 各阶段
 
@@ -80,6 +80,9 @@
 - [x] V0.6.0d Requirements Plannotator 主审批对象修复：Requirements Plannotator 重新 annotate `approvals/requirements-and-acceptance.md`；`plannotator-review.html` 仅作为 controller preview server 的原型渲染辅助预览；全量测试 `438 passed`，已生成 `dist/waygate_0.6.0d_all.deb`。
 - [x] V0.6.0e Final Acceptance 已批准：完成 Environment Diagnostics and Introduction Materials；目标 `Complete V0.6.0e development acceptance using current planning progress` 已 covered，单元 `target-v0-6-0e` 已 passes=true；验证命令全部通过并生成 `dist/waygate_0.6.0e_all.deb`。
 - [x] `waygate doctor` skills diagnostics：扫描常见 skill 根目录、输出推荐 workflow skill 缺口、支持 `WAYGATE_SKILL_ROOTS`；全量测试 `448 passed`。
+- [x] V0.6.0f 收尾记录：Real E2E Evidence Gate 已写入 ROADMAP/CHANGELOG/progress；不手工修改历史 `.rrc-controller-v0.6.0f/session.json` 为 DONE。
+- [x] V0.6.0g Doctor / 远程审阅可达性：`claude_assets`、README 对齐 skill recommendations（含 `ui-ux-pro-max`）、`0.0.0.0` prototype preview、`PLANNOTATOR_HOST` 和文档更新已落地；全量测试 `459 passed`，已生成 `dist/waygate_0.6.0g_all.deb`。
+- [x] V0.6.0h tmux 推荐配置与 Doctor CLI 信息层级：`tmux_config` 固定检查 `~/.tmux.conf` 中 4 项推荐配置，`doctor` 顶部新增 `summary:` / `focus:` / `action_required:`，支持 `--color auto|always|never`，版本更新为 `0.6.0h`；全量测试 `464 passed`，已生成 `dist/waygate_0.6.0h_all.deb`。
 - **状态：** complete
 
 ### 阶段 7：控制器可靠性增强

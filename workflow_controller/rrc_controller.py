@@ -41,12 +41,14 @@ from workflow_controller.gates.validators import (
     migrate_unit_plan_gate_to_state_patch,
     validate_requirements_acceptance_quality,
     validate_required_artifacts,
+    validate_final_real_e2e_evidence,
     validate_review_verdict,
     validate_simplifier_result,
     validate_unit_plan_acceptance_obligation_coverage,
     validate_unit_plan_design_architecture_traceability,
     validate_unit_plan_golden_path,
     validate_unit_plan_prototype_conformance,
+    validate_unit_plan_real_e2e_evidence_policy,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_environment,
@@ -517,6 +519,10 @@ class RalphRefinerController:
             )
             validate_unit_plan_verification_environment(candidate_state)
             validate_unit_plan_golden_path(candidate_state)
+            validate_unit_plan_real_e2e_evidence_policy(
+                self.approvals_dir / 'requirements-and-acceptance.md',
+                candidate_state,
+            )
             validate_and_enrich_journey_unit_plan(
                 unit_plan_path=gate_path,
                 artifacts_dir=self.artifacts_dir,
@@ -596,6 +602,7 @@ class RalphRefinerController:
                 artifacts_dir=self.artifacts_dir,
                 requirements_path=self.approvals_dir / 'requirements-and-acceptance.md',
             )
+            validate_final_real_e2e_evidence(state=state, artifacts_dir=self.artifacts_dir)
         except ValueError as exc:
             return f'final acceptance gate invalid: {exc}'
         return None
@@ -1181,11 +1188,12 @@ class RalphRefinerController:
             'WAITING_REQUIREMENTS_ACCEPTANCE',
             'WAITING_UNIT_PLAN_APPROVAL',
             'PLAN_APPROVED',
+            'UI_DESIGN_DONE',
             'EXECUTE_UNIT',
         }:
             raise ValueError(
                 'Requirements can only be revised at WAITING_REQUIREMENTS_ACCEPTANCE, '
-                'WAITING_UNIT_PLAN_APPROVAL, PLAN_APPROVED, or EXECUTE_UNIT'
+                'WAITING_UNIT_PLAN_APPROVAL, PLAN_APPROVED, UI_DESIGN_DONE, or EXECUTE_UNIT'
             )
 
         gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
@@ -1201,7 +1209,7 @@ class RalphRefinerController:
             state,
             revision_feedback=raw_revision_feedback,
             change_reason=change_reason,
-            include_approved_requirements_change_context=current_step in {'PLAN_APPROVED', 'EXECUTE_UNIT'},
+            include_approved_requirements_change_context=current_step in {'PLAN_APPROVED', 'UI_DESIGN_DONE', 'EXECUTE_UNIT'},
         )
         state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
         revision_count = int(state.get('requirementsRevisionCount') or 0)
@@ -1818,6 +1826,10 @@ class RalphRefinerController:
                     )
                     validate_unit_plan_verification_environment(state)
                     validate_unit_plan_golden_path(state)
+                    validate_unit_plan_real_e2e_evidence_policy(
+                        self.approvals_dir / 'requirements-and-acceptance.md',
+                        state,
+                    )
                     validate_and_enrich_journey_unit_plan(
                         unit_plan_path=gate_path,
                         artifacts_dir=self.artifacts_dir,
@@ -2517,7 +2529,7 @@ class RalphRefinerController:
                     if self.plannotator_port is not None:
                         output_func(_format_plannotator_access_line(
                             'Plannotator 审批页',
-                            f'http://localhost:{self.plannotator_port}',
+                            f'http://{_plannotator_display_host()}:{self.plannotator_port}',
                             color_enabled=color_enabled,
                         ))
                     if prototype_review_preview_url:
@@ -3048,6 +3060,10 @@ def _format_blocked_message(reason: str, *, color_enabled: bool) -> str:
 
 def _format_plannotator_access_line(label: str, url: str, *, color_enabled: bool) -> str:
     return _paint(f'▶ {label}: {url}', 'cyan', color_enabled)
+
+
+def _plannotator_display_host() -> str:
+    return (os.environ.get('PLANNOTATOR_HOST') or '0.0.0.0').strip() or '0.0.0.0'
 
 
 def _highlight_validation_tokens(text: str, *, color_enabled: bool) -> str:

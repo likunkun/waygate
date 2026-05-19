@@ -59,6 +59,14 @@ def test_run_verifier_generates_passing_verification_when_green_test_exists(tmp_
             'returncode': None,
             'artifact_refs': ['green-test.txt'],
             'golden_path': False,
+            'environment_kind': 'local_real',
+            'real_entrypoint': None,
+            'uses_core_api_mock': False,
+            'mocked_routes': [],
+            'browser_console_errors': [],
+            'page_errors': [],
+            'request_failures': [],
+            'screenshot_refs': [],
         }
     ]
 
