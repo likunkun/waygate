@@ -919,6 +919,7 @@ if sys.argv[1:2] == ["send-keys"] and sys.argv[-1:] == ["C-m"]:
     assert 'If PROMPT_FILE instructs you to ask the user a clarification question' in dispatch_text
     assert 'ask it in this tmux pane and continue after the user answers' in dispatch_text
     assert 'Do not write DONE_FILE until the task is complete or truly blocked' in dispatch_text
+    assert 'If PROMPT_FILE requires additional DONE_FILE fields' in dispatch_text
     full_prompt = result.prompt_path.read_text(encoding='utf-8')
     assert 'Implement this unit with a long body.' in full_prompt
     log = tmux_log.read_text(encoding='utf-8')

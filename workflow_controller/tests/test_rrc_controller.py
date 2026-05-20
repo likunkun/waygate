@@ -34,7 +34,7 @@ def _requirements_infrastructure_section() -> str:
 - 项目部署运行时环境：本地 pytest/subprocess runtime、tmux runner 前置条件和验证命令运行环境已确认。
 - 调试分析方法：查看 session.json、events.jsonl、runner stdout/stderr、verification artifacts 和 pytest 输出。
 - 参考环境：当前测试 workspace 和历史 controller fixture 作为参考环境，不混同部署环境。
-- 文档地址：README、USAGE、ROADMAP、task_plan、progress 和 findings 作为审阅文档来源。
+- 文档地址：正式维护文档：`docs/README.md` 作为入口，README/USAGE/ROADMAP 作为项目说明；Controller 过程证据：`.rrc-controller-test/artifacts` 只作审计；外部 Agent / 人工沟通生成文档：未发现，已检查测试 artifacts；外部 wiki / 设计稿 / API 文档：不涉及，因为该测试目标无外部资料；缺失但需要沉淀的文档：未发现。
 - 架构/交互逻辑/接口说明：controller state、human gate、runner dispatch、approval CLI 和 artifact 接口已记录。
 - 依赖信息：Python、pytest、tmux fake runner、dpkg tooling 和 shell runtime 依赖已记录。
 """
@@ -44,10 +44,19 @@ def _requirements_body_with_infrastructure(body: str) -> str:
     return body.rstrip() + '\n\n' + _requirements_infrastructure_section()
 
 
-def run_rrc(*args: str, cwd: Path | None = None, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+def run_rrc(
+    *args: str,
+    cwd: Path | None = None,
+    input_text: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    process_env = os.environ.copy()
+    if env:
+        process_env.update(env)
     return subprocess.run(
         [sys.executable, '-m', 'workflow_controller.rrc_controller', *args],
         cwd=str(cwd or ROOT),
+        env=process_env,
         text=True,
         input=input_text,
         capture_output=True,
@@ -217,9 +226,15 @@ def test_init_creates_agent_operating_guide_and_docs_layout(tmp_path: Path) -> N
     assert (tmp_path / 'docs' / 'architecture').is_dir()
     assert (tmp_path / 'docs' / 'workflow').is_dir()
     assert (tmp_path / 'docs' / 'operations').is_dir()
+    docs_readme = tmp_path / 'docs' / 'README.md'
+    assert docs_readme.exists()
+    docs_readme_content = docs_readme.read_text(encoding='utf-8')
+    assert '文档入口与登记表' in docs_readme_content
+    assert 'Controller 过程证据' in docs_readme_content
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['agentGuideArtifacts']['agents']['status'] == 'created'
     assert state['agentGuideArtifacts']['claude']['status'] == 'skipped'
+    assert state['agentGuideArtifacts']['docsReadme']['status'] == 'created'
 
 
 def test_init_can_generate_claude_md_and_does_not_overwrite_existing_guides(tmp_path: Path) -> None:
@@ -239,6 +254,23 @@ def test_init_can_generate_claude_md_and_does_not_overwrite_existing_guides(tmp_
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['agentGuideArtifacts']['agents']['status'] == 'drafted'
     assert state['agentGuideArtifacts']['claude']['status'] == 'drafted'
+
+
+def test_init_drafts_docs_readme_without_overwriting_existing_file(tmp_path: Path) -> None:
+    state_dir = tmp_path / '.plan-ralph'
+    docs_dir = tmp_path / 'docs'
+    docs_dir.mkdir()
+    (docs_dir / 'README.md').write_text('# Existing docs entry\n', encoding='utf-8')
+
+    result = run_rrc('init', '--state-dir', str(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert (docs_dir / 'README.md').read_text(encoding='utf-8') == '# Existing docs entry\n'
+    generated = docs_dir / 'README.md.generated'
+    assert generated.exists()
+    assert '文档入口与登记表' in generated.read_text(encoding='utf-8')
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['agentGuideArtifacts']['docsReadme']['status'] == 'drafted'
 
 
 def test_init_can_skip_agent_operating_guides(tmp_path: Path) -> None:
@@ -3173,9 +3205,12 @@ def test_agent_guides_include_version_planning_rules(tmp_path: Path) -> None:
     root_agents = (ROOT / 'AGENTS.md').read_text(encoding='utf-8')
 
     for content in (root_agents, generated_agents):
+        assert '`docs/README.md`' in content
         assert '讨论版本范围前，必须读取 `ROADMAP.md`、`task_plan.md` 和 Controller state-dir 中的 `session.json`' in content
         assert '不要根据最近进度推断版本范围' in content
         assert '讨论某个版本时，必须把当前版本需求和后续版本候选分开记录' in content
+        assert '`.rrc-controller-*` 是审计证据，不是长期文档入口' in content
+        assert '外部 Agent 文档必须先登记' in content
 
 
 def test_complete_unit_keeps_multi_unit_objective_partial_until_all_units_pass(tmp_path: Path) -> None:
@@ -3573,6 +3608,240 @@ def test_repeated_verification_failure_blocks_before_another_retry(tmp_path: Pat
     assert second['lastFailure']['count'] == 2
     assert 'Repeated VERIFY_UNIT failure' in second['blockedReason']
     assert 'runtime database missing' in second['blockedReason']
+
+
+def test_repeated_playwright_timeout_fingerprint_ignores_volatile_output_tail() -> None:
+    command = 'pnpm exec playwright test tests/e2e/v30-production-readonly-reference.spec.ts --project=chromium'
+    first_fingerprint, first_details = rrc_controller_module._failure_fingerprint(
+        'VERIFY_UNIT',
+        {
+            'passed': False,
+            'issues': [
+                {
+                    'type': 'verification_command_failed',
+                    'message': f'Command failed: {command}',
+                }
+            ],
+            'results': [
+                {
+                    'command': command,
+                    'returncode': 124,
+                    'ok': False,
+                    'stdout': 'Running 1 test\n[chromium] › production readonly reference › renders readonly page\n',
+                    'stderr': 'TimeoutError: test timed out after 30000ms\nelapsed: 30.1s\n',
+                }
+            ],
+        },
+    )
+    second_fingerprint, second_details = rrc_controller_module._failure_fingerprint(
+        'VERIFY_UNIT',
+        {
+            'passed': False,
+            'issues': [
+                {
+                    'type': 'verification_command_failed',
+                    'message': f'Command failed: {command}',
+                }
+            ],
+            'results': [
+                {
+                    'command': command,
+                    'returncode': 124,
+                    'ok': False,
+                    'stdout': 'Running 1 test\n[chromium] › production readonly reference › renders readonly page\n',
+                    'stderr': 'TimeoutError: test timed out after 30000ms\nelapsed: 31.8s\nretry #1\n',
+                }
+            ],
+        },
+    )
+
+    assert first_fingerprint == second_fingerprint
+    assert first_details['stderr_tail'] != second_details['stderr_tail']
+    assert first_details['stable_failure_features'] == second_details['stable_failure_features']
+    assert 'TimeoutError' in first_details['stable_failure_features']
+    assert 'production readonly reference' in first_details['stable_failure_features']
+
+
+def test_builder_done_after_verifier_failure_requires_controller_failure_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    failed_command = 'pnpm exec playwright test tests/e2e/v30-production-readonly-reference.spec.ts --project=chromium'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(tmp_path),
+            'lastFailure': {
+                'unit_id': 'unit-01',
+                'stage': 'VERIFY_UNIT',
+                'details': {'command': failed_command, 'returncode': 124},
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+
+    def fake_run_builder(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'builder-summary.json').write_text(
+            json.dumps({
+                'runner_status': 'done',
+                'done_payload': {'status': 'done', 'summary': 'all tests passed locally'},
+            }),
+            encoding='utf-8',
+        )
+        (unit_dir / 'changed-files.txt').write_text('src/delivery.py\n', encoding='utf-8')
+
+    monkeypatch.setattr(rrc_controller_module, 'run_builder', fake_run_builder)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'blocked'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert 'Agent did not reproduce controller failed command' in state['blockedReason']
+    assert failed_command in state['blockedReason']
+
+
+def test_builder_done_after_verifier_failure_rejects_mismatched_failed_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    failed_command = 'pnpm exec playwright test tests/e2e/v30-production-readonly-reference.spec.ts --project=chromium'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(tmp_path),
+            'lastFailure': {
+                'unit_id': 'unit-01',
+                'stage': 'VERIFY_UNIT',
+                'details': {'command': failed_command, 'returncode': 124},
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+
+    def fake_run_builder(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'builder-summary.json').write_text(
+            json.dumps({
+                'runner_status': 'done',
+                'done_payload': {
+                    'status': 'done',
+                    'summary': 'adjacent test passed locally',
+                    'controller_failure_resolution': {
+                        'failed_command': 'pnpm exec playwright test tests/e2e/adjacent.spec.ts --project=chromium',
+                        'reproduced': False,
+                        'reproduction_exit_code': 0,
+                        'mismatch_analysis': 'The adjacent test passes locally.',
+                        'fix_summary': 'No fix needed.',
+                        'rerun_exit_code': 0,
+                        'full_verification_run': 'all approved commands passed',
+                    },
+                },
+            }),
+            encoding='utf-8',
+        )
+        (unit_dir / 'changed-files.txt').write_text('src/delivery.py\n', encoding='utf-8')
+
+    monkeypatch.setattr(rrc_controller_module, 'run_builder', fake_run_builder)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'blocked'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert 'failed_command does not match controller failed command' in state['blockedReason']
+    assert failed_command in state['blockedReason']
+
+
+def test_builder_done_after_verifier_failure_with_matching_resolution_enters_refiner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    failed_command = 'pnpm exec playwright test tests/e2e/v30-production-readonly-reference.spec.ts --project=chromium'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(tmp_path),
+            'lastFailure': {
+                'unit_id': 'unit-01',
+                'stage': 'VERIFY_UNIT',
+                'details': {'command': failed_command, 'returncode': 124},
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+
+    def fake_run_builder(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'builder-summary.json').write_text(
+            json.dumps({
+                'runner_status': 'done',
+                'done_payload': {
+                    'status': 'done',
+                    'summary': 'controller failure reproduced and fixed',
+                    'controller_failure_resolution': {
+                        'failed_command': failed_command,
+                        'reproduced': True,
+                        'reproduction_exit_code': 124,
+                        'root_cause': 'Readonly reference page waited on a seeded production fixture that was never created.',
+                        'fix_summary': 'Seeded the fixture in test setup and updated the route guard.',
+                        'rerun_exit_code': 0,
+                        'full_verification_run': 'approved verification list exited 0',
+                    },
+                },
+            }),
+            encoding='utf-8',
+        )
+        (unit_dir / 'changed-files.txt').write_text('src/delivery.py\n', encoding='utf-8')
+
+    monkeypatch.setattr(rrc_controller_module, 'run_builder', fake_run_builder)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'REFINE_UNIT'
+    assert state.get('blockedReason') is None
 
 
 def test_run_verifier_rejects_malformed_evidence_schema_before_unit_complete(
@@ -4119,11 +4388,14 @@ print('{"decision":"dismissed"}')
         '--plannotator-command',
         str(fake_plannotator),
         input_text='v\nq\n',
+        env={'WAYGATE_DISPLAY_HOST': '192.0.2.55'},
     )
 
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
-    assert 'http://0.0.0.0:20000' in result.stdout
+    assert 'http://192.0.2.55:20000' in result.stdout
+    assert 'http://0.0.0.0:20000' not in result.stdout
+    assert 'http://127.0.0.1:20000' not in result.stdout
     assert 'Open this link on your local machine to annotate:' not in result.stdout
     assert 'https://share.plannotator.ai/#fake' not in result.stdout
     assert '请在 Plannotator 浏览器里选择 Approve 或 Close。Approve 会自动继续。' in result.stdout
@@ -4240,13 +4512,16 @@ print('{"decision":"dismissed"}')
         '--plannotator-command',
         str(fake_plannotator),
         input_text='v\nq\n',
+        env={'WAYGATE_DISPLAY_HOST': '192.0.2.55'},
     )
 
     assert result.returncode == 0, result.stderr
     assert f'审批文件：{approval_path}' in result.stdout
     assert f'辅助预览文件：{html_review_path}' in result.stdout
-    assert 'Plannotator 审批页: http://0.0.0.0:20000' in result.stdout
-    assert '原型渲染预览页: http://0.0.0.0:' in result.stdout
+    assert 'Plannotator 审批页: http://192.0.2.55:20000' in result.stdout
+    assert '原型渲染预览页: http://192.0.2.55:' in result.stdout
+    assert 'http://0.0.0.0:' not in result.stdout
+    assert 'http://127.0.0.1:' not in result.stdout
     assert json.loads(plannotator_log.read_text(encoding='utf-8')) == [
         'annotate',
         str(approval_path),
@@ -4260,7 +4535,7 @@ print('{"decision":"dismissed"}')
     assert summary['approval_gate_path'] == str(approval_path)
     assert summary['prototype_review_manifest_path'] == str(manifest_path)
     assert summary['prototype_review_path'] == str(html_review_path)
-    assert summary['prototype_review_preview_url'].startswith('http://0.0.0.0:')
+    assert summary['prototype_review_preview_url'].startswith('http://192.0.2.55:')
     assert summary['prototype_review_preview_url'].endswith('/plannotator-review.html')
     approval_text = approval_path.read_text(encoding='utf-8')
     assert '127.0.0.1:' not in approval_text
@@ -4288,6 +4563,7 @@ print('{"decision":"dismissed"}')
         '--color',
         'always',
         input_text='v\nq\n',
+        env={'WAYGATE_DISPLAY_HOST': '192.0.2.55'},
     )
 
     assert color_result.returncode == 0, color_result.stderr
@@ -4301,8 +4577,10 @@ print('{"decision":"dismissed"}')
     ]
     assert approval_lines and '\x1b[' in approval_lines[0]
     assert preview_lines and '\x1b[' in preview_lines[0]
-    assert 'Plannotator 审批页: http://0.0.0.0:20000' in color_result.stdout
-    assert '原型渲染预览页: http://0.0.0.0:' in color_result.stdout
+    assert 'Plannotator 审批页: http://192.0.2.55:20000' in color_result.stdout
+    assert '原型渲染预览页: http://192.0.2.55:' in color_result.stdout
+    assert 'http://0.0.0.0:' not in color_result.stdout
+    assert 'http://127.0.0.1:' not in color_result.stdout
 
 
 def test_drive_auto_approves_gate_when_plannotator_approves(
@@ -6005,7 +6283,14 @@ import os
 from pathlib import Path
 
 Path(os.environ['PLANNOTATOR_ENV_LOG']).write_text(
-    json.dumps({'port': os.environ.get('PLANNOTATOR_PORT'), 'host': os.environ.get('PLANNOTATOR_HOST')}),
+    json.dumps(
+        {
+            'port': os.environ.get('PLANNOTATOR_PORT'),
+            'remote': os.environ.get('PLANNOTATOR_REMOTE'),
+            'host_present': 'PLANNOTATOR_HOST' in os.environ,
+            'host': os.environ.get('PLANNOTATOR_HOST'),
+        }
+    ),
     encoding='utf-8',
 )
 print('Open this link on your local machine to annotate:')
@@ -6027,11 +6312,23 @@ print('https://share.plannotator.ai/#fake-port')
         '--plannotator-port',
         '20000',
         input_text='v\nq\n',
+        env={'WAYGATE_DISPLAY_HOST': '192.0.2.55'},
     )
 
     assert result.returncode == 0, result.stderr
-    assert 'http://0.0.0.0:20000' in result.stdout
-    assert json.loads(env_log.read_text(encoding='utf-8')) == {'port': '20000', 'host': '0.0.0.0'}
+    assert 'http://192.0.2.55:20000' in result.stdout
+    assert 'http://0.0.0.0:20000' not in result.stdout
+    assert 'http://127.0.0.1:20000' not in result.stdout
+    assert json.loads(env_log.read_text(encoding='utf-8')) == {
+        'port': '20000',
+        'remote': '1',
+        'host_present': False,
+        'host': None,
+    }
+    summary = json.loads((state_dir / 'plannotator' / 'unit-plan-last-review.json').read_text(encoding='utf-8'))
+    assert summary['plannotator_port'] == '20000'
+    assert summary['plannotator_remote'] == '1'
+    assert 'plannotator_host' not in summary
 
 
 def test_drive_waits_for_plannotator_approval_after_printing_link(
@@ -6126,11 +6423,14 @@ print('{"decision":"approved"}', flush=True)
         '--plannotator-command',
         str(fake_plannotator),
         input_text='v\n',
+        env={'WAYGATE_DISPLAY_HOST': '192.0.2.55'},
     )
 
     assert result.returncode == 0, result.stderr
     assert '[Plannotator] 已打开辅助审阅。' in result.stdout
-    assert 'http://0.0.0.0:20000' in result.stdout
+    assert 'http://192.0.2.55:20000' in result.stdout
+    assert 'http://0.0.0.0:20000' not in result.stdout
+    assert 'http://127.0.0.1:20000' not in result.stdout
     assert 'Open this link on your local machine to annotate:' not in result.stdout
     assert 'https://share.plannotator.ai/#long-running' not in result.stdout
     assert '等待 Plannotator 操作结果' in result.stdout
@@ -8955,8 +9255,22 @@ def test_spec_path_classifier_accepts_waygate_markdown_and_rejects_future_extern
     (spec_kit_dir / 'spec.md').write_text('# Spec Kit\n\n## Constitution\n', encoding='utf-8')
     spec_kit_file = tmp_path / 'requirements.specify.md'
     spec_kit_file.write_text('# Spec Kit Feature Specification\n', encoding='utf-8')
+    accepted_workspace = tmp_path / 'accepted-workspace'
+    accepted_workspace.mkdir()
 
-    accepted = run_rrc('init', '--state-dir', str(tmp_path / 'ok'), '--target', 'V0.5.6', '--runner', 'subprocess', '--spec', str(waygate_spec))
+    accepted = run_rrc(
+        'init',
+        '--state-dir',
+        str(tmp_path / 'ok'),
+        '--workspace-dir',
+        str(accepted_workspace),
+        '--target',
+        'V0.5.6',
+        '--runner',
+        'subprocess',
+        '--spec',
+        str(waygate_spec),
+    )
     assert accepted.returncode == 0, accepted.stderr
     state = json.loads(((tmp_path / 'ok') / 'session.json').read_text(encoding='utf-8'))
     assert state['requirementsSpec']['sourceType'] == 'waygate-markdown'

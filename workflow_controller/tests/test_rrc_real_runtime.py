@@ -510,7 +510,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "- 项目部署运行时环境：local Python, fake tmux runner, git workspace, and verifier command runtime.\\n"
             "- 调试分析方法：session.json, events.jsonl, runner stderr, verification artifacts, and compact output.\\n"
             "- 参考环境：the temporary runtime workspace is the reference environment.\\n"
-            "- 文档地址：generated AGENTS.md and controller artifacts document this run.\\n"
+            "- 文档地址：正式维护文档：generated `docs/README.md` and AGENTS.md document this run；Controller 过程证据：controller artifacts document this run；外部 Agent / 人工沟通生成文档：未发现，已检查 artifacts；外部 wiki / 设计稿 / API 文档：不涉及，因为 runtime fixture 无外部资料；缺失但需要沉淀的文档：未发现。\\n"
             "- 架构/交互逻辑/接口说明：requirements, unit plan, builder dispatch, verifier, and failure reporting interfaces.\\n"
             "- 依赖信息：Python, pytest, git, fake tmux script, JSON artifacts, and shell runtime.\\n\\n"
             "## 8. Human Review Checklist\\n- [ ] Reviewed.\\n",

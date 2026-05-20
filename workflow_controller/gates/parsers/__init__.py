@@ -85,8 +85,10 @@ def run_plannotator_gate_review(
     env = os.environ.copy()
     if port is not None:
         env['PLANNOTATOR_PORT'] = str(port)
-    plannotator_host = (host or env.get('PLANNOTATOR_HOST') or '0.0.0.0').strip() or '0.0.0.0'
-    env['PLANNOTATOR_HOST'] = plannotator_host
+    # Kept in the signature for compatibility; Waygate no longer controls Plannotator bind host.
+    del host
+    env.pop('PLANNOTATOR_HOST', None)
+    env['PLANNOTATOR_REMOTE'] = '1'
     with stdout_path.open('w', encoding='utf-8') as stdout_file, stderr_path.open('w', encoding='utf-8') as stderr_file:
         process = subprocess.Popen(
             full_command,
@@ -111,7 +113,7 @@ def run_plannotator_gate_review(
                 gate_path=gate_path,
                 full_command=full_command,
                 plannotator_port=env.get('PLANNOTATOR_PORT'),
-                plannotator_host=env.get('PLANNOTATOR_HOST'),
+                plannotator_remote=env.get('PLANNOTATOR_REMOTE'),
                 returncode=returncode,
                 stdout=stdout,
                 stderr=stderr,
@@ -147,7 +149,7 @@ def run_plannotator_gate_review(
                 gate_path=gate_path,
                 full_command=full_command,
                 plannotator_port=env.get('PLANNOTATOR_PORT'),
-                plannotator_host=env.get('PLANNOTATOR_HOST'),
+                plannotator_remote=env.get('PLANNOTATOR_REMOTE'),
                 returncode=None,
                 stdout=stdout,
                 stderr=stderr,
@@ -182,7 +184,7 @@ def run_plannotator_gate_review(
                 gate_path=gate_path,
                 full_command=full_command,
                 plannotator_port=env.get('PLANNOTATOR_PORT'),
-                plannotator_host=env.get('PLANNOTATOR_HOST'),
+                plannotator_remote=env.get('PLANNOTATOR_REMOTE'),
                 returncode=process.returncode,
                 stdout=stdout,
                 stderr=stderr,
@@ -222,7 +224,7 @@ def _write_summary(
     gate_path: Path,
     full_command: list[str],
     plannotator_port: str | None,
-    plannotator_host: str | None,
+    plannotator_remote: str | None,
     returncode: int | None,
     stdout: str,
     stderr: str,
@@ -239,7 +241,7 @@ def _write_summary(
                 'gate_path': str(gate_path),
                 'command': full_command,
                 'plannotator_port': plannotator_port,
-                'plannotator_host': plannotator_host,
+                'plannotator_remote': plannotator_remote,
                 'returncode': returncode,
                 'stdout': stdout,
                 'stderr': stderr,

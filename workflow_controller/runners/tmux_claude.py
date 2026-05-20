@@ -401,6 +401,7 @@ DONE_FILE: {done_path}
 
 Execute the task below in the workspace. When finished, write DONE_FILE as JSON:
 {{"status": "done", "summary": "<short summary>", "run_id": "{run_id}"}}
+If the task below requires additional DONE_FILE fields, include them at the top level alongside status, summary, and run_id.
 
 If blocked, write DONE_FILE as JSON:
 {{"status": "blocked", "summary": "<exact blocker>", "run_id": "{run_id}"}}
@@ -426,6 +427,7 @@ Read PROMPT_FILE first, then execute the complete task described there.
 Do not infer the task from previous conversation or terminal output.
 When finished, write DONE_FILE as JSON with the exact RUN_ID:
 {{"status":"done","summary":"<short summary>","run_id":"{run_id}"}}
+If PROMPT_FILE requires additional DONE_FILE fields, include them at the top level alongside status, summary, and run_id.
 If blocked, write:
 {{"status":"blocked","summary":"<exact blocker>","run_id":"{run_id}"}}
 If PROMPT_FILE instructs you to ask the user a clarification question, ask it in this tmux pane and continue after the user answers. Do not write DONE_FILE until the task is complete or truly blocked.

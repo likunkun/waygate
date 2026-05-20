@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+import workflow_controller.networking as networking
 from workflow_controller.prototype_review import (
+    DEFAULT_PROTOTYPE_PREVIEW_PORT,
     prepare_prototype_review_bundle,
     start_prototype_review_preview_server,
     validate_prototype_review_manifest,
@@ -428,6 +430,8 @@ def test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_
     monkeypatch,
 ) -> None:
     monkeypatch.delenv('WAYGATE_PREVIEW_HOST', raising=False)
+    monkeypatch.delenv('WAYGATE_PREVIEW_PORT', raising=False)
+    monkeypatch.setattr(networking, 'detect_primary_ip_address', lambda: '192.0.2.44')
     artifacts_dir = tmp_path / 'artifacts'
     draft_dir = artifacts_dir / 'requirements-draft'
     prototype_dir = draft_dir / 'prototypes' / 'checkout-flow'
@@ -451,10 +455,13 @@ def test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_
         prototypes_dir=draft_dir / 'prototypes',
         approval_gate_path=approval_path,
     )
-    request_base_url = server.base_url.replace('0.0.0.0', '127.0.0.1')
+    request_base_url = server.base_url.replace('192.0.2.44', '127.0.0.1')
     try:
-        assert server.base_url.startswith('http://0.0.0.0:')
-        assert server.preview_url.startswith('http://0.0.0.0:')
+        assert DEFAULT_PROTOTYPE_PREVIEW_PORT == 20001
+        assert server.base_url == 'http://192.0.2.44:20001'
+        assert server.preview_url == 'http://192.0.2.44:20001/plannotator-review.md'
+        assert '0.0.0.0' not in server.preview_url
+        assert '127.0.0.1' not in server.preview_url
         markdown_response = urllib.request.urlopen(f'{request_base_url}/plannotator-review.md', timeout=2)
         assert markdown_response.read().decode() == '# Review\n'
         assert markdown_response.headers.get_content_type() == 'text/markdown'
@@ -471,3 +478,48 @@ def test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_
         assert excinfo.value.code == 404
     finally:
         server.close()
+
+
+def test_prototype_preview_server_allows_fixed_port_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv('WAYGATE_PREVIEW_PORT', '20002')
+    monkeypatch.setattr(networking, 'detect_primary_ip_address', lambda: '192.0.2.44')
+    draft_dir = tmp_path / 'artifacts' / 'requirements-draft'
+    prototypes_dir = draft_dir / 'prototypes'
+    prototypes_dir.mkdir(parents=True)
+    review_path = draft_dir / 'plannotator-review.html'
+    manifest_path = draft_dir / 'prototype-review-manifest.json'
+    approval_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text('<!doctype html><p>Review</p>\n', encoding='utf-8')
+    manifest_path.write_text('{"version": "v0.6.0b"}\n', encoding='utf-8')
+    approval_path.write_text('# Approval\n', encoding='utf-8')
+
+    server = start_prototype_review_preview_server(
+        review_path=review_path,
+        manifest_path=manifest_path,
+        prototypes_dir=prototypes_dir,
+        approval_gate_path=approval_path,
+    )
+    try:
+        assert server.preview_url == 'http://192.0.2.44:20002/plannotator-review.html'
+    finally:
+        server.close()
+
+
+def test_browser_display_host_uses_primary_ip_for_wildcard_bind(monkeypatch) -> None:
+    monkeypatch.delenv('WAYGATE_DISPLAY_HOST', raising=False)
+    monkeypatch.setattr(networking, 'detect_primary_ip_address', lambda: '192.0.2.44')
+
+    assert networking.browser_display_host('0.0.0.0') == '192.0.2.44'
+    assert networking.browser_display_host('::') == '192.0.2.44'
+    assert networking.browser_display_host('10.0.0.9') == '10.0.0.9'
+
+
+def test_browser_display_host_allows_explicit_display_override(monkeypatch) -> None:
+    monkeypatch.setenv('WAYGATE_DISPLAY_HOST', 'waygate.internal')
+    monkeypatch.setattr(networking, 'detect_primary_ip_address', lambda: '192.0.2.44')
+
+    assert networking.browser_display_host('0.0.0.0') == 'waygate.internal'

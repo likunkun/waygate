@@ -212,3 +212,100 @@ def test_prepare_builder_prompt_includes_previous_verification_failure_feedback(
     assert 'pnpm exec playwright test' in prompt
     assert 'returncode: 1' in prompt
     assert 'Environment variable not found: DATABASE_URL' in prompt
+
+
+def test_prepare_builder_prompt_includes_controller_verification_failure_protocol(tmp_path: Path) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    unit_dir = tmp_path / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    original_prompt = tmp_path / 'current-prompt.md'
+    original_prompt.write_text('Original context.', encoding='utf-8')
+
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    write_gate_file(requirements_path, '# Requirements & Acceptance Confirmation\n\nApproved requirement.\n')
+    approve_gate_file(requirements_path, actor='tester')
+    unit_plan_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(unit_plan_path, '# Unit Plan Confirmation\n\nApproved plan.\n')
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    failed_command = (
+        'pnpm exec playwright test tests/e2e/v30-production-readonly-reference.spec.ts '
+        '--project=chromium'
+    )
+    (unit_dir / 'verification.json').write_text(
+        json.dumps({
+            'unit_id': 'unit-01',
+            'passed': False,
+            'issues': [
+                {
+                    'severity': 'high',
+                    'type': 'verification_command_failed',
+                    'message': f'Command failed: {failed_command}',
+                }
+            ],
+            'commands': [
+                'pnpm exec playwright test tests/e2e/smoke.spec.ts --project=chromium',
+                failed_command,
+            ],
+            'results': [
+                {
+                    'command': 'pnpm exec playwright test tests/e2e/smoke.spec.ts --project=chromium',
+                    'returncode': 0,
+                    'ok': True,
+                    'stdout': '1 passed',
+                    'stderr': '',
+                    'env_keys': ['DATABASE_URL'],
+                },
+                {
+                    'command': failed_command,
+                    'returncode': 124,
+                    'ok': False,
+                    'stdout': 'Running 1 test\n[chromium] › production readonly reference\n',
+                    'stderr': 'TimeoutError: test timed out after 30000ms\n',
+                    'env_keys': ['DATABASE_URL', 'PLAYWRIGHT_BASE_URL'],
+                },
+            ],
+        }),
+        encoding='utf-8',
+    )
+
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'humanGatesRequired': True,
+        'workspacePath': str(tmp_path),
+        'promptPath': str(original_prompt),
+        'requestedOutcome': 'usable-system',
+        'lastFailure': {
+            'unit_id': 'unit-01',
+            'stage': 'VERIFY_UNIT',
+            'details': {
+                'command': failed_command,
+                'returncode': 124,
+                'stdout_tail': 'Running 1 test\n[chromium] › production readonly reference',
+                'stderr_tail': 'TimeoutError: test timed out after 30000ms',
+            },
+        },
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+        ],
+    }
+
+    prompt_path = prepare_builder_prompt(state, approvals_dir, unit_dir)
+
+    assert prompt_path is not None
+    prompt = prompt_path.read_text(encoding='utf-8')
+    assert 'Controller Verification Failure Protocol' in prompt
+    assert 'failed command index: 2' in prompt
+    assert f'exact failed command: {failed_command}' in prompt
+    assert f'controller cwd: {tmp_path}' in prompt
+    assert 'returncode: 124' in prompt
+    assert f'failure artifact: {unit_dir / "verification.json"}' in prompt
+    assert 'env keys: DATABASE_URL, PLAYWRIGHT_BASE_URL' in prompt
+    assert 'First action: run the exact failed command above' in prompt
+    assert 'controller_failure_resolution' in prompt
+    assert 'failed_command' in prompt
+    assert 'full_verification_run' in prompt

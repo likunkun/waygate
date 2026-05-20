@@ -19,9 +19,11 @@ from workflow_controller.evidence_policy import (
     case_real_entrypoint,
     evidence_row_real_e2e_issue,
 )
+from workflow_controller.networking import browser_display_host, url_host
 
 
 PROTOTYPE_REVIEW_VERSION = 'v0.6.0b'
+DEFAULT_PROTOTYPE_PREVIEW_PORT = 20001
 SOURCE_MANIFEST_NAME = 'prototype-manifest.json'
 REVIEW_MANIFEST_NAME = 'prototype-review-manifest.json'
 REVIEW_BUNDLE_NAME = 'plannotator-review.md'
@@ -427,6 +429,7 @@ def start_prototype_review_preview_server(
     prototypes_dir: Path,
     approval_gate_path: Path,
     host: str | None = None,
+    port: int | None = None,
 ) -> PrototypePreviewServer:
     allowed = {
         f'/{review_path.name}': review_path.resolve(),
@@ -462,17 +465,33 @@ def start_prototype_review_preview_server(
             return
 
     bind_host = (host or os.environ.get('WAYGATE_PREVIEW_HOST') or '0.0.0.0').strip() or '0.0.0.0'
-    httpd = ThreadingHTTPServer((bind_host, 0), Handler)
+    bind_port = _prototype_preview_port(port)
+    httpd = ThreadingHTTPServer((bind_host, bind_port), Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
-    server_host, port = httpd.server_address[:2]
-    display_host = bind_host if bind_host not in {'', '::'} else server_host
+    _server_host, port = httpd.server_address[:2]
+    display_host = url_host(browser_display_host(bind_host))
     return PrototypePreviewServer(
         httpd=httpd,
         thread=thread,
         base_url=f'http://{display_host}:{port}',
         review_name=review_path.name,
     )
+
+
+def _prototype_preview_port(explicit_port: int | None = None) -> int:
+    if explicit_port is not None:
+        return explicit_port
+    raw_port = (os.environ.get('WAYGATE_PREVIEW_PORT') or '').strip()
+    if not raw_port:
+        return DEFAULT_PROTOTYPE_PREVIEW_PORT
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise ValueError('WAYGATE_PREVIEW_PORT must be an integer') from exc
+    if port < 0 or port > 65535:
+        raise ValueError('WAYGATE_PREVIEW_PORT must be between 0 and 65535')
+    return port
 
 
 def _render_prototype_html_preview(

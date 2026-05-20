@@ -2,6 +2,23 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0j
+
+- Updated no-`--spec` Requirements prompting so the first response still asks only a clarification question, then reads project context after a concrete answer, audits `## 4.9` infrastructure gaps, and follows up in the same tmux pane when facts are still missing.
+- Required agent-side non-destructive validation for user-supplied infrastructure facts, with unverifiable external/private systems recorded as user-provided and not directly verified.
+- Tightened Requirements preflight so vague or unsupported missing infrastructure facts are rejected unless they include checked sources, a 4.8 user-confirmation record, or a specific not-applicable reason.
+- Required `## 4.8` traceability when `## 4.9` claims infrastructure facts are user-confirmed or verified.
+- Fixed Plannotator and prototype preview access lines so services can still bind on `0.0.0.0`, while printed browser URLs use the machine's primary IP address or `WAYGATE_DISPLAY_HOST`.
+- Switched Plannotator remote access setup to `PLANNOTATOR_REMOTE=1`, and made the controller prototype preview server use fixed port `20001` by default.
+
+## 0.6.0i
+
+- Added `docs/README.md` as the generated and packaged documentation entry point and lightweight registry.
+- Updated generated `AGENTS.md` guidance to read `docs/README.md`, separate formal docs from process state, and treat `.rrc-controller-*` as audit evidence rather than long-term documentation.
+- Changed Requirements infrastructure intake so document sources are inventoried as formal docs, controller evidence, external agent/human docs, external wiki/design/API docs, and missing docs to be preserved.
+- Added Unit Plan Document Deliverables Matrix prompting and validation for long-lived product, architecture, workflow, operations, evidence, and document lifecycle changes.
+- Added Final Acceptance document deliverable status rendering and blocking only for deliverables marked `Required For Acceptance = true`.
+
 ## 0.6.0h
 
 - Added a `tmux_config` section to `waygate doctor` for the recommended `~/.tmux.conf` settings: `mouse on`, `history-limit 100000`, `@scroll-speed 5`, and `@copy-mode-vi 'on'`.
@@ -15,9 +32,9 @@ All notable project changes should be recorded here.
 
 - Extended `waygate doctor` with a `claude_assets` section for `~/.claude/commands`, `agents`, `rules`, and `plugins`, reporting only path, status, and count.
 - Aligned `skill_recommendations` with the README baseline, including code review, plan execution, webapp testing, and `frontend-design` / `ui-ux-pro-max` for UI-heavy requirements.
-- Made the controller prototype preview server default to `0.0.0.0` and display remote-friendly prototype review URLs.
-- Passed `PLANNOTATOR_HOST=0.0.0.0` to Plannotator by default and displayed the Plannotator approval URL with the same host.
-- Documented that `0.0.0.0` is a bind/display address and remote browsers usually need the Waygate host IP.
+- Made the controller prototype preview server bind on `0.0.0.0` by default for remote reachability.
+- Requested Plannotator remote access with `PLANNOTATOR_REMOTE=1` instead of controlling the bind host.
+- Documented remote review host behavior; current browser URLs are printed with the machine's primary IP address.
 
 ## 0.6.0f
 

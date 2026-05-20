@@ -62,7 +62,7 @@ waygate go V1.0 --plannotator-port 20000
 
 Requirements approval remains anchored to `approvals/requirements-and-acceptance.md`. Prototype review HTML, when present for UI/Web work, is an auxiliary review view and not the approval source.
 
-Waygate displays Plannotator and prototype preview URLs with `0.0.0.0` by default so remote reviewers can identify that the service is listening beyond loopback. Remote browsers usually need to replace `0.0.0.0` with the IP or hostname of the machine running Waygate. `WAYGATE_PREVIEW_HOST` overrides the controller prototype preview host. Waygate also passes `PLANNOTATOR_HOST=0.0.0.0` to Plannotator by default; whether that changes Plannotator's own bind address depends on the installed Plannotator binary.
+Waygate binds review services on `0.0.0.0` by default, but the terminal prints Plannotator and prototype preview URLs with the machine's primary IP address so reviewers can open them directly. Plannotator uses port `20000`; the controller prototype preview server uses fixed port `20001` so operators can pre-approve ACLs. `WAYGATE_DISPLAY_HOST` overrides the printed browser host, `WAYGATE_PREVIEW_HOST` overrides the controller prototype preview bind host, and `WAYGATE_PREVIEW_PORT` overrides the controller preview port. Waygate requests Plannotator remote access with `PLANNOTATOR_REMOTE=1`.
 
 ## Agent Skills
 

@@ -62,7 +62,7 @@ waygate go V1.0 --plannotator-port 20000
 
 Requirements approval 仍以 `approvals/requirements-and-acceptance.md` 为事实源。UI/Web 工作中出现的 prototype review HTML 只是辅助审阅视图，不是 approval source。
 
-Waygate 默认用 `0.0.0.0` 展示 Plannotator 和 prototype preview URL，方便远程审阅者识别服务不是只监听 loopback。远程浏览器通常需要把 `0.0.0.0` 替换成运行 Waygate 的机器 IP 或主机名。`WAYGATE_PREVIEW_HOST` 可以覆盖 controller prototype preview host。Waygate 也会默认向 Plannotator 传入 `PLANNOTATOR_HOST=0.0.0.0`；该变量是否能改变 Plannotator 自身 bind 地址，取决于已安装的 Plannotator 二进制。
+Waygate 默认把 review 服务绑定到 `0.0.0.0`，但终端会用本机主 IP 地址展示 Plannotator 和 prototype preview URL，让审阅者可以直接打开。Plannotator 使用 `20000` 端口；controller prototype preview server 固定使用 `20001` 端口，便于提前申请 ACL。`WAYGATE_DISPLAY_HOST` 可以覆盖终端展示的浏览器 host，`WAYGATE_PREVIEW_HOST` 可以覆盖 controller prototype preview bind host，`WAYGATE_PREVIEW_PORT` 可以覆盖 controller preview 端口。Waygate 通过 `PLANNOTATOR_REMOTE=1` 请求 Plannotator 开启远程访问。
 
 ## Agent skills
 

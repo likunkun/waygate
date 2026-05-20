@@ -1,5 +1,47 @@
 # 发现与决策
 
+## 2026-05-20 Controller Verifier 失败后的 Builder 精确复现闭环
+
+- Controller Verifier 的失败命令是下一轮 Builder 调试的事实源；Builder 自测通过不能替代 controller 上一轮 failed command 的复现记录。
+- Builder prompt 需要把 failed command index、exact command、controller cwd、returncode、`verification.json` 路径、env keys 和输出 tail 放在同一个协议段中，避免 agent 只跑相邻测试或修改后的命令。
+- `done_payload.controller_failure_resolution` 是 Builder 完成契约的一部分：`failed_command` 必须与上一轮 `lastFailure.details.command` 完全一致，并记录复现、根因或环境差异、修复、同命令复跑和完整 approved verification list 结果。
+- 缺少该结构化证据时继续进入 Refiner/Reviewer 会掩盖 controller verifier 失败，因此 controller 应在 Builder 阶段直接阻塞，暴露“Agent did not reproduce controller failed command”。
+- 重复失败 fingerprint 不应使用完整 stdout/stderr tail；耗时、retry 行、ANSI 或上下文 tail 波动不应绕过重复失败阻断。稳定判定应基于 stage、issue type、command、returncode 和 Playwright title / error class / timeout 等失败特征，tail 只用于人类和 agent 排查。
+
+## 2026-05-20 Plannotator remote env 与 controller preview 固定端口
+
+- Plannotator 的远程访问开关应由 `PLANNOTATOR_REMOTE=1` 表达；Waygate 不再通过 bind host 环境变量控制 Plannotator 的监听地址。
+- Waygate 仍负责传入 `PLANNOTATOR_PORT=<port>`，并继续用本机主 IP 或 `WAYGATE_DISPLAY_HOST` 生成浏览器可打开的审批 URL。
+- Controller prototype preview server 是 Waygate 自己控制的监听服务；默认固定为 `20001` 端口，便于提前申请 ACL。`WAYGATE_PREVIEW_PORT` 只改变监听端口，`WAYGATE_DISPLAY_HOST` 仍只改变展示 host。
+
+## 2026-05-20 Plannotator / prototype preview URL 主 IP 展示
+
+- `0.0.0.0` 是服务监听地址，不是稳定的浏览器访问目标。终端输出 `http://0.0.0.0:<port>` 会让用户点击后打不开页面，因此不能再把 wildcard bind host 当作 display host。
+- 正确边界是 bind host 和 display host 分离：controller preview server 可继续绑定 `0.0.0.0` 以支持远程访问；Plannotator 远程访问由 `PLANNOTATOR_REMOTE=1` 请求；终端展示、summary artifact 和 event payload 中的 browser URL 应使用本机主 IP 地址，或使用 `WAYGATE_DISPLAY_HOST` 显式覆盖。
+- 主 IP 推导使用 UDP outbound route 获取本机 IPv4 地址；这不需要真实发送应用数据包，但能匹配当前机器访问外部网络时使用的主要网卡地址。无法推导时才退回 loopback。
+
+## 2026-05-20 V0.6.0j Requirements 基础设施追问友好化
+
+- Requirements prompt 需要区分“对用户怎么问”和“agent 必须怎么留痕/验证”。用户追问应使用分组引导式文案，允许用户先回答知道的部分；controller 规则词和门禁术语只应作为 agent 内部约束，不应原样出现在用户问题里。
+- 基础设施事实的体验优化不能削弱 preflight：`## 4.9` 仍必须记录具体事实、事实来源和验证状态；“用户确认”或“已验证”仍必须能在 `## 4.8` 中找到对应问答、核对方式和验证结论。
+- 友好追问的默认信息架构固定为三组：代码与运行、调试与资料、参考与依赖。这样能减少一次性 7 类清单的压迫感，同时仍覆盖现有 4.9 分类。
+
+## 2026-05-20 V0.6.0j Requirements 基础设施追问与验证
+
+- 无 `--spec` Requirements intake 的第一轮澄清仍应保持用户友好：agent 第一条回复只问问题，不读项目、不写 gate；但用户给出具体回答后，agent 必须读取项目上下文并盘点 4.9 基础设施缺口。
+- 4.9 基础设施事实不能只依赖用户自然语言补充。代码仓库、运行环境、调试入口、参考环境、文档、接口和依赖需要优先通过本地 repo、配置、README/USAGE、docs、state-dir artifact、package manifest、测试命令等非破坏性来源核对。
+- 外部系统、生产环境、私有 wiki/API 和无法访问的参考环境不能伪造验证结论；可写“用户提供，未能直接验证”，但必须说明无法验证原因，并在人工审阅时暴露风险。
+- 4.8 是基础设施追问与验证留痕位置：当 4.9 声称“用户确认”或“已验证”时，4.8 必须有对应问答、核对方式和验证结论，否则 controller preflight 应阻断。
+- `未发现` / `没有` / `不涉及` 不是天然有效事实。可接受写法必须包含已检查来源、4.8 中的用户确认问答，或具体不涉及原因。
+
+## 2026-05-20 V0.6.0i 文档生命周期
+
+- `docs/README.md` 承担当前阶段的文档入口和轻量登记表职责；暂不拆 `docs/document-registry.md`，避免在登记规模尚小时增加维护面。
+- `task_plan.md`、`progress.md`、`findings.md` 继续作为过程、进度和决策事实源；正式长期产品、架构、流程、运维内容应沉淀到 `docs/*`，不能只停留在过程文档里。
+- `.rrc-controller-*` 目录是审计证据和 gate/artifact 事实源，不应被当作长期文档入口；需要长期引用的外部 Agent 文档或 artifact 应先在 `docs/README.md` 登记，再决定是否提升到正式 docs。
+- Unit Plan 的 Document Deliverables Matrix 是本轮文档动作事实源；Final Acceptance 只阻断 `Required For Acceptance = true` 的文档 deliverable，避免历史 backlog 文档缺口误伤当前 unit。
+- Requirements `文档地址` 只写 `docs/`、`README`、`USAGE` 或 `暂无` 过于空泛；可接受写法必须说明正式维护文档、过程证据、外部来源和缺失文档的用途或可信度。
+
 ## 2026-05-19 V0.6.0h tmux 推荐配置与 Doctor 信息层级
 
 - `waygate doctor` 的 tmux 配置检查必须保持只读；它只能报告 `found/missing/ok/warning` 和 manual action，不能自动写入 `~/.tmux.conf`，也不能 reload tmux。
@@ -15,7 +57,7 @@
 - README 推荐基线中包含 `frontend-design` 或 `ui-ux-pro-max`，因此 doctor 推荐组如果声称与 README 对齐，就必须覆盖 UI-heavy requirements 这一组；只覆盖 workflow 类 skills 会造成文档与诊断分叉。
 - `.claude` 不是通用 skill root；doctor 只应把 `~/.claude/commands`、`agents`、`rules`、`plugins` 当作 Claude runtime assets 做路径/状态/数量检查，不能递归读取 cache、file-history、token、配置内容或环境变量值。
 - Controller prototype preview 绑定 `0.0.0.0` 能提升远程审阅可达性，但 `0.0.0.0` 本身不是远程浏览器应直接使用的主机名；文档和终端输出必须提醒用户通常要替换成运行 Waygate 的机器 IP 或 hostname。
-- `PLANNOTATOR_HOST=0.0.0.0` 是兼容性 env：Waygate 可以传给 Plannotator 并用它展示审批页，但 Plannotator 二进制是否支持该 env、是否真的改变内部 bind，不属于 Waygate 可强制保证的事实。
+- Plannotator 的 bind 行为不再由 Waygate 的 host env 控制；Waygate 只传 remote 开关和端口，并负责展示可打开的审批 URL。
 
 ## 2026-05-19 `waygate doctor` skills 诊断
 

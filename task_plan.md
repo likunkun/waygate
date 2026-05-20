@@ -4,7 +4,7 @@
 将当前 `workflow_controller` 功能、决策和进度固化到 `~/works/ai-works/worktrees/workflow-controller`，后续开发以该分支工作区为准。
 
 ## 当前阶段
-已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40）、V0.5.4 人工评审防串聊与强制 Requirements 澄清（阶段 46）、V0.5.6 Spec Intake & Dependency Documentation 终验批准、V0.6.0 Infrastructure Knowledge Base 终验批准、V0.6.0a Prototype Review Bundle for Plannotator 实施、V0.6.0b Prototype Conformance Gate 实施、Prototype Surface Conformance 流程修复、V0.6.0c 目标项目基础设施 intake / `AGENTS.md` 边界 / blocked 上游路由 / 后续流转说明终验批准、V0.6.0d Requirements Plannotator 主审批对象修复、V0.6.0e Environment Diagnostics and Introduction Materials 终验批准、V0.6.0f Real E2E Evidence Gate 收尾记录、V0.6.0g Doctor Coverage and Remote Review Reachability 实施、V0.6.0h tmux 推荐配置与 Doctor CLI 信息层级实施，以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
+已完成基础功能（阶段 1–18）、V0.1 Test Strategist 接入（阶段 19–21，全量测试 144 passed）、V0.3.1 Acceptance Obligation Ledger（阶段 22，全量测试 240 passed）、V0.3.2 CodeSimplifier 集成（阶段 23，全量测试 252 passed）、V0.3.3 Requirements Quality Gate（阶段 24，全量测试 259 passed）、V0.3.4 Product Design / Technical Architecture Traceability（阶段 25）、V0.3.5 Verifier Evidence Schema（阶段 26）、V0.3.6 Final Acceptance Evidence Matrix（阶段 27）、V0.4+ 路线图整合（阶段 28）、V0.4.0 Project Agent Operating Guide（阶段 29）、V0.4.1–V0.4.5a 控制平面收敛、V0.5.2 审批摘要优先 + Unit Plan 进度输出修复（阶段 37–38）、V0.5.3 Waygate 安装化与现场降噪（阶段 40）、V0.5.4 人工评审防串聊与强制 Requirements 澄清（阶段 46）、V0.5.6 Spec Intake & Dependency Documentation 终验批准、V0.6.0 Infrastructure Knowledge Base 终验批准、V0.6.0a Prototype Review Bundle for Plannotator 实施、V0.6.0b Prototype Conformance Gate 实施、Prototype Surface Conformance 流程修复、V0.6.0c 目标项目基础设施 intake / `AGENTS.md` 边界 / blocked 上游路由 / 后续流转说明终验批准、V0.6.0d Requirements Plannotator 主审批对象修复、V0.6.0e Environment Diagnostics and Introduction Materials 终验批准、V0.6.0f Real E2E Evidence Gate 收尾记录、V0.6.0g Doctor Coverage and Remote Review Reachability 实施、V0.6.0h tmux 推荐配置与 Doctor CLI 信息层级实施、V0.6.0i 文档生命周期实施、V0.6.0j Requirements 基础设施缺口追问与验证优化实施，以及 V1.4.1/V1.5/V1.6 现场 controller gate 与 tmux runner 回归修复、终验后 agent 状态同步修复（阶段 45）。V0.4.6 Strict Test Presence + Requirements-stage Test Strategist 仍是后续待办。
 
 ## 各阶段
 
@@ -81,12 +81,19 @@
 - [x] V0.6.0e Final Acceptance 已批准：完成 Environment Diagnostics and Introduction Materials；目标 `Complete V0.6.0e development acceptance using current planning progress` 已 covered，单元 `target-v0-6-0e` 已 passes=true；验证命令全部通过并生成 `dist/waygate_0.6.0e_all.deb`。
 - [x] `waygate doctor` skills diagnostics：扫描常见 skill 根目录、输出推荐 workflow skill 缺口、支持 `WAYGATE_SKILL_ROOTS`；全量测试 `448 passed`。
 - [x] V0.6.0f 收尾记录：Real E2E Evidence Gate 已写入 ROADMAP/CHANGELOG/progress；不手工修改历史 `.rrc-controller-v0.6.0f/session.json` 为 DONE。
-- [x] V0.6.0g Doctor / 远程审阅可达性：`claude_assets`、README 对齐 skill recommendations（含 `ui-ux-pro-max`）、`0.0.0.0` prototype preview、`PLANNOTATOR_HOST` 和文档更新已落地；全量测试 `459 passed`，已生成 `dist/waygate_0.6.0g_all.deb`。
+- [x] V0.6.0g Doctor / 远程审阅可达性：`claude_assets`、README 对齐 skill recommendations（含 `ui-ux-pro-max`）、`0.0.0.0` prototype preview、Plannotator 远程审阅配置和文档更新已落地；全量测试 `459 passed`，已生成 `dist/waygate_0.6.0g_all.deb`。
 - [x] V0.6.0h tmux 推荐配置与 Doctor CLI 信息层级：`tmux_config` 固定检查 `~/.tmux.conf` 中 4 项推荐配置，`doctor` 顶部新增 `summary:` / `focus:` / `action_required:`，支持 `--color auto|always|never`，版本更新为 `0.6.0h`；全量测试 `464 passed`，已生成 `dist/waygate_0.6.0h_all.deb`。
+- [x] V0.6.0i 文档生命周期：`docs/README.md` 作为文档入口和登记表，Requirements 文档来源结构化盘点，Unit Plan Document Deliverables Matrix，Final Acceptance 只阻断 required 文档动作；全量测试 `475 passed`。
+- [x] V0.6.0j Requirements 基础设施缺口追问与验证优化：无 `--spec` 首轮澄清后读取项目上下文并盘点 4.9 缺口；用户补充基础设施事实必须非破坏性核对；4.8/4.9 记录问答、核对方式、验证结论、事实来源和验证状态；validator 拒绝无依据的缺失/用户确认/已验证声明。
+- [x] Plannotator / prototype preview URL 主 IP 展示修复：`0.0.0.0` 继续作为 bind host，但终端浏览器 URL、summary 和 event payload 改为本机主 IP 或 `WAYGATE_DISPLAY_HOST`，避免 `http://0.0.0.0:<port>` 打不开。
+- [x] Plannotator remote env 与 controller preview 固定端口：Waygate 启动 Plannotator 时传 `PLANNOTATOR_REMOTE=1` 和 `PLANNOTATOR_PORT`，不再控制 bind host；controller prototype preview 默认固定 `20001` 端口，支持 `WAYGATE_PREVIEW_PORT` 覆盖。
 - **状态：** complete
 
 ### 阶段 7：控制器可靠性增强
 - [x] 重复失败硬阻断：同一 unit/stage/fingerprint 连续失败后 block
+- [x] Controller Verifier 失败后 Builder 精确复现协议：prompt 注入 exact failed command、cwd、env keys 和 `verification.json` 路径，要求先复现再修复。
+- [x] Builder 完成证据契约：上一轮 `VERIFY_UNIT` 失败后必须在 `done_payload.controller_failure_resolution` 记录 failed command、复现、根因/环境差异、修复和完整验证结果；缺失或命令不匹配会阻塞在 Builder 后、Refiner 前。
+- [x] 稳定重复失败 fingerprint：stdout/stderr tail 不再参与 hash，改用 stage、issue type、command、returncode 和稳定失败特征，tail 继续保留在摘要与 artifact 中。
 - [x] run_id 防串线：DONE_FILE 必须包含并匹配当前 run_id
 - [x] verification_env 机制：unit/state 环境变量统一注入 verifier
 - [x] Unit Plan approval 预检：拒绝明显缺环境的验证计划

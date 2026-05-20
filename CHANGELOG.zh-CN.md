@@ -2,6 +2,23 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.0j
+
+- 调整无 `--spec` Requirements prompt：第一轮仍只能提出澄清问题；收到具体回答后读取项目上下文、盘点 `## 4.9` 基础设施缺口，并在事实仍缺失时继续在同一 tmux pane 追问。
+- 要求 agent 对用户补充的基础设施事实做非破坏性核对；无法访问的外部系统、生产环境、私有 wiki/API 等必须标注为用户提供且未能直接验证。
+- 加强 Requirements 预检：空泛或无依据的缺失基础设施事实会被拒绝，除非写明已检查来源、4.8 中有用户确认问答，或给出具体不涉及原因。
+- 当 `## 4.9` 声称“用户确认”或“已验证”时，要求 `## 4.8` 有对应问答、核对方式和验证结论留痕。
+- 修复 Plannotator 和原型预览访问地址：服务仍可绑定 `0.0.0.0`，但终端展示的浏览器 URL 使用本机主 IP 地址或 `WAYGATE_DISPLAY_HOST`。
+- 将 Plannotator 远程访问配置切换为 `PLANNOTATOR_REMOTE=1`，并让 controller prototype preview server 默认固定使用 `20001` 端口。
+
+## 0.6.0i
+
+- 新增 `docs/README.md` 作为生成和打包的文档入口与轻量登记表。
+- 更新生成的 `AGENTS.md` 指引，要求读取 `docs/README.md`，区分正式文档、过程状态文档，并明确 `.rrc-controller-*` 是审计证据而不是长期文档入口。
+- Requirements 基础设施 intake 的文档来源改为结构化盘点：正式维护文档、Controller 过程证据、外部 Agent / 人工沟通文档、外部 wiki / 设计稿 / API 文档，以及缺失但需要沉淀的文档。
+- Unit Plan 新增 Document Deliverables Matrix prompt 和校验，覆盖长期产品、架构、流程、运维、证据规则和文档生命周期变更。
+- Final Acceptance 展示文档交付状态，并且只阻断 `Required For Acceptance = true` 的文档动作。
+
 ## 0.6.0h
 
 - `waygate doctor` 新增 `tmux_config` section，检查推荐 `~/.tmux.conf` 配置：`mouse on`、`history-limit 100000`、`@scroll-speed 5` 和 `@copy-mode-vi 'on'`。
@@ -15,9 +32,9 @@
 
 - `waygate doctor` 新增 `claude_assets` section，报告 `~/.claude/commands`、`agents`、`rules`、`plugins` 的路径、状态和数量，不读取内容。
 - `skill_recommendations` 与 README 推荐基线对齐，补齐 code review、plan execution、webapp testing，以及 UI-heavy requirements 所需的 `frontend-design` / `ui-ux-pro-max`。
-- Controller prototype preview server 默认绑定并展示 `0.0.0.0`，让原型审阅 URL 更适合远程浏览器访问。
-- 默认向 Plannotator 子进程传入 `PLANNOTATOR_HOST=0.0.0.0`，并用同一 host 展示 Plannotator 审批页。
-- 文档说明 `0.0.0.0` 是监听/展示地址，远程浏览器通常需要替换为运行 Waygate 主机的 IP。
+- Controller prototype preview server 默认绑定 `0.0.0.0`，提升远程浏览器可达性。
+- 通过 `PLANNOTATOR_REMOTE=1` 请求 Plannotator 开启远程访问，不再控制 bind host。
+- 文档说明远程审阅 host 行为；当前浏览器 URL 会用本机主 IP 地址展示。
 
 ## 0.6.0f
 

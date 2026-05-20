@@ -1,6 +1,6 @@
 # Waygate
 
-[中文文档](README.zh-CN.md) | [Usage](USAGE.md) | [Architecture](docs/architecture.md) | [Workflow](docs/workflow.md) | [Recommended Environment](docs/operations/recommended-environment.md) | [Introduction](docs/product/waygate-introduction-and-best-practices.md) | [Roadmap](ROADMAP.md)
+[中文文档](README.zh-CN.md) | [Usage](USAGE.md) | [Docs Index](docs/README.md) | [Architecture](docs/architecture.md) | [Workflow](docs/workflow.md) | [Recommended Environment](docs/operations/recommended-environment.md) | [Introduction](docs/product/waygate-introduction-and-best-practices.md) | [Roadmap](ROADMAP.md)
 
 Waygate is a workflow control surface for AI coding delivery.
 
@@ -25,12 +25,13 @@ The point is not to remove the human. The point is to move human attention to th
 | Area | What Waygate provides |
 | --- | --- |
 | Recoverable workflow | `session.json`, `events.jsonl`, approvals, and artifacts form the source of truth. |
-| Requirements gates | Human-readable requirements and acceptance criteria with traceability checks. |
+| Requirements gates | Human-readable requirements and acceptance criteria with traceability checks, including V0.6.0j infrastructure follow-up and verification traceability. |
 | Unit planning gates | Unit plans must map objectives, acceptance criteria, test cases, journeys, and verification commands. |
 | Runner support | Subprocess, `tmux-claude`, and `tmux-codex` runners. Existing tmux panes can be detected automatically. |
 | Refinement and review | Builder output can pass through CodeSimplifier/Refiner and Reviewer roles before verification. |
 | Verification evidence | Verifier output includes structured evidence rows for ACs, test cases, commands, and artifacts. |
 | Real E2E evidence | V0.6.0f blocks mocked/stubbed core API browser tests from satisfying E2E, golden path, prototype conformance, or production evidence. |
+| Document lifecycle | V0.6.0i initializes `docs/README.md`, inventories document sources in Requirements, requires Unit Plan document deliverables for long-lived facts, and blocks Final Acceptance only on document actions marked required. |
 | Final acceptance | Final approval is a gate with evidence, journey coverage, scope audit, and rejection routing. |
 | Bug-fix loop | Final acceptance defects can enter a dedicated bug-fix gate without rewriting requirements. |
 | Environment diagnostics | V0.6.0h extends `waygate doctor` with summary-first output, `focus:`, `action_required`, `--color auto|always|never`, `tmux_config`, Python, pytest, tmux, optional agent tools, Plannotator, Debian packaging, skill root scans, `.claude` asset counts, and README-aligned recommended skill gaps. |
@@ -45,13 +46,13 @@ Real agent execution depends on the selected runner:
 - `tmux-claude` requires `tmux` and Claude Code. Waygate can create a Claude Code pane in tmux when no pane is provided.
 - `tmux-codex` requires `tmux` and an existing Codex pane. Waygate can discover a matching Codex pane in the current tmux session.
 - `waygate doctor` checks `~/.tmux.conf` for the recommended `mouse on`, `history-limit 100000`, `@scroll-speed 5`, and `@copy-mode-vi` settings; it reports manual actions but never edits or reloads your tmux config.
-- Plannotator is optional but recommended for browser-assisted human gate review; configure it with `--plannotator-command` and `--plannotator-port`. Waygate displays Plannotator and prototype preview URLs with `0.0.0.0` by default for remote review, and remote browsers usually need that host replaced with the machine IP.
+- Plannotator is optional but recommended for browser-assisted human gate review; configure it with `--plannotator-command` and `--plannotator-port`. Waygate binds review services on `0.0.0.0` by default, prints browser URLs with the machine's primary IP address, uses fixed controller preview port `20001`, and requests Plannotator remote access with `PLANNOTATOR_REMOTE=1`.
 - Project-specific agent skills are loaded by the agent runtime, not by the Debian package; `waygate doctor` scans common local skill roots and reports advisory gaps.
 - Debian package builds require standard shell tools and `dpkg-deb`.
 
 Waygate Markdown spec intake is available through `--spec <path>` on `init`, `start`, and `go`. In V0.5.6 this supports local Waygate Markdown spec files only; detected external formats are deferred rather than imported silently.
 
-For the V0.6.0h recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
+For the V0.6.0j Requirements infrastructure follow-up rules, see [docs/workflow.md](docs/workflow.md). For the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md). For the V0.6.0h recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
 ## Skills Used by Waygate Agents
 

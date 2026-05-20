@@ -1,5 +1,93 @@
 # 进度日志
 
+## 会话：2026-05-20
+
+### Controller Verifier 失败后的 Builder 精确复现闭环
+- **状态：** implementation verified.
+- Builder prompt 现在在上一轮 `lastFailure.stage == VERIFY_UNIT` 且存在具体 failed command 时注入 `Controller Verification Failure Protocol`，明确 failed command index、exact command、controller cwd、returncode、`verification.json` 路径、env keys 和 stdout/stderr tail。
+- Builder 被要求第一动作复跑 controller 的 exact failed command；DONE 前必须在 `done_payload.controller_failure_resolution` 记录 failed command、复现结果、root cause 或 mismatch analysis、fix summary、同命令 rerun exit code 和完整 approved verification list 运行结果。
+- Controller 在 Builder 完成后校验该 resolution：缺少 `controller_failure_resolution` 或 `failed_command` 与上一轮 verifier `lastFailure.details.command` 不一致时，直接阻塞在 `EXECUTE_UNIT`，不会进入 Refiner。
+- Verifier 重复失败 fingerprint 不再把完整 stdout/stderr tail 纳入 hash；改用 stage、issue type、command、returncode 和 Playwright test title / error class / timeout 等稳定失败特征。stdout/stderr tail 仍保留在 `lastFailure.details` 和摘要中用于排查。
+- 正式工作流文档已同步 `docs/workflow.md` 和 `docs/workflow.zh-CN.md`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_builder.py workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_claude_runner_pastes_short_dispatch_that_points_to_full_prompt workflow_controller/tests/test_rrc_controller.py::test_repeated_verification_failure_blocks_before_another_retry workflow_controller/tests/test_rrc_controller.py::test_repeated_playwright_timeout_fingerprint_ignores_volatile_output_tail workflow_controller/tests/test_rrc_controller.py::test_builder_done_after_verifier_failure_requires_controller_failure_resolution workflow_controller/tests/test_rrc_controller.py::test_builder_done_after_verifier_failure_rejects_mismatched_failed_command workflow_controller/tests/test_rrc_controller.py::test_builder_done_after_verifier_failure_with_matching_resolution_enters_refiner -q` -> `12 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `183 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `21 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `493 passed in 73.29s`
+
+### Plannotator 远程开关与 controller preview 固定端口修复
+- **状态：** implementation verified; packaged as `0.6.0j`.
+- Waygate 启动 Plannotator 时改为传入 `PLANNOTATOR_REMOTE=1` 和 `PLANNOTATOR_PORT=<port>`，不再向子进程注入 bind host 环境变量。
+- Controller prototype preview server 默认固定使用 `20001` 端口；`WAYGATE_PREVIEW_PORT` 可覆盖该端口，`WAYGATE_DISPLAY_HOST` 继续只影响终端展示 URL。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `179 passed`
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `10 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `488 passed in 70.72s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0j_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0j_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0j / all / python3`
+
+### Plannotator / prototype preview URL 主 IP 展示修复
+- **状态：** implementation verified; packaged as `0.6.0j`.
+- 修复现场问题：终端不再把 Plannotator 审批页和原型渲染预览页展示为 `http://0.0.0.0:<port>`；`0.0.0.0` 只保留为 bind/listen 地址。
+- 新增 `workflow_controller/networking.py`，默认通过本机 outbound route 推导主 IPv4 地址，并用该地址拼接浏览器可打开的 Plannotator / prototype preview URL；可用 `WAYGATE_DISPLAY_HOST` 显式覆盖展示 host。
+- Controller prototype preview server 默认绑定 `0.0.0.0`；当前修正后 Plannotator 子进程通过 `PLANNOTATOR_REMOTE=1` 请求远程访问，不再注入 bind host 环境变量。
+- README、USAGE、ROADMAP、CHANGELOG 和 recommended-environment 文档已同步：`0.0.0.0` 是监听地址，不再作为默认浏览器目标展示。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `9 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `179 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `487 passed in 68.55s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0j_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0j_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0j / all / python3`
+  - `dpkg-deb -c dist/waygate_0.6.0j_all.deb | rg 'workflow_controller/networking.py|recommended-environment|USAGE|README'` -> package contains the new helper and updated docs.
+
+### V0.6.0j Requirements 基础设施追问友好化
+- **状态：** implementation verified; version unchanged.
+- Requirements no-`--spec` prompt 现在把基础设施追问拆成“面向用户的基础设施追问模板”和“面向 agent 的记录与验证要求”：用户看到温和、可部分回答、有示例的问题；agent 仍保留首次澄清、4.8 留痕、4.9 来源/验证状态和非破坏性核对要求。
+- 默认用户追问文案按 3 组组织：代码与运行、调试与资料、参考与依赖；prompt 明确要求不要把 controller 门禁规则、4.8/4.9 结构、blocked、DONE_FILE 或“必须/不得/阻断/占位”等词原样作为用户追问文案。
+- Validator 语义未放宽：本次只改 Requirements prompt 和 prompt 测试；`## 4.9` 对空泛 `暂无/不清楚`、无 4.8 问答/核对记录的“用户确认/已验证”仍按既有 preflight 规则阻断。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_uses_grouped_friendly_infrastructure_followup workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_discourages_raw_gate_rule_wording_as_user_followup workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_without_spec_requires_infrastructure_gap_followup_and_verification workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_without_spec_keeps_agent_side_clarification -q` -> `4 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `70 passed`
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `55 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `485 passed in 70.09s`
+
+### V0.6.0j Requirements 基础设施缺口追问与验证优化
+- **状态：** implementation verified; full regression passed; packaged as `0.6.0j`。
+- 无 `--spec` Requirements prompt 现在保持第一轮只澄清、不读项目、不写 gate；用户给出具体回答后，要求读取项目上下文、盘点 `## 4.9` 七类基础设施缺口，缺口仍存在时继续在 tmux pane 中直接追问用户。
+- 用户补充代码仓库、运行环境、调试入口、参考环境、文档、接口和依赖后，prompt 要求优先通过本地 repo、配置文件、README/USAGE、docs、state-dir artifact、package manifest、测试命令等非破坏性来源核对；无法访问的外部系统、生产环境、私有 wiki/API 必须标注“用户提供，未能直接验证”并说明原因。
+- Requirements `## 4.8` 现在明确要求记录基础设施追问问题、用户回答、核对方式、验证结论和残余风险；`## 4.9` 要求每类基础设施事实写明事实来源和验证状态。
+- Requirements validator 继续拒绝 `暂无`、`不清楚` 等占位值；对 `未发现` / `没有` / `不涉及` 要求已检查来源、4.8 用户确认问答或具体原因；当 4.9 声称“用户确认”或“已验证”时，要求 4.8 有对应问答、验证方式和验证结论。
+- 正式文档已同步 `docs/workflow.md` / `docs/workflow.zh-CN.md`，并更新 README、USAGE、ROADMAP、CHANGELOG、`task_plan.md` 和 `findings.md`；版本更新为 `0.6.0j`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_requirements_prompt_without_spec_requires_infrastructure_gap_followup_and_verification -q` -> `1 passed`
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_requirements_preflight_rejects_docs_address_none_placeholder workflow_controller/tests/test_acceptance_obligations.py::test_requirements_preflight_rejects_unclear_runtime_environment workflow_controller/tests/test_acceptance_obligations.py::test_requirements_preflight_accepts_missing_external_docs_after_checked_sources workflow_controller/tests/test_acceptance_obligations.py::test_requirements_preflight_rejects_missing_infrastructure_fact_without_checked_source_or_reason workflow_controller/tests/test_acceptance_obligations.py::test_requirements_preflight_accepts_user_confirmed_absent_external_docs_with_qa_record workflow_controller/tests/test_acceptance_obligations.py::test_requirements_preflight_rejects_user_confirmed_fact_without_qa_record workflow_controller/tests/test_acceptance_obligations.py::test_requirements_preflight_rejects_verified_infrastructure_fact_without_validation_record -q` -> `7 passed`
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `55 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `68 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `179 passed`
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `3 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_real_runtime.py workflow_controller/tests/test_rrc_e2e.py -q` -> `22 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `483 passed in 69.18s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0j_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0j_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0j / all / python3`
+  - `WAYGATE_LIB_DIR=<extract>/usr/lib/waygate <extract>/usr/bin/waygate --version` -> `waygate 0.6.0j`
+
+### V0.6.0i 文档生命周期
+- **状态：** implementation verified; full regression passed.
+- `waygate init/start` 现在创建 `docs/README.md` 文档入口和四个 `docs/*` 子目录；已有 `docs/README.md` 时生成 `docs/README.md.generated`，不覆盖用户文件。
+- `AGENTS.md` 模板和根目录规范已加入 `docs/README.md` 必读项，并明确 `task_plan.md` / `progress.md` / `findings.md` 是过程与决策事实源，`.rrc-controller-*` 是审计证据，不是长期文档入口。
+- Requirements `## 4.9 目标项目基础设施信息` 的 `文档地址` 现在要求结构化盘点正式维护文档、Controller 过程证据、外部 Agent / 人工沟通文档、外部 wiki / 设计稿 / API 文档、缺失但需要沉淀的文档；空泛 `docs/`、`README/USAGE` 会被预检拒绝。
+- Unit Plan 新增 Document Deliverables Matrix prompt 和 validator；长期产品/架构/流程/运维/证据规则变更必须声明文档动作或明确不需要正式文档变更及原因。
+- Final Acceptance 现在渲染 Document Deliverables Status，并且只阻断 Unit Plan 标记 `Required For Acceptance = true` 的缺失文档。
+- 已完成定向验证：
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `48 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `67 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `179 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_e2e.py -q` -> `1 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `21 passed`
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py workflow_controller/tests/test_diagnostics.py -q` -> `17 passed`
+- 已完成全量验证：
+  - `python3 -m pytest workflow_controller/tests -q` -> `475 passed in 69.21s`
+
 ## 会话：2026-05-19
 
 ### V0.6.0h tmux 推荐配置与 Doctor CLI 信息层级
@@ -22,8 +110,8 @@
 - V0.6.0f 已按人类可读记录收尾：代码版本、CHANGELOG 和 ROADMAP 均记录真实 E2E evidence gate 已交付；历史 `.rrc-controller-v0.6.0f/session.json` 仍保持原 active state，没有手工改成 DONE。
 - V0.6.0g 已实施：`waygate doctor` 新增 `claude_assets`，只报告 `~/.claude/commands`、`agents`、`rules`、`plugins` 的路径、状态和数量，不读取 cache、file-history、secret 或环境变量值。
 - `skill_recommendations` 已与 README 推荐基线对齐，补齐 code review、plan execution、webapp testing，以及 README 中已有的 `frontend-design` / `ui-ux-pro-max` UI-heavy requirements 推荐组。
-- Controller prototype preview server 默认绑定并展示 `0.0.0.0`；Requirements Plannotator 输出现在显示 `Plannotator 审批页: http://0.0.0.0:<port>` 和 `原型渲染预览页: http://0.0.0.0:<preview-port>/plannotator-review.html`。
-- Waygate 默认向 Plannotator 子进程传入 `PLANNOTATOR_HOST=0.0.0.0`，并保留 `PLANNOTATOR_PORT`；文档注明远程浏览器通常要把 `0.0.0.0` 替换为运行 Waygate 主机的 IP，且 Plannotator 内部 bind 是否受该 env 影响取决于 Plannotator 本体。
+- Controller prototype preview server 默认绑定 `0.0.0.0`；后续已通过 2026-05-20 主 IP 展示修复把终端浏览器 URL 改为本机主 IP 或 `WAYGATE_DISPLAY_HOST`。
+- Waygate 当前通过 `PLANNOTATOR_REMOTE=1` 请求 Plannotator 远程访问，并保留 `PLANNOTATOR_PORT`；不再由 Waygate 控制 Plannotator bind host。
 - `workflow_controller.__version__` 更新为 `0.6.0g`，已生成 `dist/waygate_0.6.0g_all.deb`。
 - 已完成验证：
   - `python3 -m pytest workflow_controller/tests/test_diagnostics.py -q` -> `9 passed`

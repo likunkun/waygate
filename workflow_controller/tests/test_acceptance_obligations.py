@@ -11,8 +11,10 @@ from workflow_controller.acceptance_obligations import (
 )
 from workflow_controller.gates.generators import format_requirements_gate_body
 from workflow_controller.gates.validators import validate_requirements_acceptance_quality
+from workflow_controller.gates.validators import validate_final_document_deliverables
 from workflow_controller.gates.validators import validate_unit_plan_acceptance_obligation_coverage
 from workflow_controller.gates.validators import validate_unit_plan_design_architecture_traceability
+from workflow_controller.gates.validators import validate_unit_plan_document_deliverables
 from workflow_controller.gates.validators import validate_unit_plan_prototype_conformance
 from workflow_controller.prototype_review import validate_final_prototype_conformance
 
@@ -150,7 +152,11 @@ def _valid_infrastructure_section() -> str:
         '- 项目部署运行时环境：Go service, Makefile, DEB package, systemd unit, local test runtime。\n'
         '- 调试分析方法：查看 systemd journal、SQLite 文件、config 文件、logs 目录和 verifier 输出。\n'
         '- 参考环境：远程部署节点和当前生产服务行为作为参考，不混同本地运行环境。\n'
-        '- 文档地址：README、docs/operations、packaging notes 和 deployment runbook。\n'
+        '- 文档地址：正式维护文档：`docs/README.md` 作为入口，`docs/operations` 用于部署运行；'
+        'Controller 过程证据：`.rrc-controller-v1.8.4/artifacts` 只作审计；'
+        '外部 Agent / 人工沟通生成文档：未发现，已检查 `.rrc-controller-v1.8.4/artifacts`；'
+        '外部 wiki / 设计稿 / API 文档：deployment runbook 和 packaging notes 作为参考；'
+        '缺失但需要沉淀的文档：proxy 运维 runbook 需要后续沉淀。可信度：本地 docs 为维护入口，controller artifacts 为运行证据。\n'
         '- 架构/交互逻辑/接口说明：collector 模块、proxy config flow、CLI/systemd interaction 和 API contract。\n'
         '- 依赖信息：Go toolchain、SQLite、systemd、DEB tooling、network proxy endpoints 和 pytest verifier。\n'
     )
@@ -168,7 +174,11 @@ def _valid_nested_infrastructure_section() -> str:
         '### 参考环境\n'
         '- 远程部署节点和当前生产服务行为作为参考，不混同本地运行环境。\n'
         '### 文档地址\n'
-        '- README、docs/operations、packaging notes 和 deployment runbook。\n'
+        '- 正式维护文档：`docs/README.md` 作为入口，`docs/operations` 用于部署运行。\n'
+        '- Controller 过程证据：`.rrc-controller-v1.9.2/artifacts` 只作审计证据。\n'
+        '- 外部 Agent / 人工沟通生成文档：未发现，已检查 artifacts、chat notes 和 docs registry。\n'
+        '- 外部 wiki / 设计稿 / API 文档：deployment runbook 和 packaging notes 作为参考。\n'
+        '- 缺失但需要沉淀的文档：proxy 运维 runbook 需要后续沉淀；本地 docs 可信度最高。\n'
         '### 架构、交互逻辑、接口说明\n'
         '- collector 模块、proxy config flow、CLI/systemd interaction 和 API contract。\n'
         '### 依赖信息\n'
@@ -238,6 +248,148 @@ def test_requirements_preflight_accepts_infrastructure_section_with_nested_headi
     )
 
     validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.9.2'})
+
+
+def test_requirements_preflight_rejects_vague_docs_directory_reference(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '正式维护文档：`docs/README.md` 作为入口，`docs/operations` 用于部署运行；'
+        'Controller 过程证据：`.rrc-controller-v1.8.4/artifacts` 只作审计；'
+        '外部 Agent / 人工沟通生成文档：未发现，已检查 `.rrc-controller-v1.8.4/artifacts`；'
+        '外部 wiki / 设计稿 / API 文档：deployment runbook 和 packaging notes 作为参考；'
+        '缺失但需要沉淀的文档：proxy 运维 runbook 需要后续沉淀。可信度：本地 docs 为维护入口，controller artifacts 为运行证据。',
+        'docs/',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='文档地址.*空泛|文档地址.*vague'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_rejects_vague_readme_usage_reference(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '正式维护文档：`docs/README.md` 作为入口，`docs/operations` 用于部署运行；'
+        'Controller 过程证据：`.rrc-controller-v1.8.4/artifacts` 只作审计；'
+        '外部 Agent / 人工沟通生成文档：未发现，已检查 `.rrc-controller-v1.8.4/artifacts`；'
+        '外部 wiki / 设计稿 / API 文档：deployment runbook 和 packaging notes 作为参考；'
+        '缺失但需要沉淀的文档：proxy 运维 runbook 需要后续沉淀。可信度：本地 docs 为维护入口，controller artifacts 为运行证据。',
+        'README、USAGE',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='文档地址.*README|文档地址.*空泛|文档地址.*vague'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_rejects_docs_address_none_placeholder(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '正式维护文档：`docs/README.md` 作为入口，`docs/operations` 用于部署运行；'
+        'Controller 过程证据：`.rrc-controller-v1.8.4/artifacts` 只作审计；'
+        '外部 Agent / 人工沟通生成文档：未发现，已检查 `.rrc-controller-v1.8.4/artifacts`；'
+        '外部 wiki / 设计稿 / API 文档：deployment runbook 和 packaging notes 作为参考；'
+        '缺失但需要沉淀的文档：proxy 运维 runbook 需要后续沉淀。可信度：本地 docs 为维护入口，controller artifacts 为运行证据。',
+        '暂无',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='文档地址.*placeholder|文档地址.*vague|文档地址.*空泛'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_rejects_unclear_runtime_environment(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        'Go service, Makefile, DEB package, systemd unit, local test runtime。',
+        '不清楚',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='项目部署运行时环境.*placeholder|项目部署运行时环境.*占位'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_accepts_missing_external_agent_docs_after_checked_sources(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '外部 Agent / 人工沟通生成文档：未发现，已检查 `.rrc-controller-v1.8.4/artifacts`；',
+        '外部 Agent / 人工沟通生成文档：未发现，但已检查 `.rrc-controller-v1.8.4/artifacts`、chat notes 和 docs registry；',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_accepts_missing_external_docs_after_checked_sources(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '外部 wiki / 设计稿 / API 文档：deployment runbook 和 packaging notes 作为参考；',
+        '外部 wiki / 设计稿 / API 文档：未发现，已检查 docs/、README、.rrc-controller-*/artifacts；',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_rejects_missing_infrastructure_fact_without_checked_source_or_reason(
+    tmp_path: Path,
+) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '远程部署节点和当前生产服务行为作为参考，不混同本地运行环境。',
+        '未发现。',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='参考环境.*未发现.*已检查|参考环境.*用户确认|参考环境.*reason'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_accepts_user_confirmed_absent_external_docs_with_qa_record(
+    tmp_path: Path,
+) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '外部 wiki / 设计稿 / API 文档：deployment runbook 和 packaging notes 作为参考；',
+        '外部 wiki / 设计稿 / API 文档：用户确认当前没有外部 wiki/API 文档；',
+    )
+    content = _minimal_requirements_gate_with_infrastructure(section).replace(
+        '- 已澄清事项：以 proxy-collector 目标项目为事实源。',
+        '- 追问：目标项目是否存在外部 wiki、设计稿或 API 文档？\n'
+        '- 用户回答：当前没有外部 wiki/API 文档。\n'
+        '- 核对方式：已检查 docs/README.md、README、.rrc-controller-v1.8.4/artifacts，未发现外部链接登记。\n'
+        '- 验证结论：用户确认当前没有外部 wiki/API 文档；本地检查未发现可直接验证的外部文档入口。',
+    )
+    gate.write_text(content, encoding='utf-8')
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_rejects_user_confirmed_fact_without_qa_record(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '外部 wiki / 设计稿 / API 文档：deployment runbook 和 packaging notes 作为参考；',
+        '外部 wiki / 设计稿 / API 文档：用户确认当前没有外部 wiki/API 文档；',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='4\\.8.*用户确认|4\\.8.*问答'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_preflight_rejects_verified_infrastructure_fact_without_validation_record(
+    tmp_path: Path,
+) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    section = _valid_infrastructure_section().replace(
+        '主仓库 `/home/lichangkun/code/proxy-collector`，state-dir `.rrc-controller-v1.8.4`。',
+        '主仓库 `/home/lichangkun/code/proxy-collector`，已验证存在 state-dir `.rrc-controller-v1.8.4`。',
+    )
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(section), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='4\\.8.*验证方式|4\\.8.*验证结论'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
 
 
 def test_requirements_preflight_rejects_empty_nested_infrastructure_category(tmp_path: Path) -> None:
@@ -545,6 +697,132 @@ def test_unit_plan_approval_accepts_non_padded_ao_ids(tmp_path: Path) -> None:
     }
 
     validate_unit_plan_acceptance_obligation_coverage(gate, state)
+
+
+def test_unit_plan_blocks_long_lived_workflow_change_without_document_deliverables_matrix(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AC-1 | TC-1 | functional | pytest tests/test_policy.py -q | policy enforced |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-doc-policy',
+                'name': 'Evidence policy workflow change',
+                'passes': False,
+                'scope': ['Change workflow evidence policy for final acceptance.'],
+                'done_when': ['Verifier evidence policy is enforced.'],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match='Document Deliverables Matrix|文档交付矩阵'):
+        validate_unit_plan_document_deliverables(gate, state)
+
+
+def test_unit_plan_accepts_pure_code_fix_declaring_no_formal_doc_change(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Document Deliverables Matrix\n'
+        '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| code fix | 不需要正式文档变更 | none | false | 纯解析 bug 修复，不改变长期产品/架构/流程/运维事实。 |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-parser-fix',
+                'name': 'Parser bug fix',
+                'passes': False,
+                'scope': ['Fix malformed JSON parsing for existing command output.'],
+                'done_when': ['Regression test passes.'],
+            }
+        ]
+    }
+
+    validate_unit_plan_document_deliverables(gate, state)
+
+
+def test_unit_plan_accepts_required_workflow_document_deliverable(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Document Deliverables Matrix\n'
+        '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| workflow | docs/workflow/evidence-policy.md | update | true | Evidence policy changes are long-term workflow rules. |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-doc-policy',
+                'name': 'Evidence policy workflow change',
+                'passes': False,
+                'scope': ['Change workflow evidence policy for final acceptance.'],
+            }
+        ]
+    }
+
+    validate_unit_plan_document_deliverables(gate, state)
+
+
+def test_final_acceptance_blocks_missing_required_document_deliverable(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Document Deliverables Matrix\n'
+        '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| workflow | docs/workflow/evidence-policy.md | update | true | Evidence policy changes are acceptance-blocking docs. |\n',
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='docs/workflow/evidence-policy.md'):
+        validate_final_document_deliverables(gate, {'workspacePath': str(workspace)})
+
+
+def test_final_acceptance_ignores_missing_non_required_document_deliverable(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Document Deliverables Matrix\n'
+        '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| product | docs/product/future-backlog.md | backlog | false | Candidate future backlog; not required for current acceptance. |\n',
+        encoding='utf-8',
+    )
+
+    validate_final_document_deliverables(gate, {'workspacePath': str(workspace)})
+
+
+def test_final_acceptance_accepts_existing_required_document_deliverable(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    target = workspace / 'docs' / 'workflow' / 'evidence-policy.md'
+    target.parent.mkdir(parents=True)
+    target.write_text('# Evidence Policy\n', encoding='utf-8')
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Document Deliverables Matrix\n'
+        '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| workflow | docs/workflow/evidence-policy.md | update | true | Evidence policy changes are acceptance-blocking docs. |\n',
+        encoding='utf-8',
+    )
+
+    validate_final_document_deliverables(gate, {'workspacePath': str(workspace)})
 
 
 def test_unit_plan_test_case_matrix_with_design_columns_requires_real_test_evidence(tmp_path: Path) -> None:

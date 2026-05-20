@@ -164,9 +164,9 @@
 - 在人类可读项目记录中记录 V0.6.0f 已交付，不手工把历史 `.rrc-controller-v0.6.0f/session.json` 改成 `DONE`。
 - `waygate doctor` 新增 `claude_assets` 检查，覆盖 `~/.claude/commands`、`~/.claude/agents`、`~/.claude/rules`、`~/.claude/plugins`；输出仅包含路径、状态和数量。
 - 推荐 skill warning 与 README 推荐基线对齐，覆盖 persistent planning、startup、brainstorming、writing plans、TDD、debugging、test strategy、refiner、verification、code review、plan execution、webapp/browser verification，以及 `frontend-design` / `ui-ux-pro-max`。
-- Controller prototype preview URL 默认展示为 `http://0.0.0.0:<port>/plannotator-review.html`，并支持 `WAYGATE_PREVIEW_HOST` 覆盖。
-- 默认向 Plannotator 传入 `PLANNOTATOR_HOST=0.0.0.0`，并把审批页显示为 `http://0.0.0.0:<port>`。
-- 文档说明 `0.0.0.0` 是监听/展示地址；远程浏览器通常需要替换成运行 Waygate 主机的 IP，Plannotator 实际 bind 行为仍取决于 Plannotator 本体。
+- Controller prototype preview server 默认绑定 `0.0.0.0`，但浏览器 URL 使用本机主 IP 地址展示；`WAYGATE_PREVIEW_HOST` 覆盖 preview bind host，`WAYGATE_DISPLAY_HOST` 覆盖终端展示 host。
+- 通过 `PLANNOTATOR_REMOTE=1` 请求 Plannotator 开启远程访问，但审批页 URL 使用本机主 IP 地址展示。
+- 文档说明 `0.0.0.0` 是监听地址，不是浏览器目标；controller prototype preview 固定使用 `20001` 端口，便于 ACL 规划。
 
 ### V0.6.0h - tmux Recommended Config and Doctor Information Hierarchy
 
@@ -180,6 +180,31 @@
 - Doctor 输出顶部新增 `summary:`、`focus:` 和 `action_required:`，再展示安装来源、环境与详细清单。
 - 新增 `waygate doctor --color auto|always|never`，让 TTY 用户能用颜色识别状态、P1 关注项、manual action 和 section 标题；非 TTY 输出默认保持纯文本。
 - 保留既有详细 section，包括 `environment_checks`、`skill_recommendations` 和 `claude_assets`，方便继续排障。
+
+### V0.6.0i - Documentation Lifecycle
+
+目标：让正式文档可发现、文档更新可审计，同时避免把所有历史文档缺口都变成本轮终验阻断。
+
+已交付：
+
+- `waygate init/start` 生成 `docs/README.md` 作为文档入口和轻量登记表；已有用户文件时写 `.generated` 草案，不覆盖原文件。
+- 生成的 `AGENTS.md` 要求读取 `docs/README.md`，区分正式文档、过程状态文档，并明确 `.rrc-controller-*` 是审计证据。
+- Requirements `文档地址` intake 改为结构化盘点：正式维护文档、Controller 过程证据、外部 Agent / 人工沟通文档、外部 wiki / 设计稿 / API 文档、缺失但需要沉淀的文档。
+- Unit Plan 新增 Document Deliverables Matrix prompt 和校验，覆盖长期产品、架构、流程、运维、证据规则和文档生命周期变更。
+- Final Acceptance 展示文档交付状态，并且只阻断 `Required For Acceptance = true` 的文档动作。
+
+### V0.6.0j - Requirements Infrastructure Follow-up and Validation
+
+目标：保留无 `--spec` Requirements intake 的直接对话体验，同时防止未验证的基础设施事实被复制进 approval gate。
+
+已交付：
+
+- 无 `--spec` 时，Requirements drafter 第一轮仍只能提出澄清问题；用户给出具体回答后，才读取项目上下文。
+- 首次澄清后要求 drafter 盘点 `## 4.9 目标项目基础设施信息` 的 7 类事实；如果仍缺基础设施事实，继续在 tmux pane 中直接追问用户。
+- 对用户补充的代码仓库、运行环境、调试入口、参考环境、文档、接口和依赖事实要求非破坏性核对。
+- 外部系统、生产环境、私有 wiki/API 或其他无法访问的事实必须标注为用户提供且未能直接验证，不能伪造证据。
+- `## 4.8` 记录基础设施追问、用户回答、核对方式、验证结论和残余风险；`## 4.9` 为每类基础设施事实记录来源和验证状态。
+- Requirements 预检加强对“未发现/没有/不涉及”等声明的校验；当 4.9 声称“用户确认”或“已验证”时，要求 4.8 有对应记录。
 
 ### V0.6.1 - External Spec Intake
 

@@ -42,6 +42,7 @@ install -m 0644 "${ROOT_DIR}/ROADMAP.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${P
 install -m 0644 "${ROOT_DIR}/CHANGELOG.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/CHANGELOG.md"
 install -m 0644 "${ROOT_DIR}/CHANGELOG.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/CHANGELOG.zh-CN.md"
 install -m 0644 "${ROOT_DIR}/LICENSE" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/LICENSE"
+install -m 0644 "${ROOT_DIR}/docs/README.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/README.md"
 install -m 0644 "${ROOT_DIR}/docs/architecture.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture.md"
 install -m 0644 "${ROOT_DIR}/docs/architecture.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture.zh-CN.md"
 install -m 0644 "${ROOT_DIR}/docs/workflow.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/workflow.md"

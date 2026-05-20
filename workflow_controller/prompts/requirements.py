@@ -57,13 +57,31 @@ Controller 会记录本轮 requirements revision diff artifact；请解决这些
     requirements_spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
     spec_section = ''
     clarification_section = """Agent-side requirements clarification:
+
+面向用户的基础设施追问模板：
+- 用温和、可部分回答的方式提问，不要把 controller 门禁规则、4.8/4.9 结构、blocked、DONE_FILE 或“必须/不得/阻断/占位”等词原样作为用户追问文案。
+- 建议开场：“我先把运行和资料入口补齐，方便后面生成可验证的验收标准。你可以先回答知道的部分，不确定的我会先从仓库和已有文档里核对。”
+- 默认按 3 组追问，允许用户只答其中一部分：
+  1. 代码与运行：主仓库、相关仓库、启动/验证命令、运行环境。
+  2. 调试与资料：日志、状态文件、排障入口、README/docs/wiki/API/设计稿。
+  3. 参考与依赖：参考环境、外部服务、接口、数据存储、系统依赖。
+- 如果仓库和文档里没有找到某项，用这个句式继续补问：“我在 README/docs/state-dir 里暂时没找到 X。这个项目目前是没有 X，还是需要你提供外部地址或说明？”
+- 如果用户暂时只知道一部分，先接收已知信息，再从仓库、docs 和 state-dir 核对；核对后只补问仍缺的具体项。
+
+面向 agent 的记录与验证要求：
 - 没有 `--spec` 时，写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题，并在当前 tmux agent pane 里等待用户回答。
 - 第一条回复只能包含澄清问题；不得先读取项目文件、检索代码、生成 Requirements 正文或写入 body_path。
 - 等待用户回答期间不得写 `DONE_FILE`；收到用户回答后，再继续生成 Requirements Gate，但该回答必须是具体澄清回答。
 - 如果用户只回复「继续」、「按你理解」、「你看着办」或类似非具体回答，不能视为有效澄清回答；必须继续追问或写 blocked DONE_FILE，不能靠保守假设直接生成。
 - 用户回答后，将澄清结果写入本 Requirements Gate 的 `## 4.8 已澄清事项、关键假设与待确认风险`，并同步反映到需求、范围外、验收标准和测试策略中。
+- 首次澄清收到具体回答后，必须读取项目上下文，盘点 `## 4.9 目标项目基础设施信息` 的 7 类事实缺口。
+- 如果 4.9 基础设施事实仍缺失，必须继续在当前 tmux agent pane 里直接追问用户；不要把缺口藏到待确认风险里。
+- 用户补充基础设施事实后，不得原样照抄为已验证事实；必须优先使用非破坏性方式核对，例如本地 repo、配置文件、README/USAGE、docs、state-dir artifact、package manifest、测试命令和已有验证输出。
+- 外部系统、生产环境、私有 wiki/API 或无法访问的参考环境不能伪造验证；写成“用户提供，未能直接验证”，并说明原因。
+- 核对过程不得把 token、数据库 URL、环境变量值或私有凭据写入 Requirements。
 - 只有收到具体澄清回答后，才可以读取项目上下文并用保守假设补齐非阻断细节；这些假设必须写入 gate。
 - 不要因为一般不确定性反复提问；但未完成首次澄清前，不能进入 drafting。
+- 最终 `## 4.9` 仍不能接受空泛 `暂无/不清楚`；如果写“用户确认”或“已验证”，`## 4.8` 必须有对应问答、核对方式和验证结论。
 """
     if requirements_spec:
         spec_section = f"""
@@ -215,18 +233,24 @@ UI/原型设计约束：
 
 记录 agent-side clarification 的结果：
 - 已澄清事项：如 agent 在 tmux pane 中向用户提问，必须列出用户回答形成的具体决策。
+- 基础设施追问留痕：记录追问的问题、用户回答、agent 的核对方式、验证结论和仍需人工确认的风险。
 - 关键假设：列出为避免打断而采用的保守假设，并说明这些假设如何影响需求和验收。
 - 待确认风险：列出仍需人工在 gate 审阅时重点确认的风险；不能把阻断性缺口藏在这里。
 
 ## 4.9 目标项目基础设施信息
 
-必须覆盖以下 7 类目标项目基础设施信息。每类都必须写具体事实；如果某类确实不涉及，可以写“不涉及”，但必须附具体理由，不能空置或使用 TBD/待补/不清楚等占位内容。
+必须覆盖以下 7 类目标项目基础设施信息。每类都必须写具体事实、事实来源和验证状态；如果某类确实不涉及，可以写“不涉及”，但必须附具体理由，不能空置或使用 TBD/待补/不清楚等占位内容。
 
 - 代码仓库：
 - 项目部署运行时环境：
 - 调试分析方法：
 - 参考环境：
 - 文档地址：
+  - 正式维护文档：
+  - Controller 过程证据：
+  - 外部 Agent / 人工沟通生成文档：
+  - 外部 wiki / 设计稿 / API 文档：
+  - 缺失但需要沉淀的文档：
 - 架构/交互逻辑/接口说明：
 - 依赖信息：
 
@@ -259,11 +283,12 @@ def _target_project_infrastructure_intake_prompt_section(state: dict[str, Any]) 
 - Requirements Gate 必须输出固定审阅段落 `## 4.9 目标项目基础设施信息`。
 - 必须覆盖 7 类基础设施信息：代码仓库、项目部署运行时环境、调试分析方法、参考环境、文档地址、架构/交互逻辑/接口说明（即架构、交互逻辑、接口说明）、依赖信息。
 - 每类都必须写具体事实；如果某类确实不涉及，可以写“不涉及”，但必须附具体理由，不能空置或使用 TBD/待补/不清楚等占位内容。
+- 没有 `--spec` 时，首次澄清收到具体回答后，必须读取项目上下文并盘点 4.9 缺口；如果基础设施事实仍找不到，继续在当前 tmux agent pane 中直接追问用户。
 - 代码仓库必须回答：当前项目涉及哪些代码库、主仓库、相关仓库、工作区边界、文档目录、生成物和 state-dir 边界。
 - 项目部署运行时环境必须覆盖：本地、测试、预发、生产或等价环境、启动方式、服务依赖、外部 API、数据存储、agent runner 和验证运行时前置条件。
 - 调试分析方法必须覆盖：日志在哪里、如何查看、基本排查思路、状态文件、运行事件、错误输出、monitor 或 trace 入口。
 - 参考环境必须覆盖：竞品、同类产品、历史项目、UI/UX 风格样式、交互参考和访问方式，不能简化成普通运行环境。
-- 文档地址必须允许本地 `docs/`、wiki、外部网址、历史项目、设计稿、API 文档、部署文档和排障文档，并说明用途或可信度。
+- 文档地址必须结构化盘点：正式维护文档、Controller 过程证据、外部 Agent / 人工沟通生成文档、外部 wiki / 设计稿 / API 文档、缺失但需要沉淀的文档；每项必须说明用途或可信度。不要只写 `docs/`、`README`、`USAGE` 或 `暂无`。
 - 架构、交互逻辑、接口说明和依赖信息必须覆盖：模块边界、数据流、用户交互、状态流转、API/CLI/事件接口、错误语义、系统依赖、服务依赖和验证依赖，并能被 Unit Plan 消费。
 - 当目标项目需要 UI/UX、包含浏览器可见界面或 `currentUnitNeedsUiDesign=true` 时，Requirements Gate 必须在人工确认前包含 prototype evidence 或可审阅设计说明。
 - 当目标项目是 Web 系统时，必须包含可点击、可操作、可在浏览器中使用的 clickable webpage prototype，不接受静态截图、纯文字描述或不可点击线框；必须记录访问方式、页面状态、核心点击路径、AC 映射、真实实现目标和每个可交互 UI surface。
@@ -273,5 +298,10 @@ def _target_project_infrastructure_intake_prompt_section(state: dict[str, Any]) 
 - 写 manifest 前必须扫描真实生产入口；同一个原型动作如果在真实系统有多个入口，例如批量分配、单课分配管理、弹窗、抽屉、选择器、管理面板、批量操作入口和单项操作入口，必须拆成多个 surface contract。
 - 原型是后续 Unit Plan、Verifier 和 Final Acceptance 的 UI 合约；不要求像素级一致，但关键布局、信息架构、可见文案、主要状态和核心交互必须落到真实 route/page。
 - `prototype-manifest.json` 中的本地图片或 HTML 原型路径必须是真实文件；外部 URL 不能带 token、password、secret、api_key、signature 等 sensitive URL query；linked ACs 必须引用本 Requirements Gate 中存在的 AC。
-- 必须保持 environment/runbook facts、Requirements 和 Unit Plan artifacts 的边界：Requirements Gate 负责明确目标项目需要梳理哪些基础设施事实；Unit Plan 负责决定如何实现；`docs/operations/`、wiki 或外部链接只作为事实来源或落点。
+- 用户补充代码仓库、运行环境、调试入口、参考环境、文档、接口或依赖后，不得原样照抄为已验证事实；必须优先用本地 repo、配置文件、README/USAGE、docs、state-dir artifact、package manifest、测试命令等非破坏性方式核对。
+- 外部系统、生产环境、私有 wiki/API 或无法访问的参考环境不能伪造验证；必须标注“用户提供，未能直接验证”，并写明原因。
+- `## 4.8` 必须记录基础设施追问的问题、用户回答、agent 的核对方式、验证结论和仍需人工确认的风险；`## 4.9` 必须记录每类基础设施事实的事实来源和验证状态。
+- 如果某项基础设施事实缺失，可写“未发现，已检查 X/Y/Z”或“用户确认当前没有，后续如需沉淀进入 Unit Plan”；不能只写“暂无”“没有”“不清楚”。
+- 基础设施核对不得泄露 token、数据库 URL、环境变量值或私有凭据。
+- 必须保持 environment/runbook facts、Requirements、Unit Plan artifacts、正式 docs 和 `.rrc-controller-*` 审计证据的边界：Requirements Gate 负责明确目标项目需要梳理哪些基础设施事实；Unit Plan 负责决定如何实现，并声明是否落正式文档；`docs/README.md` 是文档入口，`docs/operations/`、wiki 或外部链接只作为事实来源或落点。
 """

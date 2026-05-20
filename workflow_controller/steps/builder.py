@@ -225,7 +225,7 @@ def prepare_builder_prompt(state: dict[str, Any], approvals_dir: Path, unit_dir:
             unit_plan_content=unit_plan_content,
             original_prompt_path=original_prompt_path,
             original_prompt=original_prompt,
-            previous_failure_feedback=_render_previous_controller_failure_feedback(unit_dir),
+            previous_failure_feedback=_render_previous_controller_failure_feedback(unit_dir, state=state),
         ),
         encoding='utf-8',
     )

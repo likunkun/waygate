@@ -11,7 +11,8 @@
 3. `task_plan.md`
 4. `progress.md`
 5. `findings.md`
-6. Controller state-dir 中的 `session.json`（如 `.rrc-controller-<target>/session.json`）
+6. `docs/README.md`
+7. Controller state-dir 中的 `session.json`（如 `.rrc-controller-<target>/session.json`）
 
 ## 事实源
 
@@ -25,18 +26,27 @@
 | 验收证据 | `<state-dir>/artifacts/` | Verifier、Reviewer、Refiner 和 AO 相关 artifact。 |
 | 人类可读进度 | `progress.md` | 只能作为摘要，不能单独作为完成依据。 |
 | 决策与已知问题 | `findings.md` | 历史决策、根因、约束和风险。 |
+| 文档入口 | `docs/README.md` | 正式文档入口、登记表和文档生命周期说明。 |
 
 ## 版本规划规则
 
 - 讨论版本范围前，必须读取 `ROADMAP.md`、`task_plan.md` 和 Controller state-dir 中的 `session.json`，不要根据最近进度推断版本范围。
 - 讨论某个版本时，必须把当前版本需求和后续版本候选分开记录；不要把后续 backlog 当作当前版本范围。
 
-## 文档目录
+## 文档入口与生命周期
 
-项目文档使用以下目录结构：
+- `docs/README.md` 是正式文档入口与登记表；先从这里确认已有文档、外部文档来源和缺失但需要沉淀的文档。
+- `task_plan.md` / `progress.md` / `findings.md` 是过程、进度和决策事实源；它们不是长期产品/架构/运维文档的替代品。
+- `docs/*` 是正式沉淀。初始化后目录可以只有入口文件和空子目录，不保证已经有正文。
+- `.rrc-controller-*` 是审计证据，不是长期文档入口；引用其中 artifact 时必须说明用途，并优先在 `docs/README.md` 登记。
+- 外部 Agent 文档必须先登记，再决定是否提升到正式 `docs/product/`、`docs/architecture/`、`docs/workflow/` 或 `docs/operations/`。
+- 流程规则变更必须在 Unit Plan 的 Document Deliverables Matrix 中声明，并落到 `docs/workflow/`。
+
+正式文档目录：
 
 ```text
 docs/
+  README.md
   product/
   architecture/
   workflow/

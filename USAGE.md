@@ -2,7 +2,7 @@
 
 [中文](USAGE.zh-CN.md) | [README](README.md)
 
-This document is the CLI-oriented guide for Waygate. For concepts and architecture, see [docs/workflow.md](docs/workflow.md) and [docs/architecture.md](docs/architecture.md).
+This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.0j Requirements infrastructure follow-up, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), and [docs/architecture.md](docs/architecture.md).
 
 For V0.6.0h environment preparation, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For an introduction and best-practices walkthrough, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
@@ -23,7 +23,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.0h_all.deb
+sudo apt install ./dist/waygate_0.6.0j_all.deb
 waygate --help
 waygate doctor
 waygate doctor --color auto
@@ -84,7 +84,7 @@ waygate go V1.0 --spec ./requirements.md
 
 For UI/UX or Web-system requirements, the Requirements drafter must write `artifacts/requirements-draft/prototype-manifest.json`. Waygate validates it, copies local image/HTML prototypes into `artifacts/requirements-draft/prototypes/`, and renders `plannotator-review.md` plus `plannotator-review.html`. Plannotator annotates the approval file `approvals/requirements-and-acceptance.md`; the HTML bundle is exposed as an auxiliary rendered prototype preview URL during the current review session.
 
-By default, Waygate displays the Plannotator approval page as `http://0.0.0.0:<port>` and the prototype preview as `http://0.0.0.0:<preview-port>/plannotator-review.html`. `0.0.0.0` is a listening/display address; when opening from a remote browser, replace it with the IP or hostname of the machine running Waygate. `WAYGATE_PREVIEW_HOST` overrides the controller preview host, and Waygate passes `PLANNOTATOR_HOST=0.0.0.0` to Plannotator by default. Whether that host changes Plannotator's internal bind behavior depends on the Plannotator binary.
+By default, Waygate binds review services on `0.0.0.0` and displays the Plannotator approval page and prototype preview URL with the machine's primary IP address. Plannotator uses port `20000`; the controller prototype preview server uses fixed port `20001` so operators can pre-approve ACLs. `--plannotator-port` changes the Plannotator port, `WAYGATE_PREVIEW_PORT` changes the controller preview port, `WAYGATE_DISPLAY_HOST` overrides the printed browser host, and `WAYGATE_PREVIEW_HOST` overrides the controller preview bind host. Waygate requests Plannotator remote access with `PLANNOTATOR_REMOTE=1`.
 
 The manifest must map each prototype to real AC IDs and include page states plus click paths. URLs with sensitive query keys such as `token`, `password`, `secret`, `api_key`, or `signature` are rejected.
 

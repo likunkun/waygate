@@ -21,6 +21,12 @@ from workflow_controller.evidence_policy import (
     command_core_api_mock_routes,
     evidence_row_real_e2e_issue,
 )
+from workflow_controller.document_deliverables import (
+    final_document_deliverable_issues,
+    parse_document_deliverables_from_unit_plan,
+    unit_plan_declares_no_formal_doc_change,
+    unit_plan_requires_document_deliverables,
+)
 from workflow_controller.gates.parsers import (
     ALLOWED_COVERAGE_STATUSES,
     CONTROLLER_STATE_PATCH_HEADING,
@@ -357,6 +363,52 @@ def validate_unit_plan_prototype_conformance(
         )
     if issues:
         raise ValueError('unit plan prototype conformance is incomplete: ' + '; '.join(issues))
+
+
+def validate_unit_plan_document_deliverables(
+    unit_plan_path: Path,
+    state: dict[str, Any],
+) -> None:
+    if not unit_plan_path.exists():
+        return
+    content = gate_body(unit_plan_path.read_text(encoding='utf-8'))
+    deliverables = parse_document_deliverables_from_unit_plan(unit_plan_path)
+    if unit_plan_requires_document_deliverables(state):
+        if not deliverables and not unit_plan_declares_no_formal_doc_change(content):
+            raise ValueError(
+                'unit plan document deliverables are incomplete: add a Document Deliverables Matrix '
+                'or explicitly declare 不需要正式文档变更 with a concrete reason'
+            )
+
+    issues: list[str] = []
+    for row in deliverables:
+        target_path = str(row.get('target_path') or '').strip()
+        action = str(row.get('action') or '').strip()
+        reason = str(row.get('reason') or '').strip()
+        required = bool(row.get('required_for_acceptance'))
+        if required and not target_path:
+            issues.append('required document deliverable is missing Target Path')
+        if required and any(marker in target_path.lower() for marker in ['待补', 'tbd', 'todo', '...']):
+            issues.append(f'required document deliverable {target_path} must name a concrete docs path')
+        if required and target_path and '不需要正式文档变更' in target_path:
+            issues.append('no-formal-doc-change row cannot be Required For Acceptance=true')
+        if required and not action:
+            issues.append(f'required document deliverable {target_path} is missing Action')
+        if not required and '不需要正式文档变更' in target_path and len(reason) < 8:
+            issues.append('不需要正式文档变更 must include a concrete reason')
+    if issues:
+        raise ValueError('unit plan document deliverables are incomplete: ' + '; '.join(issues))
+
+
+def validate_final_document_deliverables(
+    unit_plan_path: Path,
+    state: dict[str, Any],
+) -> None:
+    if not unit_plan_path.exists():
+        return
+    issues = final_document_deliverable_issues(unit_plan_path, state)
+    if issues:
+        raise ValueError('document deliverables are incomplete: ' + '; '.join(issues))
 
 
 def validate_requirements_acceptance_quality(
@@ -821,6 +873,7 @@ def _requirements_target_infrastructure_issues(content: str) -> list[str]:
         ]
 
     issues: list[str] = []
+    clarification_section = _markdown_section(content, '已澄清事项')
     for label, aliases in _REQUIREMENTS_INFRASTRUCTURE_CATEGORIES:
         category_text = _requirements_infrastructure_category_text(section, label, aliases)
         if not category_text.strip():
@@ -833,7 +886,218 @@ def _requirements_target_infrastructure_issues(content: str) -> list[str]:
                 f'Requirements Gate `## 4.9 目标项目基础设施信息` category {label} '
                 'is empty or placeholder; replace placeholder text with concrete facts or a specific 不涉及 reason'
             )
+            continue
+        issues.extend(
+            _requirements_infrastructure_absence_traceability_issues(label, category_text, clarification_section)
+        )
+        issues.extend(
+            _requirements_infrastructure_claim_traceability_issues(label, category_text, clarification_section)
+        )
+        if label == '文档地址':
+            issues.extend(_requirements_document_address_quality_issues(category_text))
     return issues
+
+
+def _requirements_infrastructure_absence_traceability_issues(
+    label: str,
+    category_text: str,
+    clarification_section: str,
+) -> list[str]:
+    normalized = _normalized_requirements_text(category_text)
+    absence_markers = ['未发现', '没有', '当前没有', '不涉及', '暂不清楚']
+    if not any(marker in normalized for marker in absence_markers):
+        return []
+
+    if any(marker in normalized for marker in ['暂不清楚', '不清楚']):
+        return [
+            f'Requirements Gate `## 4.9 目标项目基础设施信息` category {label} states an unclear or unknown value; '
+            'replace it with checked sources, user confirmation recorded in 4.8, or a specific reason'
+        ]
+
+    if '用户确认' in normalized:
+        if _requirements_clarification_records_user_confirmation(clarification_section):
+            return []
+        return [
+            f'Requirements Gate `## 4.9 目标项目基础设施信息` category {label} claims 用户确认, '
+            'but `## 4.8` lacks the corresponding 用户确认问答 record'
+        ]
+
+    if _requirements_infrastructure_text_has_checked_sources(normalized):
+        return []
+    if _requirements_infrastructure_text_has_specific_absence_reason(normalized):
+        return []
+
+    return [
+        f'Requirements Gate `## 4.9 目标项目基础设施信息` category {label} states 未发现/没有/不涉及 '
+        'but must include 已检查 sources, 用户确认 recorded in 4.8, or a specific reason'
+    ]
+
+
+def _requirements_infrastructure_claim_traceability_issues(
+    label: str,
+    category_text: str,
+    clarification_section: str,
+) -> list[str]:
+    normalized = _normalized_requirements_text(category_text)
+    issues: list[str] = []
+    absence_markers = ['未发现', '没有', '当前没有', '不涉及', '暂不清楚']
+    if (
+        '用户确认' in normalized
+        and not any(marker in normalized for marker in absence_markers)
+        and not _requirements_clarification_records_user_confirmation(clarification_section)
+    ):
+        issues.append(
+            f'Requirements Gate `## 4.9 目标项目基础设施信息` category {label} claims 用户确认, '
+            'but `## 4.8` lacks the corresponding 用户确认问答 record'
+        )
+    verified_markers = ['已验证', '验证通过', '已核实', 'verified']
+    if any(marker in normalized for marker in verified_markers):
+        if not _requirements_clarification_records_validation(clarification_section):
+            issues.append(
+                f'Requirements Gate `## 4.9 目标项目基础设施信息` category {label} claims 已验证, '
+                'but `## 4.8` lacks 验证方式 / 验证结论 record'
+            )
+    return issues
+
+
+def _requirements_infrastructure_text_has_checked_sources(normalized: str) -> bool:
+    check_markers = ['已检查', '检查了', '已核对', '核对了', 'checked', 'inspected']
+    source_markers = [
+        'docs',
+        'readme',
+        'usage',
+        '.rrc-controller',
+        'artifacts',
+        'state-dir',
+        'package',
+        'manifest',
+        '配置',
+        '测试命令',
+        'repo',
+        '仓库',
+    ]
+    return any(marker in normalized for marker in check_markers) and any(
+        marker in normalized for marker in source_markers
+    )
+
+
+def _requirements_infrastructure_text_has_specific_absence_reason(normalized: str) -> bool:
+    reason_markers = [
+        '因为',
+        '由于',
+        '原因',
+        '不适用',
+        '不属于',
+        '测试 fixture',
+        '测试目标',
+        '无外部资料',
+        '无需',
+        '本轮',
+        '后续如需',
+    ]
+    return any(marker in normalized for marker in reason_markers)
+
+
+def _requirements_clarification_records_user_confirmation(clarification_section: str) -> bool:
+    normalized = _normalized_requirements_text(clarification_section)
+    if not normalized:
+        return False
+    has_question = any(marker in normalized for marker in ['追问', '问题', '提问', 'question'])
+    has_answer = any(marker in normalized for marker in ['用户回答', '回答：', '用户确认', 'answer'])
+    return has_question and has_answer
+
+
+def _requirements_clarification_records_validation(clarification_section: str) -> bool:
+    normalized = _normalized_requirements_text(clarification_section)
+    if not normalized:
+        return False
+    has_method = any(marker in normalized for marker in ['核对方式', '验证方式', '检查方式', '已检查', '已核对'])
+    has_conclusion = any(marker in normalized for marker in ['验证结论', '核对结论', '结论'])
+    return has_method and has_conclusion
+
+
+def _requirements_document_address_quality_issues(text: str) -> list[str]:
+    cleaned = _normalized_infrastructure_category_content(text, ('文档地址', '文档来源'))
+    normalized = _normalized_requirements_text(cleaned).strip()
+    compact = re.sub(r'[\s`*_，。:：;；、,./\\|-]+', '', normalized)
+    if not normalized:
+        return ['Requirements Gate `## 4.9 目标项目基础设施信息` category 文档地址 is empty or placeholder']
+
+    vague_values = {
+        'docs',
+        'doc',
+        'documents',
+        'documentation',
+        'readme',
+        'readmeusage',
+        'usagereadme',
+        'readmeusageroadmap',
+        '暂无',
+        '无',
+        'none',
+        'na',
+    }
+    if compact in vague_values:
+        return [
+            'Requirements Gate `## 4.9 目标项目基础设施信息` category 文档地址 is too vague; '
+            'inventory formal docs, controller evidence, external agent/human docs, external wiki/design/API docs, '
+            'and missing docs with usage or credibility'
+        ]
+
+    generic_doc_terms = [
+        'docs',
+        'readme',
+        'usage',
+        'roadmap',
+        'task_plan',
+        'progress',
+        'findings',
+    ]
+    has_only_generic_sources = all(
+        token in generic_doc_terms
+        for token in re.findall(r'[a-z_]+', normalized)
+    ) and any(term in normalized for term in generic_doc_terms)
+    purpose_or_credibility_markers = [
+        '用途',
+        '可信',
+        '作为',
+        '用于',
+        '入口',
+        '登记',
+        '审计',
+        '证据',
+        '维护',
+        'source',
+        'purpose',
+        'credibility',
+        'audit',
+        'evidence',
+        'registry',
+        'maintained',
+    ]
+    if has_only_generic_sources and not any(marker in normalized for marker in purpose_or_credibility_markers):
+        return [
+            'Requirements Gate `## 4.9 目标项目基础设施信息` category 文档地址 lists generic files '
+            'without usage or credibility'
+        ]
+
+    structured_markers = [
+        '正式维护文档',
+        'controller 过程证据',
+        '过程证据',
+        '外部 agent',
+        '人工沟通',
+        '外部 wiki',
+        '设计稿',
+        'api 文档',
+        '缺失但需要沉淀',
+    ]
+    if not any(marker in normalized for marker in structured_markers):
+        return [
+            'Requirements Gate `## 4.9 目标项目基础设施信息` category 文档地址 must be a structured inventory, '
+            'not a flat path list'
+        ]
+    return []
 
 
 def _requirements_infrastructure_category_text(section: str, label: str, aliases: tuple[str, ...]) -> str:
@@ -855,14 +1119,33 @@ def _requirements_infrastructure_category_text(section: str, label: str, aliases
             category_lines.append(nested_line)
         matches.append('\n'.join(category_lines))
 
-    for line in lines:
+    for index, line in enumerate(lines):
         if _requirements_markdown_heading(line):
             continue
         normalized = _normalized_requirements_text(line)
         if not normalized or _is_markdown_table_separator(normalized):
             continue
         if _requirements_infrastructure_category_matches(normalized, label, aliases):
-            matches.append(line)
+            category_lines = [line]
+            base_indent = len(line) - len(line.lstrip())
+            for nested_line in lines[index + 1:]:
+                if _requirements_markdown_heading(nested_line):
+                    break
+                nested_normalized = _normalized_requirements_text(nested_line)
+                nested_indent = len(nested_line) - len(nested_line.lstrip())
+                if (
+                    nested_normalized
+                    and nested_indent <= base_indent
+                    and any(
+                        _requirements_infrastructure_category_matches(nested_normalized, other_label, other_aliases)
+                        for other_label, other_aliases in _REQUIREMENTS_INFRASTRUCTURE_CATEGORIES
+                        if other_label != label
+                    )
+                ):
+                    break
+                if nested_line.strip():
+                    category_lines.append(nested_line)
+            matches.append('\n'.join(category_lines))
     return '\n'.join(matches)
 
 

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_version_flag_outputs_package_version() -> None:
-    assert __version__ == '0.6.0h'
+    assert __version__ == '0.6.0j'
     result = subprocess.run(
         [sys.executable, '-m', 'workflow_controller.cli', '--version'],
         text=True,
@@ -102,6 +102,7 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     assert './usr/share/doc/waygate/ROADMAP.md' in contents
     assert './usr/share/doc/waygate/ROADMAP.zh-CN.md' in contents
     assert './usr/share/doc/waygate/docs/architecture.md' in contents
+    assert './usr/share/doc/waygate/docs/README.md' in contents
     assert './usr/share/doc/waygate/docs/workflow.zh-CN.md' in contents
     assert './usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.md' in contents
     assert './usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.zh-CN.md' in contents
@@ -139,7 +140,7 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     for expected in ['Python 3', 'pytest', 'tmux', 'Claude Code', 'Codex', 'Plannotator', 'skills', 'dpkg-deb', 'Waygate Markdown spec']:
         assert expected in readme_zh
     for doc in [readme, readme_zh, usage, usage_zh, roadmap, roadmap_zh, changelog, changelog_zh]:
-        assert 'V0.6.0h' in doc or '0.6.0h' in doc
+        assert 'V0.6.0j' in doc or '0.6.0j' in doc
         assert 'recommended-environment' in doc or '推荐环境' in doc
         assert 'doctor' in doc or '环境检测' in doc or '介绍' in doc
 
@@ -157,7 +158,7 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
         'focus:',
         'action_required',
         '--color',
-        '0.6.0h',
+        '0.6.0j',
     ]:
         assert expected in packaged_docs
 

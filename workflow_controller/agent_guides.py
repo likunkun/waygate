@@ -25,11 +25,16 @@ def ensure_agent_operating_guides(
             'enabled': False,
             'agents': {'status': 'skipped'},
             'claude': {'status': 'skipped'},
+            'docsReadme': {'status': 'skipped'},
             'docDirectories': [],
         }
 
     workspace_dir.mkdir(parents=True, exist_ok=True)
     doc_dirs = _ensure_doc_directories(workspace_dir)
+    docs_readme = _write_or_draft(
+        workspace_dir / 'docs' / 'README.md',
+        _docs_readme_template(),
+    )
     agents = _write_or_draft(
         workspace_dir / 'AGENTS.md',
         _agents_md_template(),
@@ -44,6 +49,7 @@ def ensure_agent_operating_guides(
         'enabled': True,
         'agents': agents,
         'claude': claude,
+        'docsReadme': docs_readme,
         'docDirectories': [str(path) for path in doc_dirs],
     }
 
@@ -88,7 +94,8 @@ def _agents_md_template() -> str:
 3. `task_plan.md`
 4. `progress.md`
 5. `findings.md`
-6. Controller state-dir 中的 `session.json`（如 `.rrc-controller-<target>/session.json`）
+6. `docs/README.md`
+7. Controller state-dir 中的 `session.json`（如 `.rrc-controller-<target>/session.json`）
 
 ## 事实源
 
@@ -102,18 +109,27 @@ def _agents_md_template() -> str:
 | 验收证据 | `<state-dir>/artifacts/` | Verifier、Reviewer、Refiner 和 AO 相关 artifact。 |
 | 人类可读进度 | `progress.md` | 只能作为摘要，不能单独作为完成依据。 |
 | 决策与已知问题 | `findings.md` | 历史决策、根因、约束和风险。 |
+| 文档入口 | `docs/README.md` | 正式文档入口、登记表和文档生命周期说明。 |
 
 ## 版本规划规则
 
 - 讨论版本范围前，必须读取 `ROADMAP.md`、`task_plan.md` 和 Controller state-dir 中的 `session.json`，不要根据最近进度推断版本范围。
 - 讨论某个版本时，必须把当前版本需求和后续版本候选分开记录；不要把后续 backlog 当作当前版本范围。
 
-## 文档目录
+## 文档入口与生命周期
 
-项目文档使用以下目录结构：
+- `docs/README.md` 是正式文档入口与登记表；先从这里确认已有文档、外部文档来源和缺失但需要沉淀的文档。
+- `task_plan.md` / `progress.md` / `findings.md` 是过程、进度和决策事实源；它们不是长期产品/架构/运维文档的替代品。
+- `docs/*` 是正式沉淀。初始化后目录可以只有入口文件和空子目录，不保证已经有正文。
+- `.rrc-controller-*` 是审计证据，不是长期文档入口；引用其中 artifact 时必须说明用途，并优先在 `docs/README.md` 登记。
+- 外部 Agent 文档必须先登记，再决定是否提升到正式 `docs/product/`、`docs/architecture/`、`docs/workflow/` 或 `docs/operations/`。
+- 流程规则变更必须在 Unit Plan 的 Document Deliverables Matrix 中声明，并落到 `docs/workflow/`。
+
+正式文档目录：
 
 ```text
 docs/
+  README.md
   product/
   architecture/
   workflow/
@@ -176,5 +192,39 @@ def _claude_md_template() -> str:
 3. `task_plan.md`
 4. `progress.md`
 5. `findings.md`
-6. Controller state-dir 中的 `session.json`，如果存在
+6. `docs/README.md`
+7. Controller state-dir 中的 `session.json`，如果存在
+"""
+
+
+def _docs_readme_template() -> str:
+    return """# 文档入口与登记表
+
+本文件是项目正式文档入口和轻量登记表。初始化后 `docs/product/`、`docs/architecture/`、`docs/workflow/`、`docs/operations/` 可能尚无正文；不要把空目录视为已沉淀文档。
+
+## 文档生命周期
+
+- Requirements 阶段盘点正式维护文档、Controller 过程证据、外部 Agent / 人工沟通生成文档、外部 wiki / 设计稿 / API 文档，以及缺失但需要沉淀的文档。
+- Unit Plan 阶段用 Document Deliverables Matrix 声明本 unit 是否需要正式文档动作；纯代码小修可以声明不需要正式文档变更并写明原因。
+- Builder 按 Unit Plan 落文档；`Required For Acceptance = true` 的文档动作必须在 Final Acceptance 前完成。
+- Final Acceptance / Final Sync 只阻断 Unit Plan 声明为 required 的文档动作，不把所有历史缺失文档变成本轮阻断。
+
+## 正式文档目录
+
+| 目录 | 用途 |
+| --- | --- |
+| `docs/product/` | 产品背景、用户旅程、需求说明。 |
+| `docs/architecture/` | 技术架构、模块边界、关键设计决策。 |
+| `docs/workflow/` | Agent 协作、审批流程、验收流程、证据规则、文档生命周期。 |
+| `docs/operations/` | 运行、部署、排障和运维说明。 |
+
+## 当前登记
+
+| 类型 | 入口 | 用途 / 可信度 |
+| --- | --- | --- |
+| 正式维护文档 | `docs/README.md` | 文档总入口和登记表。 |
+| Controller 过程证据 | `.rrc-controller-*/artifacts/` | 审计证据，不是长期文档入口。 |
+| 外部 Agent / 人工沟通生成文档 | 未登记 | 发现后先登记，再决定是否提升。 |
+| 外部 wiki / 设计稿 / API 文档 | 未登记 | 发现后记录用途、访问方式和可信度。 |
+| 缺失但需要沉淀的文档 | 未登记 | 由 Requirements / Unit Plan 决定是否进入当前 unit。 |
 """

@@ -422,7 +422,7 @@ def test_v0_6_0_reference_environment_preserves_uiux_style_context(tmp_path: Pat
 def test_v0_6_0_document_sources_allow_wiki_url_and_history_projects(tmp_path: Path) -> None:
     prompt = _v0_6_0_requirements_prompt(tmp_path)
 
-    for expected in ['本地 `docs/`', 'wiki', '外部网址', '历史项目', '设计稿', 'API 文档', '部署文档', '排障文档']:
+    for expected in ['正式维护文档', 'Controller 过程证据', '外部 Agent', '人工沟通生成文档', '外部 wiki', '设计稿', 'API 文档', '缺失但需要沉淀的文档', '用途或可信度']:
         assert expected in prompt
 
 
@@ -611,6 +611,70 @@ def test_requirements_prompt_without_spec_keeps_agent_side_clarification(tmp_pat
     assert '## 4.8 已澄清事项、关键假设与待确认风险' in prompt
 
 
+def test_requirements_prompt_without_spec_requires_infrastructure_gap_followup_and_verification(
+    tmp_path: Path,
+) -> None:
+    state = {
+        'requestedOutcome': 'V0.6.0j',
+        'feasibleOutcome': 'V0.6.0j',
+        'currentUnitId': 'target-v0-6-0j',
+        'units': [{'id': 'target-v0-6-0j', 'name': 'Infrastructure follow-up', 'passes': False}],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert '首次澄清收到具体回答后，必须读取项目上下文' in prompt
+    assert '盘点 `## 4.9 目标项目基础设施信息` 的 7 类事实缺口' in prompt
+    assert '如果 4.9 基础设施事实仍缺失，必须继续在当前 tmux agent pane 里直接追问用户' in prompt
+    assert '用户补充基础设施事实后，不得原样照抄为已验证事实' in prompt
+    assert '优先使用非破坏性方式核对' in prompt
+    assert '用户提供，未能直接验证' in prompt
+    assert '不得把 token、数据库 URL、环境变量值或私有凭据写入 Requirements' in prompt
+    assert '追问的问题、用户回答、agent 的核对方式、验证结论和仍需人工确认的风险' in prompt
+    assert '每类基础设施事实的事实来源和验证状态' in prompt
+
+
+def test_requirements_prompt_uses_grouped_friendly_infrastructure_followup(
+    tmp_path: Path,
+) -> None:
+    state = {
+        'requestedOutcome': 'V0.6.0j',
+        'feasibleOutcome': 'V0.6.0j',
+        'currentUnitId': 'target-v0-6-0j',
+        'units': [{'id': 'target-v0-6-0j', 'name': 'Friendly infrastructure follow-up', 'passes': False}],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert '面向用户的基础设施追问模板' in prompt
+    assert '你可以先回答知道的部分' in prompt
+    assert '不确定的我会先从仓库和已有文档里核对' in prompt
+    assert '代码与运行' in prompt
+    assert '主仓库、相关仓库、启动/验证命令、运行环境' in prompt
+    assert '调试与资料' in prompt
+    assert '日志、状态文件、排障入口、README/docs/wiki/API/设计稿' in prompt
+    assert '参考与依赖' in prompt
+    assert '参考环境、外部服务、接口、数据存储、系统依赖' in prompt
+
+
+def test_requirements_prompt_discourages_raw_gate_rule_wording_as_user_followup(
+    tmp_path: Path,
+) -> None:
+    state = {
+        'requestedOutcome': 'V0.6.0j',
+        'feasibleOutcome': 'V0.6.0j',
+        'currentUnitId': 'target-v0-6-0j',
+        'units': [{'id': 'target-v0-6-0j', 'name': 'Friendly infrastructure follow-up', 'passes': False}],
+    }
+
+    prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
+
+    assert '不要把 controller 门禁规则、4.8/4.9 结构、blocked、DONE_FILE 或“必须/不得/阻断/占位”等词原样作为用户追问文案' in prompt
+    assert '我在 README/docs/state-dir 里暂时没找到 X。这个项目目前是没有 X，还是需要你提供外部地址或说明？' in prompt
+    assert '面向 agent 的记录与验证要求' in prompt
+    assert '最终 `## 4.9` 仍不能接受空泛 `暂无/不清楚`' in prompt
+
+
 def test_requirements_prompt_requires_prototypes_to_follow_existing_system_style_by_default(tmp_path: Path) -> None:
     state = {
         'requestedOutcome': 'V2.9.1',
@@ -786,7 +850,7 @@ def _valid_requirements_infrastructure_section() -> str:
         '- 项目部署运行时环境：本地 pytest/subprocess runtime、tmux runner 前置条件和验证命令运行环境已确认。\n'
         '- 调试分析方法：查看 session.json、events.jsonl、runner stdout/stderr、verification artifacts 和 pytest 输出。\n'
         '- 参考环境：当前测试 workspace 和历史 controller fixture 作为参考环境，不混同部署环境。\n'
-        '- 文档地址：README、USAGE、ROADMAP、task_plan、progress 和 findings 作为审阅文档来源。\n'
+        '- 文档地址：正式维护文档：`docs/README.md` 作为入口，README/USAGE/ROADMAP 作为项目说明；Controller 过程证据：`.rrc-controller-test/artifacts` 只作审计；外部 Agent / 人工沟通生成文档：未发现，已检查测试 artifacts；外部 wiki / 设计稿 / API 文档：不涉及，因为该测试目标无外部资料；缺失但需要沉淀的文档：未发现。\n'
         '- 架构/交互逻辑/接口说明：controller state、human gate、runner dispatch、approval CLI 和 artifact 接口已记录。\n'
         '- 依赖信息：Python、pytest、tmux fake runner、dpkg tooling 和 shell runtime 依赖已记录。\n'
     )
@@ -961,7 +1025,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
             "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
             "- 参考环境：test fixture workspace is the reference environment.\\n"
-            "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+            "- 文档地址：正式维护文档：`docs/README.md` 作为入口，README/USAGE/ROADMAP 作为项目说明；Controller 过程证据：`.rrc-controller-test/artifacts` 只作审计；外部 Agent / 人工沟通生成文档：未发现，已检查测试 artifacts；外部 wiki / 设计稿 / API 文档：不涉及，因为该测试目标无外部资料；缺失但需要沉淀的文档：未发现。\\n"
             "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
             "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
             "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
@@ -1119,7 +1183,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
             "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
             "- 参考环境：test fixture workspace is the reference environment.\\n"
-            "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+            "- 文档地址：正式维护文档：`docs/README.md` 作为入口，README/USAGE/ROADMAP 作为项目说明；Controller 过程证据：`.rrc-controller-test/artifacts` 只作审计；外部 Agent / 人工沟通生成文档：未发现，已检查测试 artifacts；外部 wiki / 设计稿 / API 文档：不涉及，因为该测试目标无外部资料；缺失但需要沉淀的文档：未发现。\\n"
             "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
             "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
             "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
@@ -1220,7 +1284,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
             "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
             "- 参考环境：test fixture workspace is the reference environment.\\n"
-            "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+            "- 文档地址：正式维护文档：`docs/README.md` 作为入口，README/USAGE/ROADMAP 作为项目说明；Controller 过程证据：`.rrc-controller-test/artifacts` 只作审计；外部 Agent / 人工沟通生成文档：未发现，已检查测试 artifacts；外部 wiki / 设计稿 / API 文档：不涉及，因为该测试目标无外部资料；缺失但需要沉淀的文档：未发现。\\n"
             "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
             "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
             "## 8. Human Review Checklist\\n- [ ] Draft reviewed.\\n",
@@ -1691,7 +1755,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
                 "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
                 "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
                 "- 参考环境：test fixture workspace is the reference environment.\\n"
-                "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+                "- 文档地址：正式维护文档：`docs/README.md` 作为入口，README/USAGE/ROADMAP 作为项目说明；Controller 过程证据：`.rrc-controller-test/artifacts` 只作审计；外部 Agent / 人工沟通生成文档：未发现，已检查测试 artifacts；外部 wiki / 设计稿 / API 文档：不涉及，因为该测试目标无外部资料；缺失但需要沉淀的文档：未发现。\\n"
                 "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
                 "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
                 "## 8. Human Review Checklist\\n- [ ] Requirements reviewed.\\n"
@@ -3155,6 +3219,47 @@ def test_final_acceptance_gate_renders_journey_matrix(tmp_path: Path) -> None:
     assert '| J-001 Delivery happy path | AC-1 | unit-01 | TC-AC1-E2E | e2e | passed | `pytest tests/e2e/test_delivery.py -q` | delivery confirmation is visible | artifacts/unit-01/verification.json |' in content
 
 
+def test_final_acceptance_gate_renders_document_deliverables_status(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    approvals_dir = tmp_path / 'approvals'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    (unit_dir / 'builder-summary.json').write_text(json.dumps({'runner_status': 'done'}), encoding='utf-8')
+    (unit_dir / 'review.json').write_text(json.dumps({'passed': True, 'issues': []}), encoding='utf-8')
+    (unit_dir / 'verification.json').write_text(json.dumps({'passed': True, 'commands': [], 'evidence_rows': []}), encoding='utf-8')
+    (approvals_dir).mkdir(parents=True)
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Document Deliverables Matrix\n'
+        '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| workflow | docs/workflow/evidence-policy.md | update | true | Required workflow policy doc. |\n'
+        '| product | docs/product/future-backlog.md | backlog | false | Future candidate, not current acceptance. |\n',
+        encoding='utf-8',
+    )
+    workspace = tmp_path / 'workspace'
+    target_doc = workspace / 'docs' / 'workflow' / 'evidence-policy.md'
+    target_doc.parent.mkdir(parents=True)
+    target_doc.write_text('# Evidence Policy\n', encoding='utf-8')
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'currentStep': 'WAITING_FINAL_ACCEPTANCE',
+        'status': 'active',
+        'workspacePath': str(workspace),
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+        ],
+    }
+
+    gate_path = ensure_final_acceptance_gate(state, approvals_dir, artifacts_dir, force=True)
+
+    content = gate_path.read_text(encoding='utf-8')
+    assert '## Document Deliverables Status' in content
+    assert '| workflow | docs/workflow/evidence-policy.md | update | true | present | Required workflow policy doc. |' in content
+    assert '| product | docs/product/future-backlog.md | backlog | false | not required | Future candidate, not current acceptance. |' in content
+
+
 def test_final_acceptance_gate_renders_prototype_conformance_matrix(tmp_path: Path) -> None:
     artifacts_dir = tmp_path / 'artifacts'
     approvals_dir = tmp_path / 'approvals'
@@ -3574,7 +3679,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
             "- 项目部署运行时环境：local subprocess/tmux fake runner and pytest runtime.\\n"
             "- 调试分析方法：session.json, events.jsonl, stdout/stderr, and run artifacts.\\n"
             "- 参考环境：test fixture workspace is the reference environment.\\n"
-            "- 文档地址：README, USAGE, ROADMAP, task_plan, progress, and findings.\\n"
+            "- 文档地址：正式维护文档：`docs/README.md` 作为入口，README/USAGE/ROADMAP 作为项目说明；Controller 过程证据：`.rrc-controller-test/artifacts` 只作审计；外部 Agent / 人工沟通生成文档：未发现，已检查测试 artifacts；外部 wiki / 设计稿 / API 文档：不涉及，因为该测试目标无外部资料；缺失但需要沉淀的文档：未发现。\\n"
             "- 架构/交互逻辑/接口说明：controller, gate, runner, approval, and artifact interfaces.\\n"
             "- 依赖信息：Python, pytest, tmux fake runner, shell, and JSON files.\\n\\n"
             "## 6. Human Review Checklist\\n- [ ] Requirements reviewed.\\n"

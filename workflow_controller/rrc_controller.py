@@ -39,6 +39,7 @@ from workflow_controller.acceptance_obligations import (
 from workflow_controller.gates.validators import (
     apply_unit_plan_state_patch_from_gate,
     migrate_unit_plan_gate_to_state_patch,
+    validate_final_document_deliverables,
     validate_requirements_acceptance_quality,
     validate_required_artifacts,
     validate_final_real_e2e_evidence,
@@ -46,6 +47,7 @@ from workflow_controller.gates.validators import (
     validate_simplifier_result,
     validate_unit_plan_acceptance_obligation_coverage,
     validate_unit_plan_design_architecture_traceability,
+    validate_unit_plan_document_deliverables,
     validate_unit_plan_golden_path,
     validate_unit_plan_prototype_conformance,
     validate_unit_plan_real_e2e_evidence_policy,
@@ -75,6 +77,7 @@ from workflow_controller.prototype_review import (
     start_prototype_review_preview_server,
     validate_final_prototype_conformance,
 )
+from workflow_controller.networking import browser_display_host, url_host
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
 from workflow_controller.rrc_real_runtime import (
     VerificationEnvironmentError,
@@ -517,6 +520,7 @@ class RalphRefinerController:
                 gate_path,
                 candidate_state,
             )
+            validate_unit_plan_document_deliverables(gate_path, candidate_state)
             validate_unit_plan_verification_environment(candidate_state)
             validate_unit_plan_golden_path(candidate_state)
             validate_unit_plan_real_e2e_evidence_policy(
@@ -603,6 +607,7 @@ class RalphRefinerController:
                 requirements_path=self.approvals_dir / 'requirements-and-acceptance.md',
             )
             validate_final_real_e2e_evidence(state=state, artifacts_dir=self.artifacts_dir)
+            validate_final_document_deliverables(self.approvals_dir / 'unit-plan.md', state)
         except ValueError as exc:
             return f'final acceptance gate invalid: {exc}'
         return None
@@ -1824,6 +1829,7 @@ class RalphRefinerController:
                         gate_path,
                         state,
                     )
+                    validate_unit_plan_document_deliverables(gate_path, state)
                     validate_unit_plan_verification_environment(state)
                     validate_unit_plan_golden_path(state)
                     validate_unit_plan_real_e2e_evidence_policy(
@@ -2063,6 +2069,18 @@ class RalphRefinerController:
             prepare_builder_prompt(state, self.approvals_dir, unit_dir)
             run_builder(state, unit_dir, dry_run=self.dry_run)
             validate_required_artifacts(unit_dir, ['builder-summary.json', 'changed-files.txt'])
+            resolution_issue = _builder_controller_failure_resolution_issue(state, unit_dir)
+            if resolution_issue:
+                state['status'] = 'blocked'
+                state['currentStep'] = 'EXECUTE_UNIT'
+                state['blockedReason'] = resolution_issue
+                self.store.append_event('builder_controller_failure_resolution_blocked', {
+                    'task_id': state.get('task_id'),
+                    'unit_id': state.get('currentUnitId'),
+                    'reason': resolution_issue,
+                })
+                self._save_state(state)
+                return state
             state['currentStep'] = 'REFINE_UNIT'
             self._save_state(state)
             return state
@@ -3063,7 +3081,7 @@ def _format_plannotator_access_line(label: str, url: str, *, color_enabled: bool
 
 
 def _plannotator_display_host() -> str:
-    return (os.environ.get('PLANNOTATOR_HOST') or '0.0.0.0').strip() or '0.0.0.0'
+    return url_host(browser_display_host('0.0.0.0'))
 
 
 def _highlight_validation_tokens(text: str, *, color_enabled: bool) -> str:
@@ -3503,6 +3521,90 @@ def _uses_default_run_once(controller: RalphRefinerController) -> bool:
     return getattr(controller.run_once, '__func__', None) is RalphRefinerController.run_once
 
 
+def _builder_controller_failure_resolution_issue(state: dict[str, Any], unit_dir: Path) -> str | None:
+    last_failure = state.get('lastFailure')
+    if not isinstance(last_failure, dict) or last_failure.get('stage') != 'VERIFY_UNIT':
+        return None
+    details = last_failure.get('details') if isinstance(last_failure.get('details'), dict) else {}
+    expected_command = str(details.get('command') or '').strip()
+    if not expected_command:
+        return None
+
+    builder_summary_path = unit_dir / 'builder-summary.json'
+    try:
+        builder_summary = json.loads(builder_summary_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        return (
+            'Agent did not reproduce controller failed command: '
+            f'could not read Builder summary {builder_summary_path}: {exc}'
+        )
+    if not isinstance(builder_summary, dict):
+        return (
+            'Agent did not reproduce controller failed command: '
+            f'Builder summary {builder_summary_path} is not a JSON object'
+        )
+
+    runner_status = str(builder_summary.get('runner_status') or '').strip().lower()
+    done_payload = builder_summary.get('done_payload')
+    if not isinstance(done_payload, dict):
+        done_payload = {}
+    done_status = str(done_payload.get('status') or '').strip().lower()
+    if runner_status not in {'', 'done'} and done_status not in {'', 'done'}:
+        return None
+
+    resolution = done_payload.get('controller_failure_resolution')
+    if not isinstance(resolution, dict):
+        return (
+            'Agent did not reproduce controller failed command: '
+            f'previous verifier failed command `{expected_command}`, but '
+            'done_payload.controller_failure_resolution is missing.'
+        )
+
+    actual_command = str(resolution.get('failed_command') or '').strip()
+    if actual_command != expected_command:
+        return (
+            'Builder controller_failure_resolution.failed_command does not match controller failed command: '
+            f'expected `{expected_command}`, actual `{actual_command or "<missing>"}`.'
+        )
+
+    missing_fields = _missing_controller_failure_resolution_fields(resolution)
+    if missing_fields:
+        return (
+            'Agent did not reproduce controller failed command: '
+            'done_payload.controller_failure_resolution missing field(s): '
+            + ', '.join(missing_fields)
+            + f'. Expected failed_command `{expected_command}`.'
+        )
+    return None
+
+
+def _missing_controller_failure_resolution_fields(resolution: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for field in (
+        'failed_command',
+        'reproduced',
+        'reproduction_exit_code',
+        'fix_summary',
+        'rerun_exit_code',
+        'full_verification_run',
+    ):
+        if field not in resolution or _empty_resolution_value(resolution.get(field)):
+            missing.append(field)
+    if _empty_resolution_value(resolution.get('root_cause')) and _empty_resolution_value(resolution.get('mismatch_analysis')):
+        missing.append('root_cause_or_mismatch_analysis')
+    return missing
+
+
+def _empty_resolution_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) == 0
+    return False
+
+
 def _record_or_block_repeated_failure(
     state: dict[str, Any],
     *,
@@ -3595,6 +3697,7 @@ def _failure_fingerprint(stage: str, verdict: dict[str, Any]) -> tuple[str, dict
     issues = _issue_details(verdict)
     if issues:
         details['issues'] = issues
+    fingerprint_details: dict[str, Any] | None = None
 
     if stage == 'VERIFY_UNIT':
         failed_results = [
@@ -3609,16 +3712,62 @@ def _failure_fingerprint(stage: str, verdict: dict[str, Any]) -> tuple[str, dict
                 'stdout_tail': _text_tail(str(first.get('stdout') or '')),
                 'stderr_tail': _text_tail(str(first.get('stderr') or '')),
             })
+            stable_features = _stable_verification_failure_features(first)
+            if stable_features:
+                details['stable_failure_features'] = stable_features
+            fingerprint_details = {
+                'stage': stage,
+                'issue_types': [issue.get('type') for issue in issues],
+                'command': details.get('command'),
+                'returncode': details.get('returncode'),
+                'stable_failure_features': stable_features,
+            }
         else:
             details['commands'] = [str(command) for command in verdict.get('commands') or []]
+            fingerprint_details = {
+                'stage': stage,
+                'issue_types': [issue.get('type') for issue in issues],
+                'commands': details.get('commands'),
+            }
     elif stage == 'REVIEW_UNIT':
         details['reviewer'] = verdict.get('reviewer')
     else:
         details['verdict'] = verdict
 
-    fingerprint_source = json.dumps(details, ensure_ascii=False, sort_keys=True)
+    fingerprint_source = json.dumps(fingerprint_details or details, ensure_ascii=False, sort_keys=True)
     fingerprint = hashlib.sha256(fingerprint_source.encode('utf-8')).hexdigest()
     return fingerprint, details
+
+
+def _stable_verification_failure_features(result: dict[str, Any]) -> str:
+    text = _strip_ansi('\n'.join(str(result.get(key) or '') for key in ('stdout', 'stderr')))
+    features: list[str] = []
+    for line in text.splitlines():
+        normalized = ' '.join(line.strip().split())
+        if not normalized:
+            continue
+        if '›' in normalized:
+            features.append(normalized)
+    for match in re.finditer(r'\b([A-Za-z][A-Za-z0-9_]*(?:Error|Exception))\b', text):
+        features.append(match.group(1))
+    if re.search(r'\btime(?:d)?\s*out\b', text, flags=re.IGNORECASE):
+        features.append('timeout')
+    return '; '.join(_dedupe_preserve_order(features))
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r'\x1b\[[0-9;?]*[ -/]*[@-~]', '', text)
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
 
 
 def _issue_details(verdict: dict[str, Any]) -> list[dict[str, str]]:

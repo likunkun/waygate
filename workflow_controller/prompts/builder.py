@@ -106,6 +106,7 @@ Builder rules:
 - Implement the shortest verifiable path for the current unit only.
 - Follow the Unit Plan scope, non-goals, done_when, and verification_commands.
 - 先读取 Unit Plan Test Case Matrix；在实现功能前，创建或更新 command 指向的测试文件。
+- 读取 Unit Plan Document Deliverables Matrix；`Required For Acceptance = true` 的文档动作必须在本 unit 中落到对应 `docs/*` 或登记入口，纯代码小修则保持 Unit Plan 中的“不需要正式文档变更”说明。
 - 优先创建并跑通标记为 `golden_path: true` 的测试；这是交给人工最终验收前必须先通过的核心正常流程。
 - Treat the main goal as making the AC-mapped tests pass, not merely producing implementation changes.
 - For defect-fix units, add a regression test for each defect when feasible; if not feasible, leave explicit manual evidence.
@@ -144,8 +145,12 @@ Objective: {payload.get('objective') or 'Not specified'}
 """
 
 
-def _render_previous_controller_failure_feedback(unit_dir: Path) -> str:
+def _render_previous_controller_failure_feedback(unit_dir: Path, *, state: dict[str, Any] | None = None) -> str:
     sections: list[str] = []
+
+    protocol = _render_controller_verification_failure_protocol(unit_dir, state=state)
+    if protocol:
+        sections.append(protocol)
 
     review = _read_json_object(unit_dir / 'review.json')
     if review and review.get('passed') is False:
@@ -160,6 +165,126 @@ def _render_previous_controller_failure_feedback(unit_dir: Path) -> str:
         sections.append(_format_simplifier_feedback(simplifier))
 
     return '\n\n'.join(section for section in sections if section)
+
+
+def _render_controller_verification_failure_protocol(
+    unit_dir: Path,
+    *,
+    state: dict[str, Any] | None,
+) -> str:
+    if not isinstance(state, dict):
+        return ''
+    last_failure = state.get('lastFailure')
+    if not isinstance(last_failure, dict) or last_failure.get('stage') != 'VERIFY_UNIT':
+        return ''
+    details = last_failure.get('details') if isinstance(last_failure.get('details'), dict) else {}
+    failed_command = str(details.get('command') or '').strip()
+    verification_path = unit_dir / 'verification.json'
+    verification = _read_json_object(verification_path) or {}
+    failed_result, failed_index = _matching_failed_verification_result(verification, failed_command)
+    if not failed_command and failed_result:
+        failed_command = str(failed_result.get('command') or '').strip()
+    if not failed_command:
+        return ''
+
+    cwd = state.get('executionWorkspacePath') or state.get('workspacePath') or 'unknown'
+    returncode = failed_result.get('returncode') if failed_result else details.get('returncode')
+    stdout = (
+        str(failed_result.get('stdout') or '').strip()
+        if failed_result
+        else str(details.get('stdout_tail') or '').strip()
+    )
+    stderr = (
+        str(failed_result.get('stderr') or '').strip()
+        if failed_result
+        else str(details.get('stderr_tail') or '').strip()
+    )
+    env_keys = _verification_env_keys_for_prompt(state, failed_result)
+
+    stdout_block = _tail_text(stdout)
+    stderr_block = _tail_text(stderr)
+    output_sections = []
+    if stdout_block:
+        output_sections.append(f"stdout tail:\n```text\n{stdout_block}\n```")
+    if stderr_block:
+        output_sections.append(f"stderr tail:\n```text\n{stderr_block}\n```")
+    output_text = '\n\n'.join(output_sections) or 'No stdout/stderr tail recorded.'
+    env_text = ', '.join(env_keys) if env_keys else 'none recorded'
+    index_text = str(failed_index) if failed_index is not None else 'unknown'
+
+    return f"""## Controller Verification Failure Protocol
+
+The previous Builder attempt was rejected by the controller Verifier. The controller failure is the debugging source of truth.
+
+- failed command index: {index_text}
+- exact failed command: {failed_command}
+- controller cwd: {cwd}
+- returncode: {returncode}
+- failure artifact: {verification_path}
+- env keys: {env_text}
+
+{output_text}
+
+Required debugging protocol:
+- First action: run the exact failed command above from the controller cwd.
+- Do not change grep filters, cwd, test file, command flags, worker settings, environment keys, or substitute an adjacent test before this reproduction attempt.
+- If the exact command passes locally, explain the controller/agent environment mismatch before changing code.
+- If the exact command fails locally, fix the root cause and rerun the exact same command until it exits 0.
+- Before DONE, record controller failure resolution in DONE_FILE and then run the full approved verification list.
+
+DONE_FILE contract for this retry:
+```json
+{{
+  "status": "done",
+  "summary": "<summary>",
+  "run_id": "<current run id>",
+  "controller_failure_resolution": {{
+    "failed_command": "{failed_command}",
+    "reproduced": true,
+    "reproduction_exit_code": 124,
+    "root_cause": "<required if reproduced>",
+    "mismatch_analysis": "<required instead of root_cause if exact command passed locally>",
+    "fix_summary": "<what changed>",
+    "rerun_exit_code": 0,
+    "full_verification_run": "<approved verification list command(s) and result>"
+  }}
+}}
+```
+"""
+
+
+def _matching_failed_verification_result(
+    verification: dict[str, Any],
+    failed_command: str,
+) -> tuple[dict[str, Any] | None, int | None]:
+    first_failed: tuple[dict[str, Any], int] | None = None
+    for index, result in enumerate(verification.get('results') or [], start=1):
+        if not isinstance(result, dict) or result.get('ok'):
+            continue
+        if first_failed is None:
+            first_failed = (result, index)
+        if failed_command and str(result.get('command') or '').strip() == failed_command:
+            return result, index
+    return first_failed if first_failed is not None else (None, None)
+
+
+def _verification_env_keys_for_prompt(
+    state: dict[str, Any],
+    failed_result: dict[str, Any] | None,
+) -> list[str]:
+    env_keys: set[str] = set()
+    if failed_result:
+        raw_env_keys = failed_result.get('env_keys')
+        if isinstance(raw_env_keys, list):
+            env_keys.update(str(key) for key in raw_env_keys if str(key).strip())
+    for payload in (state, _find_unit(state, state.get('currentUnitId'))):
+        if not isinstance(payload, dict):
+            continue
+        for field in ('verification_env', 'verificationEnv'):
+            raw_env = payload.get(field)
+            if isinstance(raw_env, dict):
+                env_keys.update(str(key) for key in raw_env if str(key).strip())
+    return sorted(env_keys)
 
 
 def _format_failed_review_feedback(review: dict[str, Any]) -> str:

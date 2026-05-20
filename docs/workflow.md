@@ -39,9 +39,15 @@ The requirements drafter creates a Markdown gate with:
 - verification layers;
 - Journey definitions when cross-step behavior matters;
 - design and architecture traceability;
+- target-project infrastructure facts in `## 4.9`;
 - assumptions and risks.
 
+When no supported `--spec` is provided, the first drafter response is still a direct clarification question in the tmux pane. After a concrete user answer, the drafter reads project context and audits the seven infrastructure categories: repository, runtime, debugging, reference environment, documentation, architecture/interaction/interface, and dependencies. If facts are still missing, it keeps asking the user directly.
+
+User-supplied infrastructure facts are not accepted as verified by default. The drafter should check them through non-destructive sources such as the local repository, configuration files, README/USAGE, docs, state-dir artifacts, package manifests, test commands, or existing verification output. External systems, production environments, private wiki/API sources, and other inaccessible facts must be marked as user-provided and not directly verified. Section `## 4.8` records questions, answers, verification methods, conclusions, and residual risks; section `## 4.9` records each infrastructure fact's source and verification status.
+
 Before a human sees the gate, the controller can preflight it. Missing AC mapping, missing verification layers, and malformed traceability can route the draft back to the drafter automatically.
+The preflight also rejects vague infrastructure placeholders such as `暂无` or `不清楚`, unsupported `未发现` / `没有` claims, and 4.9 statements that claim `用户确认` or `已验证` without corresponding 4.8 traceability.
 
 ## Unit Plan Stage
 
@@ -63,6 +69,8 @@ The Builder receives a prompt file and works on one unit. A tmux or subprocess r
 
 The completion signal is not final proof. The controller still checks the run ID, artifacts, and later verifier evidence.
 
+If the previous controller Verifier failed a specific command, the next Builder prompt includes a `Controller Verification Failure Protocol`. Builder must first rerun that exact command from the controller cwd, using the same command text rather than a filtered or adjacent command. Before DONE, the Builder must record `done_payload.controller_failure_resolution` with the failed command, reproduction result, root cause or mismatch analysis, fix summary, rerun exit code, and full approved verification run. Missing or mismatched resolution evidence blocks the workflow before Refiner; the controller Verifier remains the final source of truth.
+
 ## Refinement and Review
 
 After Builder completes:
@@ -83,6 +91,8 @@ The Verifier runs the commands listed for the unit and writes `verification.json
 - artifact references.
 
 Malformed evidence is treated as verification failure.
+
+Repeated verifier failures use a stable fingerprint based on stage, issue type, command, return code, and stable failure features such as Playwright test titles or error classes. Volatile stdout/stderr tails remain visible in summaries and artifacts, but they do not by themselves make the same failure look new.
 
 ## Final Acceptance
 

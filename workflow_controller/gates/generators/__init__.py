@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from workflow_controller.acceptance_obligations import active_must_obligations
+from workflow_controller.document_deliverables import (
+    document_deliverable_status_rows,
+    unit_plan_requires_document_deliverables,
+)
 from workflow_controller.gates.parsers import (
     CONFIRMATION_HEADING,
     CONTROLLER_STATE_PATCH_HEADING,
@@ -321,7 +325,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '- 项目部署运行时环境：待补本地/测试/预发/生产或等价环境、启动方式、服务依赖、外部 API、数据存储和验证运行时。',
         '- 调试分析方法：待补日志位置、查看方法、状态文件、运行事件、错误输出、monitor 或 trace 入口。',
         '- 参考环境：待补竞品、同类产品、历史项目、UI/UX 风格样式、交互参考和访问方式；不涉及时写具体理由。',
-        '- 文档地址：待补本地 docs、wiki、外部网址、历史项目、设计稿、API 文档、部署文档和排障文档。',
+        '- 文档地址：待补结构化盘点：正式维护文档、Controller 过程证据、外部 Agent / 人工沟通生成文档、外部 wiki / 设计稿 / API 文档、缺失但需要沉淀的文档，并说明用途或可信度。',
         '- 架构/交互逻辑/接口说明：待补模块边界、数据流、用户交互、状态流转、API/CLI/事件接口和错误语义。',
         '- 依赖信息：待补系统依赖、服务依赖、第三方 API、部署依赖、验证依赖和 agent runtime 依赖。',
         '',
@@ -390,7 +394,7 @@ def _v0_6_0_requirements_body(state: dict[str, Any]) -> str:
         '- 项目部署运行时环境：本地、测试、预发、生产或等价环境、启动方式、服务依赖、外部 API、数据存储、agent runner 和验证运行时前置条件。',
         '- 调试分析方法：日志在哪里、如何查看、基本排查思路、状态文件、运行事件、错误输出、monitor 或 trace 入口。',
         '- 参考环境：竞品、同类产品、历史项目、UI/UX 风格样式、交互参考和访问方式。',
-        '- 文档地址：本地 `docs/`、wiki、外部网址、历史项目、设计稿、API 文档、部署文档和排障文档，并说明用途或可信度。',
+        '- 文档地址：结构化盘点正式维护文档、Controller 过程证据、外部 Agent / 人工沟通生成文档、外部 wiki / 设计稿 / API 文档、缺失但需要沉淀的文档，并说明用途或可信度；不能只写 `docs/`、`README`、`USAGE` 或 `暂无`。',
         '- 架构、交互逻辑、接口说明：模块边界、数据流、用户交互、状态流转、API/CLI/事件接口和错误语义。',
         '- 依赖信息：系统依赖、服务依赖、第三方 API、部署依赖、验证依赖和 agent runtime 依赖。',
         '',
@@ -417,7 +421,7 @@ def _v0_6_0_requirements_body(state: dict[str, Any]) -> str:
         '- AC-04 [verification: functional]: 项目部署运行时环境要求说明本地、测试、预发、生产或等价环境、启动方式、服务依赖、外部 API 和验证运行时。',
         '- AC-05 [verification: functional]: 调试分析方法要求说明日志在哪里、基本排查思路、状态文件、运行事件、monitor 或 trace 入口。',
         '- AC-06 [verification: functional]: 参考环境要求记录竞品、同类产品、历史项目、UI/UX 风格样式和交互参考。',
-        '- AC-07 [verification: functional]: 文档地址支持本地 `docs/`、wiki、外部网址、历史项目、设计稿、API 文档、部署文档和排障文档。',
+        '- AC-07 [verification: functional]: 文档地址结构化盘点正式维护文档、Controller 过程证据、外部 Agent / 人工沟通生成文档、外部 wiki / 设计稿 / API 文档、缺失但需要沉淀的文档，并说明用途或可信度。',
         '- AC-08 [verification: functional]: 架构、交互逻辑、接口说明和依赖信息能被 Unit Plan 消费。',
         '- AC-09 [verification: manual]: environment/runbook facts、Requirements 和 Unit Plan artifacts 边界清楚。',
         '- AC-10 [verification: functional]: UI/UX 目标项目缺少合法 `prototype-manifest.json` 时在 Requirements 人工确认前被 preflight 阻断。',
@@ -473,7 +477,7 @@ def _v0_6_0_requirements_body(state: dict[str, Any]) -> str:
         '- 项目部署运行时环境：记录本地、测试、预发、生产或等价环境、启动方式、服务依赖、外部 API、数据存储、agent runner 和验证运行时前置条件。',
         '- 调试分析方法：记录日志位置、查看方法、基本排查思路、状态文件、运行事件、错误输出、monitor 或 trace 入口。',
         '- 参考环境：记录竞品、同类产品、历史项目、UI/UX 风格样式、交互参考和访问方式，并与部署运行环境分开。',
-        '- 文档地址：支持本地 `docs/`、wiki、外部网址、历史项目、设计稿、API 文档、部署文档和排障文档，并说明用途或可信度。',
+        '- 文档地址：正式维护文档：`docs/README.md` 作为文档入口，`docs/product`、`docs/architecture`、`docs/workflow`、`docs/operations` 是正式沉淀目录；Controller 过程证据：`.rrc-controller-*` 只作为审计证据；外部 Agent / 人工沟通生成文档：需先登记再决定是否提升；外部 wiki / 设计稿 / API 文档：允许作为参考但需说明用途和可信度；缺失但需要沉淀的文档：由 Unit Plan 决定是否进入当前 unit。',
         '- 架构/交互逻辑/接口说明：记录模块边界、数据流、用户交互、状态流转、API/CLI/事件接口和错误语义，供 Unit Plan 消费。',
         '- 依赖信息：记录系统依赖、服务依赖、第三方 API、部署依赖、验证依赖和 agent runtime 依赖。',
         '',
@@ -497,7 +501,7 @@ def _v0_6_0_requirements_body(state: dict[str, Any]) -> str:
         '- PD-INFRA-04 运行环境梳理：目标项目在哪些环境运行、如何启动、依赖哪些服务和工具。',
         '- PD-INFRA-05 调试分析梳理：日志位置和排查问题路径。',
         '- PD-INFRA-06 参考环境梳理：竞品、同类产品、历史系统和设计风格参考。',
-        '- PD-INFRA-07 文档地址梳理：本地文档、wiki、历史项目和外部网址。',
+        '- PD-INFRA-07 文档地址梳理：正式维护文档、Controller 过程证据、外部 Agent / 人工沟通文档、外部 wiki/设计稿/API 文档和缺失文档。',
         '- PD-INFRA-08 架构与依赖梳理：模块、接口、交互、数据流和依赖边界。',
         '- PD-INFRA-09 边界说明：Requirements 记录目标和事实，Unit Plan 记录实施计划，runbook 记录长期事实。',
         '- PD-INFRA-10 UI/UX 原型预检：需要 UI/UX 的项目在 controller preflight 前已有合法 prototype manifest。',
@@ -594,9 +598,20 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
             lines.append(f'| {criterion} | {case_id}{golden_path} | {layer} | {environment_kind} | {real_entrypoint} | {core_api_mock} | {product_design_refs} | {technical_architecture_refs} | {fixture} | {command_or_evidence} | {expected} |')
     if lines[-1] == '|---|---|---|---|---|---|---|---|---|---|---|':
         lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | local_real/production_readonly/component_mock/contract_mock/visual | 真实页面或命令入口 | no | 补充产品设计引用 | 补充技术架构引用 | 补充 fixture 或测试数据 | 补充命令或人工证据 | 补充预期结果 |')
+    document_deliverable_row = (
+        '| workflow/architecture/operations/product | 待补 docs/... | create/update/register | true | 当前 unit 涉及长期产品、架构、流程或运维事实；必须替换为具体文档动作。 |'
+        if unit_plan_requires_document_deliverables(state)
+        else '| code | 不需要正式文档变更 | none | false | 默认模板未识别长期产品、架构、流程或运维事实变更；如本 unit 涉及长期事实，Unit Plan 必须替换为具体 docs/* 文档动作。 |'
+    )
     lines.extend([
         '',
-        '## 附录 C：执行单元',
+        '## 附录 C：文档交付矩阵（Document Deliverables Matrix）',
+        '',
+        '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |',
+        '|---|---|---|---|---|',
+        document_deliverable_row,
+        '',
+        '## 附录 D：执行单元',
     ])
     for unit in state.get('units', []):
         lines.extend([
@@ -630,9 +645,10 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         json.dumps(_controller_state_patch(state), ensure_ascii=False, indent=2),
         '```',
         '',
-        '## 附录 D：人工审阅清单',
+        '## 附录 E：人工审阅清单',
         '- [ ] 每个目标都映射到一个或多个单元。',
         '- [ ] 每个单元都声明了足够的验证证据。',
+        '- [ ] 涉及长期产品、架构、流程或运维事实的 unit 已在 Document Deliverables Matrix 声明文档动作，或明确说明不需要正式文档变更及原因。',
         '- [ ] E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言，并至少标记一个 Golden Path 正常流程。',
         '- [ ] E2E/golden_path/prototype/Journey/Web 系统验收使用真实入口、真实服务/API 和真实测试数据；mock/stub API 只作为非 E2E 辅助测试。',
         '- [ ] fragment 单元没有声称完整场景闭环。',
@@ -690,6 +706,7 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
             suffix = f' (exit {returncode})' if returncode not in {None, 0} else ''
             lines.append(f'  - `{command}` -> {result_status}{suffix}')
     lines.extend(_final_acceptance_evidence_matrix_lines(verification))
+    lines.extend(_document_deliverables_status_lines(state, artifacts_dir))
     lines.extend(_prototype_conformance_matrix_lines(state, artifacts_dir))
     lines.extend(final_scope_audit_gate_lines(artifacts_dir))
     lines.extend(_journey_matrix_lines(state, artifacts_dir))
@@ -795,6 +812,34 @@ def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> lis
                 _markdown_cell(row.get('expected') or '未指定'),
                 _markdown_cell(_join_strings(row.get('artifact_refs')) or 'verification.json'),
                 'yes' if row.get('golden_path') is True else 'no',
+            ])
+            + ' |'
+        )
+    return lines
+
+
+def _document_deliverables_status_lines(state: dict[str, Any], artifacts_dir: Path) -> list[str]:
+    unit_plan_path = artifacts_dir.parent / 'approvals' / 'unit-plan.md'
+    rows = document_deliverable_status_rows(unit_plan_path, state)
+    if not rows:
+        return []
+    lines = [
+        '',
+        '## Document Deliverables Status',
+        '',
+        '| Area | Target Path | Action | Required For Acceptance | Status | Evidence / Reason |',
+        '| --- | --- | --- | --- | --- | --- |',
+    ]
+    for row in rows:
+        lines.append(
+            '| '
+            + ' | '.join([
+                _markdown_cell(row.get('area') or '未指定'),
+                _markdown_cell(row.get('target_path') or '未指定'),
+                _markdown_cell(row.get('action') or '未指定'),
+                'true' if row.get('required_for_acceptance') else 'false',
+                _markdown_cell(row.get('status') or 'missing'),
+                _markdown_cell(row.get('reason') or '未指定'),
             ])
             + ' |'
         )

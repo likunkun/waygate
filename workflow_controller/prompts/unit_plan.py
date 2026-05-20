@@ -70,6 +70,12 @@ Write the Unit Plan Markdown body to this exact file:
 不要修改应用源代码；这是规划/门禁文档生成任务。
 使用 `test-strategy` skill 将每条验收标准映射到适当验证层级、具体测试用例、命令、fixture、环境和人工证据。
 
+Document Deliverables Matrix 约束：
+- 如果当前 unit 会改变长期产品事实、架构事实、运维事实、工作流规则、审批流程、验收流程、证据规则或文档生命周期，必须声明对应文档动作。
+- 文档动作优先落到正式 `docs/` 目录：`docs/product/` 记录产品背景、用户旅程和需求说明；`docs/architecture/` 记录技术架构、模块边界和关键设计决策；`docs/workflow/` 记录 Agent 协作、审批流程、验收流程、证据规则和文档生命周期；`docs/operations/` 记录运行、部署、排障和运维说明。
+- 纯代码小修可以声明“不需要正式文档变更”，但必须写清楚原因；不能用沉默来表示不需要。
+- `Required For Acceptance` 为 `true` 的文档动作会在 Final Acceptance 阻断缺失文件；历史缺失但未声明 required 的文档不作为本 unit 终验阻断。
+
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
 - 如果已批准 requirements 包含 `Design/Architecture Traceability Matrix`，每个 test case 还必须保留对应 AC 的 `product_design_refs` 和 `technical_architecture_refs`，并与 requirements 中的 Product Design Ref / Technical Architecture Ref 一致。
@@ -137,6 +143,19 @@ Acceptance Criterion -> Test Case -> Journey -> Layer -> Command/Evidence -> Exp
 缺陷修复模式下，每条验收标准和每个最终验收缺陷都必须至少有一个具体测试用例或明确人工证据。typecheck/lint/tsc 等静态检查可以出现，但不能单独算作行为覆盖。
 E2E 层的测试用例必须有可执行 `command`（Playwright/pytest 命令），并声明 `fixture` 或测试数据准备方式；`evidence` 字段留空；`expected` 必须描述具体可断言的值，不接受"页面渲染成功"、"无报错"或"截图留存"。
 如果测试用例覆盖 Journey，在表格中写出 Journey id，并在 Controller State Patch 的对应 `test_cases[]` JSON 对象中写 `covers_journeys` 或 `journey_ids`。
+
+## 文档交付矩阵（Document Deliverables Matrix）
+
+创建一张表，表达以下精确映射：
+
+Area -> Target Path -> Action -> Required For Acceptance -> Evidence / Reason
+
+规则：
+- 涉及 `workflow`、`architecture`、`operations`、`product` 长期事实变更时，必须至少有一行说明要创建、更新或登记的正式文档。
+- 流程规则变更必须落到 `docs/workflow/`，例如 Agent 协作、审批流程、验收流程、证据规则或文档生命周期。
+- 外部 Agent 文档、人工沟通文档或 `.rrc-controller-*` artifact 如需长期使用，先在 `docs/README.md` 登记，再决定是否提升到正式 `docs/*`。
+- 纯代码小修可写 `Target Path = 不需要正式文档变更`、`Action = none`、`Required For Acceptance = false`，并在 `Evidence / Reason` 写明原因。
+- `Required For Acceptance = true` 只用于本 unit 必须完成的文档动作；不要把历史 backlog 文档缺口标成 required。
 
 ## 执行单元
 

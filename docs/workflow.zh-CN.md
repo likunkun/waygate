@@ -39,9 +39,15 @@ Requirements drafter 会生成 Markdown gate，包含：
 - verification layers；
 - 需要跨步骤验证时的 Journey；
 - 设计和架构可追溯；
+- `## 4.9` 中的目标项目基础设施事实；
 - 假设和风险。
 
+没有支持的 `--spec` 时，drafter 第一轮仍只能在 tmux pane 中直接提出澄清问题。收到用户的具体回答后，drafter 读取项目上下文，并盘点 7 类基础设施信息：代码仓库、运行环境、调试分析、参考环境、文档、架构/交互/接口和依赖。如果事实仍缺失，继续直接追问用户。
+
+用户补充的基础设施事实默认不能当成已验证事实。Drafter 应通过本地 repo、配置文件、README/USAGE、docs、state-dir artifact、package manifest、测试命令或既有验证输出等非破坏性来源核对。外部系统、生产环境、私有 wiki/API 或其他无法访问的事实必须标注为用户提供且未能直接验证。`## 4.8` 记录追问、用户回答、核对方式、验证结论和残余风险；`## 4.9` 记录每类基础设施事实的来源和验证状态。
+
 人类看到 gate 之前，controller 可以先做预检。缺 AC 映射、缺 verification layer、traceability 格式错误等问题会自动打回 drafter。
+预检也会拒绝 `暂无`、`不清楚` 等空泛基础设施占位、缺少依据的 `未发现` / `没有` 声明，以及 4.9 声称“用户确认”或“已验证”但 4.8 没有对应留痕的内容。
 
 ## Unit Plan 阶段
 
@@ -63,6 +69,8 @@ Builder 会收到 prompt 文件，并只处理一个 unit。tmux 或 subprocess 
 
 完成信号不是最终证明。Controller 仍会校验 run ID、artifacts 和后续 verifier evidence。
 
+如果上一轮 controller Verifier 失败于某条具体命令，下一轮 Builder prompt 会包含 `Controller Verification Failure Protocol`。Builder 第一动作必须在 controller cwd 下复跑同一条 exact command，不能先改 grep、换 cwd、拆命令或跑相邻测试。DONE 前，Builder 必须在 `done_payload.controller_failure_resolution` 记录 failed command、复现结果、root cause 或 mismatch analysis、修复摘要、同命令复跑 exit code 和完整 approved verification list 运行结果。缺少或命令不匹配会在进入 Refiner 前阻塞；最终验收事实源仍是 controller Verifier。
+
 ## 精修与评审
 
 Builder 完成后：
@@ -83,6 +91,8 @@ Verifier 执行 unit 中列出的命令，并写入 `verification.json`。Eviden
 - artifact references。
 
 Malformed evidence 会被当作验证失败。
+
+重复 verifier 失败使用稳定 fingerprint：stage、issue type、command、return code，以及 Playwright test title、error class 等稳定失败特征会参与判定。stdout/stderr tail 仍保留在摘要和 artifact 中供人和 agent 排查，但不会单独让同一失败看起来像新的失败。
 
 ## Final Acceptance
 

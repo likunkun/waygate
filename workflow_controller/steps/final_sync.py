@@ -176,6 +176,7 @@ def _render_final_acceptance_sync_prompt(
         workspace_dir,
         [
             'AGENTS.md',
+            'docs/README.md',
             'ROADMAP.md',
             'task_plan.md',
             'progress.md',
@@ -227,8 +228,9 @@ Read the project agent rules and planning files that exist:
 {context_lines}
 
 Required work:
-- Read `AGENTS.md` first when present, then `ROADMAP.md`, `task_plan.md`, `progress.md`, `findings.md`, and the controller `session.json`.
+- Read `AGENTS.md` first when present, then `docs/README.md`, `ROADMAP.md`, `task_plan.md`, `progress.md`, `findings.md`, and the controller `session.json`.
 - Update the human-readable project status documents that exist in the workspace so they reflect the approved final acceptance.
+- If the Unit Plan declared required document deliverables, ensure `docs/README.md` or the relevant `docs/*` registry/status entry reflects the accepted document state.
 - If `task_plan.md` still marks the accepted target, version, phase, or unit as `in_progress`, change it to complete.
 - Add a short `progress.md` entry for the final acceptance and any status-document changes.
 - Add a `findings.md` note only if this final acceptance exposed a workflow decision, defect, or risk.

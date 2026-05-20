@@ -164,9 +164,9 @@ Delivered work:
 - Record V0.6.0f as delivered in human-readable project records without manually changing the historical `.rrc-controller-v0.6.0f/session.json` to `DONE`.
 - Extend `waygate doctor` with `claude_assets` checks for `~/.claude/commands`, `~/.claude/agents`, `~/.claude/rules`, and `~/.claude/plugins`; output is limited to path, status, and count.
 - Align recommended skill warnings with the README baseline, including persistent planning, startup, brainstorming, writing plans, TDD, debugging, test strategy, refiner, verification, code review, plan execution, webapp/browser verification, and `frontend-design` / `ui-ux-pro-max`.
-- Make controller prototype preview URLs default to `http://0.0.0.0:<port>/plannotator-review.html`, with `WAYGATE_PREVIEW_HOST` as the override.
-- Pass `PLANNOTATOR_HOST=0.0.0.0` to Plannotator by default and display the approval URL as `http://0.0.0.0:<port>`.
-- Document that `0.0.0.0` is a listening/display address; remote browsers usually need to replace it with the Waygate host IP, and Plannotator bind behavior still depends on the Plannotator binary.
+- Bind the controller prototype preview server on `0.0.0.0` by default, while printing browser URLs with the machine's primary IP address; `WAYGATE_PREVIEW_HOST` overrides preview bind host and `WAYGATE_DISPLAY_HOST` overrides the printed browser host.
+- Request Plannotator remote access with `PLANNOTATOR_REMOTE=1`, while printing the approval URL with the machine's primary IP address.
+- Document that `0.0.0.0` is a listening address, not a browser target, and use fixed controller prototype preview port `20001` for ACL planning.
 
 ### V0.6.0h - tmux Recommended Config and Doctor Information Hierarchy
 
@@ -180,6 +180,31 @@ Delivered work:
 - Reorder doctor output with top-level `summary:`, `focus:`, and `action_required:` sections before detailed provenance and environment sections.
 - Add `waygate doctor --color auto|always|never` so TTY users can see status, P1 focus items, manual actions, and section headers in color while non-TTY output remains plain by default.
 - Preserve existing detailed sections, including `environment_checks`, `skill_recommendations`, and `claude_assets`, for troubleshooting continuity.
+
+### V0.6.0i - Documentation Lifecycle
+
+Goal: make formal documentation discoverable and make document updates auditable without turning every historical gap into a blocking acceptance issue.
+
+Delivered work:
+
+- Generate `docs/README.md` during `waygate init/start` as the documentation entry point and lightweight registry, while preserving existing user files through `.generated` drafts.
+- Update generated `AGENTS.md` guidance so agents read `docs/README.md`, distinguish formal docs from process state, and treat `.rrc-controller-*` as audit evidence.
+- Structure Requirements `文档地址` intake around formal docs, controller evidence, external Agent / human communication docs, external wiki/design/API docs, and missing docs to preserve.
+- Add Unit Plan Document Deliverables Matrix prompting and validation for long-lived product, architecture, workflow, operations, evidence policy, and document lifecycle changes.
+- Render Final Acceptance document deliverable status and block only deliverables marked `Required For Acceptance = true`.
+
+### V0.6.0j - Requirements Infrastructure Follow-up and Validation
+
+Goal: keep no-`--spec` Requirements intake conversational while preventing unverified infrastructure facts from being copied into approval gates.
+
+Delivered work:
+
+- Keep the first no-`--spec` Requirements drafter reply limited to a clarification question, then require project-context reading after the user gives a concrete answer.
+- Require the drafter to audit all seven `## 4.9 目标项目基础设施信息` categories after first clarification and continue asking the user in the tmux pane when infrastructure facts are still missing.
+- Require non-destructive verification for user-supplied repository, runtime, debugging, reference environment, documentation, interface, and dependency facts.
+- Mark inaccessible external systems, production environments, private wiki/API sources, or other unverifiable facts as user-provided and not directly verified, without inventing evidence.
+- Record infrastructure questions, answers, verification methods, conclusions, and residual risks in `## 4.8`, and record source plus verification status for each 4.9 category.
+- Strengthen Requirements preflight for missing/none/not-applicable claims and require a matching 4.8 record when 4.9 claims a fact is user-confirmed or verified.
 
 ### V0.6.1 - External Spec Intake
 
