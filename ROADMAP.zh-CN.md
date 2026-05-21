@@ -163,7 +163,7 @@
 
 - 在人类可读项目记录中记录 V0.6.0f 已交付，不手工把历史 `.rrc-controller-v0.6.0f/session.json` 改成 `DONE`。
 - `waygate doctor` 新增 `claude_assets` 检查，覆盖 `~/.claude/commands`、`~/.claude/agents`、`~/.claude/rules`、`~/.claude/plugins`；输出仅包含路径、状态和数量。
-- 推荐 skill warning 与 README 推荐基线对齐，覆盖 persistent planning、startup、brainstorming、writing plans、TDD、debugging、test strategy、refiner、verification、code review、plan execution、webapp/browser verification，以及 `frontend-design` / `ui-ux-pro-max`。
+- 推荐 skill warning 与当时 README 推荐基线对齐，覆盖 persistent planning、startup、brainstorming、writing plans、TDD、debugging、test strategy、refiner、verification、code review、plan execution、webapp/browser verification 和 UI-heavy skill coverage。V0.6.0k 后 `ui-ux-pro-max` 成为 UI/Web/prototype 必需 skill。
 - Controller prototype preview server 默认绑定 `0.0.0.0`，但浏览器 URL 使用本机主 IP 地址展示；`WAYGATE_PREVIEW_HOST` 覆盖 preview bind host，`WAYGATE_DISPLAY_HOST` 覆盖终端展示 host。
 - 通过 `PLANNOTATOR_REMOTE=1` 请求 Plannotator 开启远程访问，但审批页 URL 使用本机主 IP 地址展示。
 - 文档说明 `0.0.0.0` 是监听地址，不是浏览器目标；controller prototype preview 固定使用 `20001` 端口，便于 ACL 规划。
@@ -205,6 +205,18 @@
 - 外部系统、生产环境、私有 wiki/API 或其他无法访问的事实必须标注为用户提供且未能直接验证，不能伪造证据。
 - `## 4.8` 记录基础设施追问、用户回答、核对方式、验证结论和残余风险；`## 4.9` 为每类基础设施事实记录来源和验证状态。
 - Requirements 预检加强对“未发现/没有/不涉及”等声明的校验；当 4.9 声称“用户确认”或“已验证”时，要求 4.8 有对应记录。
+
+### V0.6.0k - UI/UX Skill Policy
+
+目标：让 UI、Web、可点击原型、prototype evidence 和生产 UI 一致性工作使用正确的专业 skill。
+
+已交付：
+
+- Requirements、Unit Plan、Builder 和 UI Design Brief prompt contract 都明确 UI/Web/prototype 工作必须使用 `ui-ux-pro-max`。
+- 明确 `frontend-design` 只能辅助全新视觉探索或局部润色，不能替代 `ui-ux-pro-max` 做既有产品 UI/原型一致性工作。
+- 原型设计前必须盘点真实 UI：route、DOM/组件、既有页面结构、截图、历史设计或参考环境。
+- `waygate doctor` 的 `skill_recommendations.ui_ux_design` 改为要求 `ui-ux-pro-max`；只安装 `frontend-design` 时输出 warning 和 manual action；两者都安装时优先展示 `ui-ux-pro-max`。
+- 新增 `docs/workflow/ui-ux-skill-policy.md` 并随 Debian 文档打包。
 
 ### V0.6.1 - External Spec Intake
 

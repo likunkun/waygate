@@ -159,6 +159,52 @@ def test_doctor_reports_skill_checks_and_recommended_gaps(tmp_path: Path) -> Non
     assert '- verification: status=warning missing=verification-before-completion' in report
 
 
+def test_doctor_warns_when_only_frontend_design_is_installed_for_ui_ux(tmp_path: Path) -> None:
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for command in ['pytest', 'tmux', 'dpkg-deb']:
+        _executable(bin_dir / command)
+    skill_path = tmp_path / '.agents/skills/frontend-design/SKILL.md'
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text('---\nname: frontend-design\n---\n# frontend-design\n', encoding='utf-8')
+
+    report = render_doctor_report(
+        env={'PATH': str(bin_dir), 'HOME': str(tmp_path)},
+        argv0='waygate',
+        module_file=str(tmp_path / 'usr/lib/waygate/workflow_controller/__init__.py'),
+        dpkg_version_provider=lambda: __version__,
+    )
+
+    assert '- frontend-design: status=ok path=' in report
+    assert '- ui_ux_design: status=warning missing=ui-ux-pro-max' in report
+    assert 'Install ui-ux-pro-max for UI/Web/prototype production consistency work.' in report
+    assert 'matched=frontend-design' not in report
+    assert 'skill_recommendations.ui_ux_design' in report
+
+
+def test_doctor_prefers_ui_ux_pro_max_when_frontend_design_is_also_installed(tmp_path: Path) -> None:
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for command in ['pytest', 'tmux', 'dpkg-deb']:
+        _executable(bin_dir / command)
+    for skill_name in ['frontend-design', 'ui-ux-pro-max']:
+        skill_path = tmp_path / f'.agents/skills/{skill_name}/SKILL.md'
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(f'---\nname: {skill_name}\n---\n# {skill_name}\n', encoding='utf-8')
+
+    report = render_doctor_report(
+        env={'PATH': str(bin_dir), 'HOME': str(tmp_path)},
+        argv0='waygate',
+        module_file=str(tmp_path / 'usr/lib/waygate/workflow_controller/__init__.py'),
+        dpkg_version_provider=lambda: __version__,
+    )
+
+    assert '- frontend-design: status=ok path=' in report
+    assert '- ui-ux-pro-max: status=ok path=' in report
+    assert '- ui_ux_design: status=ok matched=ui-ux-pro-max' in report
+    assert 'matched=frontend-design' not in report
+
+
 def test_doctor_reports_ok_tmux_config_and_summary_first(tmp_path: Path) -> None:
     (tmp_path / '.tmux.conf').write_text(
         '\n'.join(

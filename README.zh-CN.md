@@ -32,6 +32,7 @@ Waygate 不是要把人移出流程，而是把人的注意力放回真正重要
 | 验证证据 | Verifier 输出结构化 evidence rows，覆盖 AC、Test Case、命令和 artifact。 |
 | 真实 E2E 证据 | V0.6.0f 阻止带核心 API mock/stub 的浏览器测试覆盖 E2E、golden path、prototype conformance 或生产证据。 |
 | 文档生命周期 | V0.6.0i 初始化 `docs/README.md`，Requirements 盘点文档来源，Unit Plan 声明文档交付，Final Acceptance 只阻断标记为 required 的文档动作。 |
+| UI/UX skill policy | V0.6.0k 要求 UI/Web/prototype 工作使用 `ui-ux-pro-max`，`frontend-design` 只作为可选视觉探索或局部润色辅助。 |
 | 最终验收 | Final Acceptance Gate 展示证据矩阵、Journey 覆盖、Scope Audit 和返工路由。 |
 | Bug Fix Loop | 最终验收缺陷可以进入独立 bug-fix gate，不需要改写原需求。 |
 | 环境检测 | V0.6.0h 扩展 `waygate doctor`，提供摘要优先输出、`focus:`、`action_required`、`--color auto|always|never`、`tmux_config`、Python、pytest、tmux、可选 agent 工具、Plannotator、Debian packaging、skill 根目录扫描、`.claude` asset 数量和与 README 对齐的推荐 skill 缺口。 |
@@ -52,7 +53,7 @@ Waygate 以 Python 3 代码运行。本地开发和验证使用 `python -m pytes
 
 Waygate Markdown spec intake 可通过 `init`、`start`、`go` 的 `--spec <path>` 使用。V0.5.6 只支持本地 Waygate Markdown spec 文件；识别到的外部格式会明确 deferred，不会被静默导入。
 
-V0.6.0j Requirements 基础设施追问与验证规则见 [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md)。V0.6.0i 文档生命周期入口见 [docs/README.md](docs/README.md)。V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
+V0.6.0j Requirements 基础设施追问与验证规则见 [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md)。V0.6.0k UI/UX skill policy 见 [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md)。V0.6.0i 文档生命周期入口见 [docs/README.md](docs/README.md)。V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
 
 ## Waygate Agent 使用的 Skills
 
@@ -80,7 +81,7 @@ npx skills add AbsolutelySkilled/AbsolutelySkilled --skill test-strategy
 | `superpowers:requesting-code-review` 和 `superpowers:receiving-code-review` | Reviewer 和返工循环 | 让 review finding 更具体，也避免盲目接受不严谨反馈。 |
 | `superpowers:executing-plans` 或 `superpowers:subagent-driven-development` | 执行已批准的多步骤计划 | 按书面计划逐项执行，并保留 checkpoint 和 review 边界。 |
 | `webapp-testing` | 浏览器可见 UI 或流程验证 | 需要验证前端行为时，用 Playwright 类检查、截图和浏览器日志形成证据。 |
-| `frontend-design` 或 `ui-ux-pro-max` | UI 密集型需求 | 目标包含前端时，用于界面设计、交互状态、布局和可访问性。 |
+| `ui-ux-pro-max` | UI/Web/prototype 需求 | UI、Web、可点击原型、prototype evidence 和生产 UI 一致性工作必须使用；`frontend-design` 只能辅助全新视觉探索或局部润色，不能替代 `ui-ux-pro-max`。 |
 | `pdf`、`docx`、`pptx` | 文档类任务 | 只有项目需求涉及对应文件类型时才使用。 |
 
 常见阶段映射：

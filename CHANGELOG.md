@@ -2,6 +2,15 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0k
+
+- Required `ui-ux-pro-max` in Requirements, Unit Plan, Builder, and UI Design Brief prompt contracts for UI/Web/prototype work.
+- Clarified that `frontend-design` is optional for new visual exploration or local polish, but cannot replace existing product UI/prototype consistency work.
+- Required real UI inventory before prototype design: routes, DOM/components, existing page structure, screenshots, historical design, or reference environments.
+- Updated `waygate doctor` so `skill_recommendations.ui_ux_design` warns when only `frontend-design` is installed and prefers `ui-ux-pro-max` when both skills are present.
+- Added and packaged `docs/workflow/ui-ux-skill-policy.md`.
+- Printed the runtime version on startup: `init` and `run` emit `waygate <version>` as the first line, while `start`, `go`, and `drive` emit the same version line through the timestamped drive output channel.
+
 ## 0.6.0j
 
 - Updated no-`--spec` Requirements prompting so the first response still asks only a clarification question, then reads project context after a concrete answer, audits `## 4.9` infrastructure gaps, and follows up in the same tmux pane when facts are still missing.
@@ -31,7 +40,7 @@ All notable project changes should be recorded here.
 ## 0.6.0g
 
 - Extended `waygate doctor` with a `claude_assets` section for `~/.claude/commands`, `agents`, `rules`, and `plugins`, reporting only path, status, and count.
-- Aligned `skill_recommendations` with the README baseline, including code review, plan execution, webapp testing, and `frontend-design` / `ui-ux-pro-max` for UI-heavy requirements.
+- Aligned `skill_recommendations` with the README baseline at that time, including code review, plan execution, webapp testing, and UI-heavy requirements. V0.6.0k later made `ui-ux-pro-max` the required UI/Web/prototype skill.
 - Made the controller prototype preview server bind on `0.0.0.0` by default for remote reachability.
 - Requested Plannotator remote access with `PLANNOTATOR_REMOTE=1` instead of controlling the bind host.
 - Documented remote review host behavior; current browser URLs are printed with the machine's primary IP address.

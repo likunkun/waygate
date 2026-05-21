@@ -13,6 +13,7 @@ from workflow_controller.evidence_policy import (
     MOCK_ENVIRONMENT_KINDS,
     REAL_E2E_ENVIRONMENT_KINDS,
     BROWSER_RUNTIME_FIELDS,
+    case_visual_evidence_plan,
     case_allows_mock,
     case_declares_core_api_mock,
     case_declared_mocked_routes,
@@ -20,6 +21,8 @@ from workflow_controller.evidence_policy import (
     case_requires_real_e2e,
     command_core_api_mock_routes,
     evidence_row_real_e2e_issue,
+    fidelity_rank,
+    normalize_fidelity_required,
 )
 from workflow_controller.document_deliverables import (
     final_document_deliverable_issues,
@@ -71,6 +74,7 @@ VERIFICATION_EVIDENCE_ROW_FIELDS = {
     'page_errors',
     'request_failures',
     'screenshot_refs',
+    'visual_evidence_refs',
 }
 VERIFICATION_EVIDENCE_ROW_STATUSES = {'passed', 'failed', 'missing', 'manual', 'invalid'}
 
@@ -135,6 +139,10 @@ def validate_verification_evidence_schema(verification_path: Path) -> dict[str, 
                 raise ValueError(
                     f'Verification evidence row {index} {runtime_field} must be a list: {verification_path}'
                 )
+        if not isinstance(row.get('visual_evidence_refs'), dict):
+            raise ValueError(
+                f'Verification evidence row {index} visual_evidence_refs must be an object: {verification_path}'
+            )
     return verification
 
 
@@ -1409,7 +1417,138 @@ def _prototype_conformance_case_issue(
         return 'missing user_steps from production entrypoint'
     if _expected_is_weak(expected):
         return 'missing concrete expected assertion'
+    fidelity_required = normalize_fidelity_required((contract or {}).get('fidelity_required'))
+    case_fidelity = normalize_fidelity_required(
+        case.get('fidelity_required') or case.get('fidelityRequired'),
+        default=fidelity_required,
+    )
+    if fidelity_rank(case_fidelity) < fidelity_rank(fidelity_required):
+        return f'fidelity_required {case_fidelity} is below contract {fidelity_required}'
+    visual_plan_issue = _prototype_visual_evidence_plan_issue(
+        case,
+        fidelity_required=fidelity_required,
+        requires_interaction=bool(surface_kind or _case_user_steps(case)),
+    )
+    if visual_plan_issue:
+        return visual_plan_issue
+    if fidelity_rank(fidelity_required) >= fidelity_rank('pixel_exact') and not _case_has_l4_visual_plan(case):
+        return 'missing L4 pixel-exact evidence plan'
+    if fidelity_rank(fidelity_required) >= fidelity_rank('screenshot_regression') and not _case_has_l3_visual_plan(case):
+        return 'missing L3 screenshot regression evidence plan'
+    if fidelity_rank(fidelity_required) >= fidelity_rank('structural_interaction') and _prototype_expected_lacks_l2_assertions(case):
+        return 'missing L2 structural/interaction assertions'
     return ''
+
+
+def _prototype_visual_evidence_plan_issue(
+    case: dict[str, Any],
+    *,
+    fidelity_required: str,
+    requires_interaction: bool,
+) -> str:
+    plan = case_visual_evidence_plan(case)
+    if not plan.get('prototype_screenshot') or not plan.get('production_screenshot'):
+        return 'missing L1 visual evidence plan'
+    if fidelity_rank(fidelity_required) >= fidelity_rank('structural_interaction'):
+        if not _case_visual_plan_list(plan.get('action_path')):
+            return 'missing L2 action path evidence plan'
+        if requires_interaction and not plan.get('interaction_screenshot'):
+            return 'missing L2 interaction screenshot evidence plan'
+    return ''
+
+
+def _case_visual_plan_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    return [part.strip() for part in re.split(r'[,;\n]', text) if part.strip()]
+
+
+def _case_has_l3_visual_plan(case: dict[str, Any]) -> bool:
+    plan = case_visual_evidence_plan(case)
+    if plan.get('screenshot_regression'):
+        return True
+    return any(
+        case.get(key) is not None
+        for key in ('screenshot_regression', 'screenshotRegression', 'visual_regression', 'visualRegression')
+    )
+
+
+def _case_has_l4_visual_plan(case: dict[str, Any]) -> bool:
+    plan = case_visual_evidence_plan(case)
+    if plan.get('pixel_exact') or plan.get('pixel_diff') or plan.get('pixel_tolerance'):
+        return True
+    return any(
+        case.get(key) is not None
+        for key in ('pixel_exact', 'pixelExact', 'pixel_tolerance', 'pixelTolerance', 'pixel_diff', 'pixelDiff')
+    )
+
+
+def _prototype_expected_lacks_l2_assertions(case: dict[str, Any]) -> bool:
+    expected = str(case.get('expected') or case.get('expected_result') or case.get('expectedResult') or '')
+    combined = ' '.join([expected, ' '.join(_case_user_steps(case))]).lower()
+    structure_terms = (
+        'layout',
+        'order',
+        'ordering',
+        'region',
+        'section',
+        'panel',
+        'dialog',
+        'drawer',
+        'form',
+        'tab',
+        'button',
+        'card',
+        'list',
+        'count',
+        'state',
+        'placement',
+        'size',
+        'visual',
+        'prototype',
+        '信息架构',
+        '布局',
+        '顺序',
+        '区域',
+        '面板',
+        '弹窗',
+        '抽屉',
+        '按钮',
+        '页签',
+        '列表',
+        '数量',
+        '状态',
+        '遮挡',
+    )
+    interaction_terms = (
+        'click',
+        'after clicking',
+        'open',
+        'opens',
+        'toggle',
+        'select',
+        'submit',
+        'hover',
+        'tab',
+        'route',
+        'entrypoint',
+        '点击',
+        '打开',
+        '切换',
+        '选择',
+        '保存',
+        '提交',
+        '入口',
+    )
+    return not (
+        any(term in combined for term in structure_terms)
+        and any(term in combined for term in interaction_terms)
+    )
 
 
 def _prototype_command_is_static_artifact_check(command: str) -> bool:

@@ -2,6 +2,15 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.0k
+
+- Requirements、Unit Plan、Builder 和 UI Design Brief prompt contract 对 UI/Web/prototype 工作明确要求使用 `ui-ux-pro-max`。
+- 明确 `frontend-design` 只能作为全新视觉探索或局部视觉润色辅助，不能替代既有产品 UI/原型一致性工作。
+- 原型设计前必须盘点真实 UI：route、DOM/组件、既有页面结构、截图、历史设计或参考环境。
+- `waygate doctor` 的 `skill_recommendations.ui_ux_design` 现在只安装 `frontend-design` 时输出 warning 和 manual action，两者都安装时优先展示 `ui-ux-pro-max`。
+- 新增并打包 `docs/workflow/ui-ux-skill-policy.md`。
+- 启动时输出运行版本号：`init` 和 `run` 第一行输出 `waygate <version>`；`start`、`go`、`drive` 通过带时间戳的 drive 输出通道输出同一版本行。
+
 ## 0.6.0j
 
 - 调整无 `--spec` Requirements prompt：第一轮仍只能提出澄清问题；收到具体回答后读取项目上下文、盘点 `## 4.9` 基础设施缺口，并在事实仍缺失时继续在同一 tmux pane 追问。
@@ -31,7 +40,7 @@
 ## 0.6.0g
 
 - `waygate doctor` 新增 `claude_assets` section，报告 `~/.claude/commands`、`agents`、`rules`、`plugins` 的路径、状态和数量，不读取内容。
-- `skill_recommendations` 与 README 推荐基线对齐，补齐 code review、plan execution、webapp testing，以及 UI-heavy requirements 所需的 `frontend-design` / `ui-ux-pro-max`。
+- `skill_recommendations` 与当时 README 推荐基线对齐，补齐 code review、plan execution、webapp testing 和 UI-heavy requirements；V0.6.0k 后 `ui-ux-pro-max` 成为 UI/Web/prototype 必需 skill。
 - Controller prototype preview server 默认绑定 `0.0.0.0`，提升远程浏览器可达性。
 - 通过 `PLANNOTATOR_REMOTE=1` 请求 Plannotator 开启远程访问，不再控制 bind host。
 - 文档说明远程审阅 host 行为；当前浏览器 URL 会用本机主 IP 地址展示。

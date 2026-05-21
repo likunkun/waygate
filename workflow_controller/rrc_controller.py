@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from workflow_controller import __version__
 from workflow_controller.agent_guides import ensure_agent_operating_guides
 from workflow_controller.gates.generators import (
     ensure_bug_fix_gate,
@@ -245,6 +246,16 @@ HUMAN_REVIEW_TMUX_REMINDER = (
     'The agent has reached its conclusion and the workflow is now in human review. '
     'Please do not continue chatting with the agent.'
 )
+DIRECT_STARTUP_VERSION_COMMANDS = {'init', 'run'}
+
+
+def _startup_version_line() -> str:
+    return f'waygate {__version__}'
+
+
+def _print_direct_startup_version_if_needed(command: str) -> None:
+    if command in DIRECT_STARTUP_VERSION_COMMANDS:
+        print(_startup_version_line())
 
 FINAL_ACCEPTANCE_REJECTION_ROUTE_LABELS = {
     'requirements': 'Requirements revision',
@@ -1402,9 +1413,12 @@ class RalphRefinerController:
         output_func: Callable[[str], None] = print,
         timestamp_output: bool = True,
         strategist_overrides: dict[str, Any] | None = None,
+        print_startup_version: bool = False,
     ) -> dict[str, Any]:
         if timestamp_output:
             output_func = _timestamped_output(output_func)
+        if print_startup_version:
+            output_func(_startup_version_line())
 
         if self.target:
             self._rebase_implicit_state_dir(self._target_workspace_dir())
@@ -1435,6 +1449,7 @@ class RalphRefinerController:
             output_func=output_func,
             timestamp_output=False,
             print_agent_target=False,
+            print_startup_version=False,
         )
 
     def _validate_start_compatible(self, state: dict[str, Any]) -> None:
@@ -2297,9 +2312,12 @@ class RalphRefinerController:
         output_func: Callable[[str], None] = print,
         timestamp_output: bool = True,
         print_agent_target: bool = True,
+        print_startup_version: bool = False,
     ) -> dict[str, Any]:
         if timestamp_output:
             output_func = _timestamped_output(output_func)
+        if print_startup_version:
+            output_func(_startup_version_line())
 
         self._drive_progress_callback: Callable[[str], None] | None = output_func
         steps = 0
@@ -5295,6 +5313,7 @@ def render_status_line(state: dict[str, Any]) -> str:
 
 def main() -> None:
     args = parse_args()
+    _print_direct_startup_version_if_needed(args.command)
     controller = RalphRefinerController(
         state_dir=Path(args.state_dir),
         dry_run=getattr(args, 'dry_run', False),
@@ -5361,6 +5380,7 @@ def main() -> None:
                 color_mode=args.color,
                 actor=args.actor,
                 strategist_overrides=_build_role_overrides(args),
+                print_startup_version=True,
             )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
@@ -5369,7 +5389,13 @@ def main() -> None:
 
     if args.command == 'drive':
         try:
-            controller.drive(max_steps=args.max_steps, verbose=args.verbose, color_mode=args.color, actor=args.actor)
+            controller.drive(
+                max_steps=args.max_steps,
+                verbose=args.verbose,
+                color_mode=args.color,
+                actor=args.actor,
+                print_startup_version=True,
+            )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None

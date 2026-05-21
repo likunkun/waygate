@@ -10,9 +10,13 @@ from workflow_controller.evidence_policy import (
     browser_runtime_fields,
     case_declared_mocked_routes,
     case_environment_kind,
+    case_has_prototype_conformance,
     case_real_entrypoint,
     case_requires_real_e2e,
     command_core_api_mock_routes,
+    normalize_fidelity_required,
+    visual_evidence_issue,
+    visual_evidence_refs_from_result,
 )
 from workflow_controller.runners import make_runner, run_agent_backend, RunnerRequest
 from workflow_controller.gates import check_gate_file
@@ -71,6 +75,9 @@ def run_ui_design_if_needed(state: dict[str, Any], unit_dir: Path, dry_run: bool
         'non_goals': non_goals,
         'done_when': done_when,
         'design_checks': [
+            'Use ui-ux-pro-max for UI/Web/prototype consistency; frontend-design is optional polish and cannot replace it.',
+            'Inventory real routes, DOM/components, existing page structure, screenshots, historical design, or reference environments before proposing UI changes.',
+            'Verify 交互、可访问性、布局、遮挡检查 for each browser-visible change.',
             'Confirm primary user path is visible without relying on implementation notes.',
             'Confirm UI states cover loading, empty, error, success, and retry paths where applicable.',
             'Confirm verification includes browser-visible evidence when the unit changes UI behavior.',
@@ -865,6 +872,19 @@ def _evidence_row_from_test_case(
         or mocked_routes
     )
     runtime_fields = browser_runtime_fields(case=case, result=result)
+    visual_evidence_refs = visual_evidence_refs_from_result(result)
+    fidelity_level = normalize_fidelity_required(
+        case.get('fidelity_required') or case.get('fidelityRequired') or visual_evidence_refs.get('fidelity_level')
+    )
+    if visual_evidence_refs and 'fidelity_level' not in visual_evidence_refs:
+        visual_evidence_refs['fidelity_level'] = fidelity_level
+    prototype_visual_evidence_issue = ''
+    if result is not None and case_has_prototype_conformance(case):
+        prototype_visual_evidence_issue = visual_evidence_issue(
+            visual_evidence_refs,
+            fidelity_level=fidelity_level,
+            requires_interaction=bool(case.get('prototype_surfaces') or case.get('prototypeSurfaces') or case.get('user_steps') or case.get('userSteps')),
+        )
     environment_kind = case_environment_kind(case, result=result)
     requires_real_e2e = case_requires_real_e2e(case)
     status = _evidence_status(
@@ -874,6 +894,7 @@ def _evidence_row_from_test_case(
         environment_kind=environment_kind,
         uses_core_api_mock=uses_core_api_mock,
         runtime_fields=runtime_fields,
+        prototype_visual_evidence_issue=prototype_visual_evidence_issue,
     )
     return {
         'unit_id': unit_id,
@@ -893,6 +914,8 @@ def _evidence_row_from_test_case(
         'real_entrypoint': case_real_entrypoint(case, command),
         'uses_core_api_mock': uses_core_api_mock,
         'mocked_routes': mocked_routes,
+        'visual_evidence_refs': visual_evidence_refs,
+        'visual_evidence_issue': prototype_visual_evidence_issue,
         **runtime_fields,
     }
 
@@ -925,6 +948,7 @@ def _evidence_row_from_command_result(
         'page_errors': _string_list(result.get('page_errors')),
         'request_failures': _string_list(result.get('request_failures')),
         'screenshot_refs': _string_list(result.get('screenshot_refs')),
+        'visual_evidence_refs': visual_evidence_refs_from_result(result),
     }
 
 
@@ -951,6 +975,7 @@ def _evidence_status(
     environment_kind: str = 'local_real',
     uses_core_api_mock: bool = False,
     runtime_fields: dict[str, list[str]] | None = None,
+    prototype_visual_evidence_issue: str = '',
 ) -> str:
     if command:
         if result is None:
@@ -960,6 +985,8 @@ def _evidence_status(
             or environment_kind in MOCK_ENVIRONMENT_KINDS
             or environment_kind not in REAL_E2E_ENVIRONMENT_KINDS
         ):
+            return 'invalid'
+        if requires_real_e2e and prototype_visual_evidence_issue:
             return 'invalid'
         if requires_real_e2e and _runtime_error_count(runtime_fields or {}) > 0:
             return 'failed'
@@ -982,13 +1009,18 @@ def _evidence_row_policy_issues(rows: list[dict[str, Any]]) -> list[dict[str, st
     for row in rows:
         status = str(row.get('status') or '').strip().lower()
         if status == 'invalid':
+            issue_type = 'invalid_prototype_visual_evidence' if row.get('visual_evidence_issue') else 'invalid_e2e_evidence'
+            detail = (
+                str(row.get('visual_evidence_issue'))
+                if row.get('visual_evidence_issue')
+                else 'core API mock/stubbed browser evidence cannot satisfy real E2E, golden_path, or prototype conformance'
+            )
             issues.append(
                 _issue(
-                    'invalid_e2e_evidence',
+                    issue_type,
                     'Invalid E2E evidence for '
                     f"{row.get('test_case_id') or row.get('acceptance_criterion') or 'unknown-test'}: "
-                    'core API mock/stubbed browser evidence cannot satisfy real E2E, golden_path, '
-                    'or prototype conformance',
+                    + detail,
                 )
             )
         elif status == 'failed' and _runtime_error_count(row) > 0:

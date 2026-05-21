@@ -15,11 +15,33 @@ BROWSER_RUNTIME_FIELDS = (
     'request_failures',
     'screenshot_refs',
 )
+VISUAL_EVIDENCE_REF_FIELDS = (
+    'prototype_screenshot',
+    'production_screenshot',
+    'interaction_screenshot',
+    'viewport',
+    'entrypoint',
+    'action_path',
+    'fidelity_level',
+)
 RUNTIME_ERROR_FIELDS = (
     'browser_console_errors',
     'page_errors',
     'request_failures',
 )
+DEFAULT_FIDELITY_LEVEL = 'structural_interaction'
+FIDELITY_LEVEL_ORDER = {
+    'visual_evidence': 1,
+    'structural_interaction': 2,
+    'screenshot_regression': 3,
+    'pixel_exact': 4,
+}
+FIDELITY_LEVEL_LABELS = {
+    'visual_evidence': 'L1 visual_evidence',
+    'structural_interaction': 'L2 structural_interaction',
+    'screenshot_regression': 'L3 screenshot_regression',
+    'pixel_exact': 'L4 pixel_exact',
+}
 
 _TEST_FILE_EXTENSIONS = {
     '.cjs',
@@ -93,6 +115,37 @@ def case_has_prototype_conformance(case: dict[str, Any]) -> bool:
     )
 
 
+def normalize_fidelity_required(value: Any, *, default: str = DEFAULT_FIDELITY_LEVEL) -> str:
+    texts = _flatten_text_values(value)
+    if not texts:
+        return default if default in FIDELITY_LEVEL_ORDER else DEFAULT_FIDELITY_LEVEL
+    normalized = ' '.join(texts).lower().replace('-', '_')
+    if 'pixel_exact' in normalized or 'pixel exact' in normalized or 'near_pixel' in normalized or 'l4' in normalized:
+        return 'pixel_exact'
+    if (
+        'screenshot_regression' in normalized
+        or 'screenshot regression' in normalized
+        or 'visual_regression' in normalized
+        or 'visual regression' in normalized
+        or 'l3' in normalized
+    ):
+        return 'screenshot_regression'
+    if 'structural_interaction' in normalized or 'structural interaction' in normalized or 'interaction' in normalized or 'l2' in normalized:
+        return 'structural_interaction'
+    if 'visual_evidence' in normalized or 'visual evidence' in normalized or 'screenshot' in normalized or 'l1' in normalized:
+        return 'visual_evidence'
+    return default if default in FIDELITY_LEVEL_ORDER else DEFAULT_FIDELITY_LEVEL
+
+
+def fidelity_rank(level: Any) -> int:
+    return FIDELITY_LEVEL_ORDER.get(normalize_fidelity_required(level), FIDELITY_LEVEL_ORDER[DEFAULT_FIDELITY_LEVEL])
+
+
+def fidelity_label(level: Any) -> str:
+    normalized = normalize_fidelity_required(level)
+    return FIDELITY_LEVEL_LABELS.get(normalized, FIDELITY_LEVEL_LABELS[DEFAULT_FIDELITY_LEVEL])
+
+
 def case_requires_real_e2e(
     case: dict[str, Any],
     *,
@@ -147,6 +200,56 @@ def browser_runtime_fields(
             *_runtime_markers_from_result(result, field),
         ])
     return fields
+
+
+def case_visual_evidence_plan(case: dict[str, Any]) -> dict[str, Any]:
+    raw = _first_present(
+        case,
+        'visual_evidence_plan',
+        'visualEvidencePlan',
+        'visual_evidence_refs',
+        'visualEvidenceRefs',
+    )
+    if not isinstance(raw, dict):
+        return {}
+    return _normalize_visual_evidence_refs(raw)
+
+
+def visual_evidence_refs_from_result(result: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    refs: dict[str, Any] = {}
+    raw = _first_present(result, 'visual_evidence_refs', 'visualEvidenceRefs', 'visual_evidence', 'visualEvidence')
+    if isinstance(raw, dict):
+        refs.update(_normalize_visual_evidence_refs(raw))
+    for source_field in ('stdout', 'stderr'):
+        refs.update(_visual_evidence_markers_from_text(str(result.get(source_field) or '')))
+    return _normalize_visual_evidence_refs(refs)
+
+
+def visual_evidence_issue(
+    refs: dict[str, Any],
+    *,
+    fidelity_level: Any = DEFAULT_FIDELITY_LEVEL,
+    requires_interaction: bool = True,
+) -> str:
+    normalized = _normalize_visual_evidence_refs(refs)
+    required_level = normalize_fidelity_required(fidelity_level)
+    rank = fidelity_rank(required_level)
+    if not str(normalized.get('prototype_screenshot') or '').strip():
+        return 'missing prototype screenshot'
+    if not str(normalized.get('production_screenshot') or '').strip():
+        return 'missing production screenshot'
+    if rank >= FIDELITY_LEVEL_ORDER['structural_interaction']:
+        if not _string_list(normalized.get('action_path')):
+            return 'missing action path'
+        if requires_interaction and not str(normalized.get('interaction_screenshot') or '').strip():
+            return 'missing interaction screenshot'
+        if _visual_evidence_reports_obstruction(normalized):
+            return 'interaction target obstructed'
+    if rank >= FIDELITY_LEVEL_ORDER['screenshot_regression'] and not _visual_evidence_has_regression_result(normalized):
+        return 'missing screenshot regression result'
+    return ''
 
 
 def command_core_api_mock_routes(
@@ -341,6 +444,99 @@ def _runtime_markers_from_text(text: str, field: str) -> list[str]:
     return values
 
 
+def _visual_evidence_markers_from_text(text: str) -> dict[str, Any]:
+    refs: dict[str, Any] = {}
+    if not text:
+        return refs
+    marker_fields = {
+        'PROTOTYPE_SCREENSHOT:': 'prototype_screenshot',
+        'PRODUCTION_SCREENSHOT:': 'production_screenshot',
+        'INTERACTION_SCREENSHOT:': 'interaction_screenshot',
+    }
+    for line in text.splitlines():
+        stripped = line.strip()
+        for prefix, field in marker_fields.items():
+            if stripped.startswith(prefix):
+                refs[field] = stripped[len(prefix):].strip()
+        if stripped.startswith('VISUAL_EVIDENCE:'):
+            payload_text = stripped[len('VISUAL_EVIDENCE:'):].strip()
+            try:
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                refs.update(_normalize_visual_evidence_refs(payload))
+            continue
+        if not (stripped.startswith('{') and stripped.endswith('}')):
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        raw_refs = payload.get('visual_evidence_refs') or payload.get('visualEvidenceRefs')
+        if isinstance(raw_refs, dict):
+            refs.update(_normalize_visual_evidence_refs(raw_refs))
+    return refs
+
+
+def _normalize_visual_evidence_refs(raw: dict[str, Any]) -> dict[str, Any]:
+    refs: dict[str, Any] = {}
+    alias_map = {
+        'prototype_screenshot': ('prototype_screenshot', 'prototypeScreenshot', 'prototype', 'baseline_screenshot'),
+        'production_screenshot': ('production_screenshot', 'productionScreenshot', 'production', 'actual_screenshot'),
+        'interaction_screenshot': ('interaction_screenshot', 'interactionScreenshot', 'after_interaction_screenshot'),
+        'viewport': ('viewport', 'viewport_size', 'viewportSize'),
+        'entrypoint': ('entrypoint', 'entry_point', 'real_entrypoint', 'realEntrypoint'),
+        'action_path': ('action_path', 'actionPath', 'click_path', 'clickPath', 'user_steps', 'userSteps'),
+        'fidelity_level': ('fidelity_level', 'fidelityLevel', 'fidelity_required', 'fidelityRequired'),
+        'screenshot_regression': ('screenshot_regression', 'screenshotRegression', 'screenshot_regression_result'),
+        'pixel_exact': ('pixel_exact', 'pixelExact', 'pixel_exact_result'),
+        'pixel_diff': ('pixel_diff', 'pixelDiff'),
+        'pixel_tolerance': ('pixel_tolerance', 'pixelTolerance'),
+        'interaction_target_obstructed': (
+            'interaction_target_obstructed',
+            'interactionTargetObstructed',
+            'target_obstructed',
+            'targetObstructed',
+        ),
+        'obstruction_check': ('obstruction_check', 'obstructionCheck'),
+    }
+    for canonical, aliases in alias_map.items():
+        value = _first_present(raw, *aliases)
+        if value is None:
+            continue
+        if canonical == 'action_path':
+            items = _string_list(value)
+            if items:
+                refs[canonical] = items
+        elif canonical == 'fidelity_level':
+            refs[canonical] = normalize_fidelity_required(value)
+        else:
+            refs[canonical] = value
+    return refs
+
+
+def _visual_evidence_reports_obstruction(refs: dict[str, Any]) -> bool:
+    if refs.get('interaction_target_obstructed') is True:
+        return True
+    check = str(refs.get('obstruction_check') or '').strip().lower()
+    if not check:
+        return False
+    if any(term in check for term in ('fail', 'failed', 'blocked', 'obstructed', '遮挡', '拦截')):
+        return True
+    return False
+
+
+def _visual_evidence_has_regression_result(refs: dict[str, Any]) -> bool:
+    for field in ('screenshot_regression', 'pixel_exact', 'pixel_diff', 'pixel_tolerance'):
+        value = refs.get(field)
+        if value is not None and str(value).strip():
+            return True
+    return False
+
+
 def _string_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -352,6 +548,26 @@ def _string_list(value: Any) -> list[str]:
     if not text:
         return []
     return [part.strip() for part in re.split(r'[,;\n]', text) if part.strip()]
+
+
+def _flatten_text_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        texts: list[str] = []
+        for key in ('level', 'fidelity', 'required', 'mode', 'name'):
+            if key in value:
+                texts.extend(_flatten_text_values(value.get(key)))
+        if not texts:
+            texts.extend(str(item) for item in value.values())
+        return [text.strip() for text in texts if str(text).strip()]
+    if isinstance(value, (list, tuple, set)):
+        texts = []
+        for item in value:
+            texts.extend(_flatten_text_values(item))
+        return texts
+    text = str(value).strip()
+    return [text] if text else []
 
 
 def _dedupe_strings(values: Any) -> list[str]:

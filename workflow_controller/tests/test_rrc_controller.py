@@ -14,6 +14,7 @@ from typing import Any
 
 import workflow_controller.rrc_controller as rrc_controller_module
 import workflow_controller.cli as cli_module
+from workflow_controller import __version__
 from workflow_controller.gates import render_requirements_gate_body, write_gate_file
 from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
 from workflow_controller.steps.requirements import run_requirements_drafter
@@ -75,6 +76,10 @@ def run_rrc_with_pythonpath(*args: str, cwd: Path) -> subprocess.CompletedProces
         capture_output=True,
         check=False,
     )
+
+
+def _timestamped_version_line_re() -> str:
+    return rf'^\[\d{{2}}:\d{{2}}:\d{{2}}\] {re.escape(f"waygate {__version__}")}$'
 
 
 def test_requirements_plannotator_review_path_uses_approval_gate_even_with_prototype_bundle(tmp_path: Path) -> None:
@@ -4180,10 +4185,15 @@ def test_ui_design_step_writes_artifact_when_required(tmp_path: Path) -> None:
 
     assert state['currentStep'] == 'UI_DESIGN_DONE'
     summary = json.loads((state_dir / 'artifacts' / 'unit-ui' / 'ui-design-summary.json').read_text(encoding='utf-8'))
+    brief = (state_dir / 'artifacts' / 'unit-ui' / 'ui-design-brief.md').read_text(encoding='utf-8')
     assert summary['status'] == 'ok'
     assert summary['unit_id'] == 'unit-ui'
     assert summary['mode'] == 'local-ui-design-brief'
     assert 'Build the browser-facing workflow' in summary['scope']
+    assert any('ui-ux-pro-max' in check for check in summary['design_checks'])
+    assert 'ui-ux-pro-max' in brief
+    assert 'frontend-design' in brief
+    assert '交互、可访问性、布局、遮挡检查' in brief
 
 
 def test_migrate_command_adds_controller_state_patch_to_legacy_unit_plan_gate(tmp_path: Path) -> None:
@@ -8960,6 +8970,7 @@ def test_start_initializes_and_drives_workflow_in_one_command(tmp_path: Path) ->
     )
 
     assert result.returncode == 0, result.stderr
+    assert re.match(_timestamped_version_line_re(), result.stdout.splitlines()[0])
     assert '[初始化] 创建新的 controller 状态' in result.stdout
     assert '[完成] 工作流已完成。' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
@@ -9002,6 +9013,7 @@ def test_start_resumes_existing_state_when_target_matches(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 0, result.stderr
+    assert re.match(_timestamped_version_line_re(), result.stdout.splitlines()[0])
     assert '[继续] 使用已有状态' in result.stdout
     assert '[完成] 工作流已完成。' in result.stdout
 
@@ -9088,6 +9100,7 @@ def test_init_with_spec_records_spec_metadata(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == f'waygate {__version__}'
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     spec = state['requirementsSpec']
     assert spec['path'] == str(spec_path.resolve())
@@ -9151,6 +9164,7 @@ def test_start_and_go_with_spec_record_metadata_without_silent_reimport(tmp_path
         str(spec_a),
     )
     assert start_result.returncode == 0, start_result.stderr
+    assert re.match(_timestamped_version_line_re(), start_result.stdout.splitlines()[0])
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['requirementsSpec']['path'] == str(spec_a.resolve())
 
@@ -9169,6 +9183,7 @@ def test_start_and_go_with_spec_record_metadata_without_silent_reimport(tmp_path
         str(spec_a),
     )
     assert same_spec.returncode == 0, same_spec.stderr
+    assert re.match(_timestamped_version_line_re(), same_spec.stdout.splitlines()[0])
 
     different_spec = run_rrc(
         'start',
@@ -9203,6 +9218,7 @@ def test_start_and_go_with_spec_record_metadata_without_silent_reimport(tmp_path
         str(spec_a),
     )
     assert go_result.returncode == 0, go_result.stderr
+    assert re.match(_timestamped_version_line_re(), go_result.stdout.splitlines()[0])
     go_state = json.loads((go_workspace / '.rrc-controller-v0.5.6' / 'session.json').read_text(encoding='utf-8'))
     assert go_state['requirementsSpec']['sourceType'] == 'waygate-markdown'
 

@@ -49,6 +49,8 @@ User-supplied infrastructure facts are not accepted as verified by default. The 
 Before a human sees the gate, the controller can preflight it. Missing AC mapping, missing verification layers, and malformed traceability can route the draft back to the drafter automatically.
 The preflight also rejects vague infrastructure placeholders such as `暂无` or `不清楚`, unsupported `未发现` / `没有` claims, and 4.9 statements that claim `用户确认` or `已验证` without corresponding 4.8 traceability.
 
+UI, Web, clickable prototype, prototype evidence, and production UI consistency work must use `ui-ux-pro-max`. `frontend-design` can assist new visual exploration or local polish, but cannot replace `ui-ux-pro-max` for existing product UI/prototype consistency. The full V0.6.0k policy is registered in [docs/workflow/ui-ux-skill-policy.md](workflow/ui-ux-skill-policy.md).
+
 ## Unit Plan Stage
 
 The Unit Plan defines what the implementation agent may do. It should include:
@@ -92,6 +94,8 @@ The Verifier runs the commands listed for the unit and writes `verification.json
 
 Malformed evidence is treated as verification failure.
 
+For required UI/Web prototype surfaces, verifier evidence must also include `visual_evidence_refs`. Prototype conformance commands emit `PROTOTYPE_SCREENSHOT`, `PRODUCTION_SCREENSHOT`, optional `INTERACTION_SCREENSHOT`, and `VISUAL_EVIDENCE` markers so Final Acceptance can compare the approved prototype with the production UI instead of accepting route/text assertions alone.
+
 Repeated verifier failures use a stable fingerprint based on stage, issue type, command, return code, and stable failure features such as Playwright test titles or error classes. Volatile stdout/stderr tails remain visible in summaries and artifacts, but they do not by themselves make the same failure look new.
 
 ## Final Acceptance
@@ -100,6 +104,7 @@ Final Acceptance presents:
 
 - target and objective coverage;
 - evidence matrix;
+- prototype conformance and visual prototype evidence when required UI/Web surfaces exist;
 - Journey matrix;
 - scope audit;
 - changed files;

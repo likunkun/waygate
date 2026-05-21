@@ -32,6 +32,7 @@ The point is not to remove the human. The point is to move human attention to th
 | Verification evidence | Verifier output includes structured evidence rows for ACs, test cases, commands, and artifacts. |
 | Real E2E evidence | V0.6.0f blocks mocked/stubbed core API browser tests from satisfying E2E, golden path, prototype conformance, or production evidence. |
 | Document lifecycle | V0.6.0i initializes `docs/README.md`, inventories document sources in Requirements, requires Unit Plan document deliverables for long-lived facts, and blocks Final Acceptance only on document actions marked required. |
+| UI/UX skill policy | V0.6.0k requires `ui-ux-pro-max` for UI/Web/prototype work and treats `frontend-design` only as optional visual exploration or polish. |
 | Final acceptance | Final approval is a gate with evidence, journey coverage, scope audit, and rejection routing. |
 | Bug-fix loop | Final acceptance defects can enter a dedicated bug-fix gate without rewriting requirements. |
 | Environment diagnostics | V0.6.0h extends `waygate doctor` with summary-first output, `focus:`, `action_required`, `--color auto|always|never`, `tmux_config`, Python, pytest, tmux, optional agent tools, Plannotator, Debian packaging, skill root scans, `.claude` asset counts, and README-aligned recommended skill gaps. |
@@ -52,7 +53,7 @@ Real agent execution depends on the selected runner:
 
 Waygate Markdown spec intake is available through `--spec <path>` on `init`, `start`, and `go`. In V0.5.6 this supports local Waygate Markdown spec files only; detected external formats are deferred rather than imported silently.
 
-For the V0.6.0j Requirements infrastructure follow-up rules, see [docs/workflow.md](docs/workflow.md). For the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md). For the V0.6.0h recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
+For the V0.6.0j Requirements infrastructure follow-up rules, see [docs/workflow.md](docs/workflow.md). For the V0.6.0k UI/UX skill policy, see [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md). For the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md). For the V0.6.0h recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
 ## Skills Used by Waygate Agents
 
@@ -80,7 +81,7 @@ Recommended baseline skills:
 | `superpowers:requesting-code-review` and `superpowers:receiving-code-review` | Reviewer and rework loops | Keeps review findings concrete and prevents blind acceptance of weak feedback. |
 | `superpowers:executing-plans` or `superpowers:subagent-driven-development` | Executing approved multi-step plans | Runs a written plan task by task, with checkpoints and review boundaries. |
 | `webapp-testing` | Browser-visible UI or workflow verification | Uses Playwright-style checks and screenshots when user-facing browser behavior must be verified. |
-| `frontend-design` or `ui-ux-pro-max` | UI-heavy requirements | Guides interface design, interaction states, layout, and accessibility when the target includes frontend work. |
+| `ui-ux-pro-max` | UI/Web/prototype requirements | Required for interface design, interaction states, layout, accessibility, and production UI/prototype consistency. `frontend-design` can assist new visual exploration or local polish, but cannot replace `ui-ux-pro-max`. |
 | `pdf`, `docx`, `pptx` | Document-specific tasks | Used only when the project requirements involve those file types. |
 
 Typical mapping:

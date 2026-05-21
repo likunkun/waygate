@@ -163,7 +163,7 @@ Delivered work:
 
 - Record V0.6.0f as delivered in human-readable project records without manually changing the historical `.rrc-controller-v0.6.0f/session.json` to `DONE`.
 - Extend `waygate doctor` with `claude_assets` checks for `~/.claude/commands`, `~/.claude/agents`, `~/.claude/rules`, and `~/.claude/plugins`; output is limited to path, status, and count.
-- Align recommended skill warnings with the README baseline, including persistent planning, startup, brainstorming, writing plans, TDD, debugging, test strategy, refiner, verification, code review, plan execution, webapp/browser verification, and `frontend-design` / `ui-ux-pro-max`.
+- Align recommended skill warnings with the README baseline at that time, including persistent planning, startup, brainstorming, writing plans, TDD, debugging, test strategy, refiner, verification, code review, plan execution, webapp/browser verification, and UI-heavy skill coverage. V0.6.0k later made `ui-ux-pro-max` the required UI/Web/prototype skill.
 - Bind the controller prototype preview server on `0.0.0.0` by default, while printing browser URLs with the machine's primary IP address; `WAYGATE_PREVIEW_HOST` overrides preview bind host and `WAYGATE_DISPLAY_HOST` overrides the printed browser host.
 - Request Plannotator remote access with `PLANNOTATOR_REMOTE=1`, while printing the approval URL with the machine's primary IP address.
 - Document that `0.0.0.0` is a listening address, not a browser target, and use fixed controller prototype preview port `20001` for ACL planning.
@@ -205,6 +205,18 @@ Delivered work:
 - Mark inaccessible external systems, production environments, private wiki/API sources, or other unverifiable facts as user-provided and not directly verified, without inventing evidence.
 - Record infrastructure questions, answers, verification methods, conclusions, and residual risks in `## 4.8`, and record source plus verification status for each 4.9 category.
 - Strengthen Requirements preflight for missing/none/not-applicable claims and require a matching 4.8 record when 4.9 claims a fact is user-confirmed or verified.
+
+### V0.6.0k - UI/UX Skill Policy
+
+Goal: make UI, Web, clickable prototype, prototype evidence, and production UI consistency work use the correct specialist skill.
+
+Delivered work:
+
+- Require Requirements, Unit Plan, Builder, and UI Design Brief prompt contracts to name `ui-ux-pro-max` for UI/Web/prototype work.
+- Clarify that `frontend-design` can help with new visual exploration or local polish, but cannot replace `ui-ux-pro-max` for existing product UI/prototype consistency.
+- Require real UI inventory before prototype design: routes, DOM/components, existing page structure, screenshots, historical design, or reference environments.
+- Update `waygate doctor` so `skill_recommendations.ui_ux_design` requires `ui-ux-pro-max`, warns when only `frontend-design` is installed, and prefers `ui-ux-pro-max` when both are installed.
+- Document the policy under `docs/workflow/ui-ux-skill-policy.md` and package it with the Debian docs.
 
 ### V0.6.1 - External Spec Intake
 

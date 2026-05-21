@@ -24,6 +24,8 @@
 | --- | --- | --- |
 | 正式维护文档 | `docs/architecture.md`、`docs/architecture.zh-CN.md` | 当前技术架构入口；后续可按主题迁入 `docs/architecture/`。 |
 | 正式维护文档 | `docs/workflow.md`、`docs/workflow.zh-CN.md` | 当前工作流入口；流程规则变更优先登记并沉淀到 `docs/workflow/`。 |
+| 正式维护文档 | `docs/workflow/prototype-fidelity-policy.md` | UI/Web 原型一致性 fidelity、视觉证据、Verifier marker 和终验阻断规则。 |
+| 正式维护文档 | `docs/workflow/ui-ux-skill-policy.md` | V0.6.0k UI/Web/prototype 工作必须使用 `ui-ux-pro-max`，`frontend-design` 只能作为辅助视觉探索或润色。 |
 | 正式维护文档 | `docs/product/waygate-introduction-and-best-practices.md`、`docs/product/waygate-introduction-and-best-practices.zh-CN.md` | Waygate 介绍和最佳实践。 |
 | 正式维护文档 | `docs/operations/recommended-environment.md`、`docs/operations/recommended-environment.zh-CN.md` | 推荐本地环境和诊断说明。 |
 | Controller 过程证据 | `.rrc-controller-*/artifacts/` | 审计证据，不是长期文档入口。 |

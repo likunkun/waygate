@@ -67,6 +67,8 @@ def test_run_verifier_generates_passing_verification_when_green_test_exists(tmp_
             'page_errors': [],
             'request_failures': [],
             'screenshot_refs': [],
+            'visual_evidence_refs': {},
+            'visual_evidence_issue': '',
         }
     ]
 

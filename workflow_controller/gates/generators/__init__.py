@@ -398,9 +398,9 @@ def _v0_6_0_requirements_body(state: dict[str, Any]) -> str:
         '- 架构、交互逻辑、接口说明：模块边界、数据流、用户交互、状态流转、API/CLI/事件接口和错误语义。',
         '- 依赖信息：系统依赖、服务依赖、第三方 API、部署依赖、验证依赖和 agent runtime 依赖。',
         '',
-        '当目标项目需要 UI/UX 或 `currentUnitNeedsUiDesign=true` 时，Requirements Gate 在人工确认前必须包含 prototype evidence，并写出 `artifacts/requirements-draft/prototype-manifest.json`。若目标项目是 Web 系统，必须包含 clickable webpage prototype，并在 manifest 中记录访问方式、页面状态、核心点击路径、AC 映射、implementation_targets 和 surface_contracts；静态截图、纯文字描述或不可点击线框不满足要求。',
+        '当目标项目需要 UI/UX 或 `currentUnitNeedsUiDesign=true` 时，Requirements Gate 在人工确认前必须包含 prototype evidence，并写出 `artifacts/requirements-draft/prototype-manifest.json`。UI/Web/prototype 工作必须使用 `ui-ux-pro-max`；`frontend-design` 只能作为全新视觉探索或局部润色辅助，不能替代既有产品 UI/原型一致性工作。若目标项目是 Web 系统，必须包含 clickable webpage prototype，并在 manifest 中记录访问方式、页面状态、核心点击路径、AC 映射、implementation_targets 和 surface_contracts；静态截图、纯文字描述或不可点击线框不满足要求。',
         '',
-        '`prototype-manifest.json` 必须包含 prototype id、type、path 或 URL、title、linked ACs、linked journeys、page states、click path、implementation_targets、surface_contracts、thumbnail 或 preview hint、review guidance。`implementation_targets` 将原型映射到真实 route/page，例如 `{ "kind": "route", "path": "/dashboard/teacher" }`；兼容别名为 `production_targets` / `real_targets`。`surface_contracts` 兼容别名 `ui_surfaces` / `page_state_targets`，每个 surface 必须包含 id/title/kind/page_states/click_path/entrypoints/implementation_targets/linked_acceptance_criteria/required=true。弹窗、抽屉、选择器、管理面板、批量操作入口和单项操作入口必须拆成独立 surface。本地图片或 HTML 原型必须是可复制的真实文件；外部 URL 不能带 token、password、secret、api_key、signature 等敏感 query。',
+        '`prototype-manifest.json` 必须包含 prototype id、type、path 或 URL、title、linked ACs、linked journeys、page states、click path、implementation_targets、surface_contracts、thumbnail 或 preview hint、review guidance。写原型前必须盘点真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境。`implementation_targets` 将原型映射到真实 route/page，例如 `{ "kind": "route", "path": "/dashboard/teacher" }`；兼容别名为 `production_targets` / `real_targets`。`surface_contracts` 兼容别名 `ui_surfaces` / `page_state_targets`，每个 surface 必须包含 id/title/kind/page_states/click_path/entrypoints/implementation_targets/linked_acceptance_criteria/required=true。弹窗、抽屉、选择器、管理面板、批量操作入口和单项操作入口必须拆成独立 surface。本地图片或 HTML 原型必须是可复制的真实文件；外部 URL 不能带 token、password、secret、api_key、signature 等敏感 query。',
         '',
         '必须保持 environment/runbook facts、Requirements 和 Unit Plan artifacts 的边界：Requirements Gate 负责明确目标项目需要梳理哪些基础设施事实；Unit Plan 负责决定如何实现；`docs/operations/`、wiki 或外部链接只作为事实来源或落点。',
         '',
@@ -870,8 +870,8 @@ def _prototype_conformance_matrix_lines(state: dict[str, Any], artifacts_dir: Pa
         '',
         '## Prototype Conformance Matrix',
         '',
-        '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |',
-        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| Prototype | Surface | Entry Point | Linked AC | Production Target | Fidelity | Visual Evidence | Prototype Screenshot | Production Screenshot | Interaction Screenshot | Action Path | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ]
     for row in rows:
         command = str(row.get('command') or '').strip()
@@ -883,12 +883,49 @@ def _prototype_conformance_matrix_lines(state: dict[str, Any], artifacts_dir: Pa
                 _markdown_cell(_join_strings(row.get('entrypoints')) or '-'),
                 _markdown_cell(_join_strings(row.get('linked_acceptance_criteria')) or '未指定'),
                 _markdown_cell(row.get('production_target') or '未指定'),
+                _markdown_cell(row.get('fidelity_label') or 'L2 structural_interaction'),
+                _markdown_cell(row.get('visual_evidence_status') or 'missing'),
+                _markdown_cell(row.get('prototype_screenshot') or 'missing'),
+                _markdown_cell(row.get('production_screenshot') or 'missing'),
+                _markdown_cell(row.get('interaction_screenshot') or '-'),
+                _markdown_cell(_join_action_path(row.get('action_path')) or 'missing'),
                 _markdown_cell(row.get('test_case_id') or 'missing'),
                 _markdown_cell(row.get('environment_kind') or '未指定'),
                 'yes' if row.get('uses_core_api_mock') is True else 'no',
                 _markdown_cell(str(row.get('runtime_errors') or 0)),
                 _markdown_cell(f'`{command}`' if command else 'missing'),
                 _markdown_cell(row.get('status') or 'missing'),
+            ])
+            + ' |'
+        )
+    lines.extend(_visual_prototype_evidence_lines(rows))
+    return lines
+
+
+def _visual_prototype_evidence_lines(rows: list[dict[str, Any]]) -> list[str]:
+    if not rows:
+        return []
+    lines = [
+        '',
+        '## Visual Prototype Evidence',
+        '',
+        '| Prototype | Surface | Fidelity | Status | Prototype Screenshot | Production Screenshot | Interaction Screenshot | Viewport | Entrypoint | Action Path |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ]
+    for row in rows:
+        lines.append(
+            '| '
+            + ' | '.join([
+                _markdown_cell(row.get('prototype_id') or '未指定'),
+                _markdown_cell(row.get('surface_id') or '-'),
+                _markdown_cell(row.get('fidelity_label') or 'L2 structural_interaction'),
+                _markdown_cell(row.get('visual_evidence_status') or 'missing'),
+                _markdown_cell(row.get('prototype_screenshot') or 'missing'),
+                _markdown_cell(row.get('production_screenshot') or 'missing'),
+                _markdown_cell(row.get('interaction_screenshot') or '-'),
+                _markdown_cell(row.get('viewport') or '-'),
+                _markdown_cell(row.get('visual_entrypoint') or row.get('real_entrypoint') or '-'),
+                _markdown_cell(_join_action_path(row.get('action_path')) or 'missing'),
             ])
             + ' |'
         )
@@ -956,6 +993,12 @@ def _runtime_error_cell(row: dict[str, Any]) -> str:
 def _join_strings(value: Any) -> str:
     if isinstance(value, list):
         return ', '.join(str(item).strip() for item in value if str(item).strip())
+    return str(value).strip() if value is not None else ''
+
+
+def _join_action_path(value: Any) -> str:
+    if isinstance(value, list):
+        return '; '.join(str(item).strip() for item in value if str(item).strip())
     return str(value).strip() if value is not None else ''
 
 

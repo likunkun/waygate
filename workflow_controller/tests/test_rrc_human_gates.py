@@ -688,9 +688,83 @@ def test_requirements_prompt_requires_prototypes_to_follow_existing_system_style
     prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
 
     assert '原型设计默认必须遵循现有系统风格' in prompt
+    assert '必须显式使用 `ui-ux-pro-max` skill' in prompt
+    assert '`frontend-design` 不能替代既有产品 UI/原型一致性工作' in prompt
+    assert '真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境' in prompt
     assert '除非用户或 spec 明确要求创新、重设计或探索新视觉方向' in prompt
     assert '信息架构、导航结构、组件形态、视觉密度、颜色/字体/间距、交互模式和文案语气' in prompt
     assert '偏离点必须写入 `## 4.8 已澄清事项、关键假设与待确认风险`' in prompt
+
+
+def test_unit_plan_prompt_keeps_ui_ux_pro_max_for_prototype_test_cases(tmp_path: Path) -> None:
+    requirements_path = tmp_path / 'requirements.md'
+    requirements_path.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 真实 `/dashboard/teacher` 必须与 prototype 保持结构与交互一致。\n',
+        encoding='utf-8',
+    )
+
+    prompt = _render_unit_plan_draft_prompt(
+        {
+            'requestedOutcome': 'V2.9.1',
+            'feasibleOutcome': 'V2.9.1',
+            'currentUnitId': 'target-v2-9-1',
+            'currentUnitNeedsUiDesign': True,
+            'currentUnitIsWebSystem': True,
+            'objectiveCoverage': [
+                {'objective': 'Prototype conformance', 'units': ['target-v2-9-1'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'target-v2-9-1', 'name': 'Prototype conformance', 'passes': False}],
+        },
+        requirements_path,
+        tmp_path / 'unit-plan-body.md',
+    )
+
+    assert 'UI/Web/prototype test case 必须保留 `ui-ux-pro-max`' in prompt
+    assert '不能只写 `frontend-design`' in prompt
+    assert '交互、可访问性、布局、遮挡检查' in prompt
+
+
+def test_builder_prompt_requires_ui_ux_pro_max_for_interface_changes(tmp_path: Path) -> None:
+    requirements_path = tmp_path / 'requirements.md'
+    requirements_path.write_text('# 需求与验收确认\n\nUI prototype contract.\n', encoding='utf-8')
+    unit_plan_path = tmp_path / 'unit-plan.md'
+    unit_plan_path.write_text('# 单元计划确认\n\nPrototype conformance tests.\n', encoding='utf-8')
+    state = {
+        'task_id': 'teacher-dashboard',
+        'requestedOutcome': 'V2.9.1',
+        'currentUnitId': 'target-v2-9-1',
+        'workspacePath': str(tmp_path),
+        'currentUnitNeedsUiDesign': True,
+        'currentUnitIsWebSystem': True,
+        'objectiveCoverage': [
+            {'objective': 'UI prototype conformance', 'units': ['target-v2-9-1'], 'status': 'partial'},
+        ],
+        'units': [
+            {
+                'id': 'target-v2-9-1',
+                'name': 'Teacher dashboard UI',
+                'scope': ['Implement browser-visible dashboard updates'],
+                'passes': False,
+            }
+        ],
+    }
+
+    prompt = _render_builder_execution_prompt(
+        state=state,
+        requirements_path=requirements_path,
+        requirements_content=requirements_path.read_text(encoding='utf-8'),
+        unit_plan_path=unit_plan_path,
+        unit_plan_content=unit_plan_path.read_text(encoding='utf-8'),
+        original_prompt_path=tmp_path / 'prompt.md',
+        original_prompt='Build the teacher dashboard UI.',
+        previous_failure_feedback='',
+    )
+
+    assert '使用 `ui-ux-pro-max` skill' in prompt
+    assert '`frontend-design` 不能替代既有产品 UI/原型一致性工作' in prompt
+    assert '交互、可访问性、布局、遮挡检查' in prompt
 
 
 def test_requirements_revision_prompt_reuses_prior_clarifications(tmp_path: Path) -> None:
@@ -3326,6 +3400,15 @@ def test_final_acceptance_gate_renders_prototype_conformance_matrix(tmp_path: Pa
                         'returncode': 0,
                         'artifact_refs': ['artifacts/unit-01/verification.json'],
                         'golden_path': True,
+                        'visual_evidence_refs': {
+                            'prototype_screenshot': 'artifacts/requirements-draft/prototypes/teacher-dashboard.png',
+                            'production_screenshot': 'artifacts/unit-01/screenshots/teacher-dashboard.png',
+                            'interaction_screenshot': 'artifacts/unit-01/screenshots/teacher-dashboard-preview.png',
+                            'viewport': 'desktop 1440x900',
+                            'entrypoint': '/dashboard/teacher',
+                            'action_path': ['Open /dashboard/teacher', 'Click Preview'],
+                            'fidelity_level': 'structural_interaction',
+                        },
                     }
                 ],
             }
@@ -3363,8 +3446,10 @@ def test_final_acceptance_gate_renders_prototype_conformance_matrix(tmp_path: Pa
 
     content = gate_path.read_text(encoding='utf-8')
     assert '## Prototype Conformance Matrix' in content
-    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
-    assert '| teacher-dashboard | - | - | AC-21 | route:/dashboard/teacher | TC-PROTO-TEACHER | local_real | no | 0 | `npx playwright test tests/e2e/teacher-dashboard.spec.ts` | passed |' in content
+    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Fidelity | Visual Evidence | Prototype Screenshot | Production Screenshot | Interaction Screenshot | Action Path | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
+    assert '| teacher-dashboard | - | - | AC-21 | route:/dashboard/teacher | L2 structural_interaction | complete | artifacts/requirements-draft/prototypes/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard-preview.png | Open /dashboard/teacher; Click Preview | TC-PROTO-TEACHER | local_real | no | 0 | `npx playwright test tests/e2e/teacher-dashboard.spec.ts` | passed |' in content
+    assert '## Visual Prototype Evidence' in content
+    assert '| teacher-dashboard | - | L2 structural_interaction | complete | artifacts/requirements-draft/prototypes/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard-preview.png | desktop 1440x900 | /dashboard/teacher | Open /dashboard/teacher; Click Preview |' in content
 
 
 def test_final_prototype_conformance_rejects_mock_browser_evidence(tmp_path: Path) -> None:
@@ -3544,6 +3629,15 @@ def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path
                         'returncode': 0,
                         'artifact_refs': ['artifacts/unit-01/verification.json'],
                         'golden_path': True,
+                        'visual_evidence_refs': {
+                            'prototype_screenshot': 'artifacts/requirements-draft/prototypes/assign-dialog.png',
+                            'production_screenshot': 'artifacts/unit-01/screenshots/assign-dialog.png',
+                            'interaction_screenshot': 'artifacts/unit-01/screenshots/assign-dialog-after-click.png',
+                            'viewport': 'desktop 1440x900',
+                            'entrypoint': '/dashboard/teacher',
+                            'action_path': ['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
+                            'fidelity_level': 'structural_interaction',
+                        },
                     }
                 ],
             }
@@ -3581,8 +3675,8 @@ def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path
     gate_path = ensure_final_acceptance_gate(state, approvals_dir, artifacts_dir, force=True)
 
     content = gate_path.read_text(encoding='utf-8')
-    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
-    assert '| v291-course-ops-prototype-contract | assignment-management-dialog | CourseCard -> 分配管理 | AC-21 | component:OpenMAIC/components/course/AssignManageDialog.tsx | TC-PROTO-ASSIGN-MANAGE-DIALOG | local_real | no | 0 | `npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium` | passed |' in content
+    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Fidelity | Visual Evidence | Prototype Screenshot | Production Screenshot | Interaction Screenshot | Action Path | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
+    assert '| v291-course-ops-prototype-contract | assignment-management-dialog | CourseCard -> 分配管理 | AC-21 | component:OpenMAIC/components/course/AssignManageDialog.tsx | L2 structural_interaction | complete | artifacts/requirements-draft/prototypes/assign-dialog.png | artifacts/unit-01/screenshots/assign-dialog.png | artifacts/unit-01/screenshots/assign-dialog-after-click.png | Open /dashboard/teacher; Click CourseCard 分配管理 | TC-PROTO-ASSIGN-MANAGE-DIALOG | local_real | no | 0 | `npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium` | passed |' in content
 
 
 def test_builder_prompt_includes_final_acceptance_defect_list_for_defect_fix_units(tmp_path: Path) -> None:

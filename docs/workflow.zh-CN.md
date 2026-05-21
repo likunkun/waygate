@@ -49,6 +49,8 @@ Requirements drafter 会生成 Markdown gate，包含：
 人类看到 gate 之前，controller 可以先做预检。缺 AC 映射、缺 verification layer、traceability 格式错误等问题会自动打回 drafter。
 预检也会拒绝 `暂无`、`不清楚` 等空泛基础设施占位、缺少依据的 `未发现` / `没有` 声明，以及 4.9 声称“用户确认”或“已验证”但 4.8 没有对应留痕的内容。
 
+UI、Web、可点击原型、prototype evidence 和生产 UI 一致性工作必须使用 `ui-ux-pro-max`。`frontend-design` 可以辅助全新视觉探索或局部润色，但不能替代 `ui-ux-pro-max` 做既有产品 UI/原型一致性工作。完整 V0.6.0k policy 已登记在 [docs/workflow/ui-ux-skill-policy.md](workflow/ui-ux-skill-policy.md)。
+
 ## Unit Plan 阶段
 
 Unit Plan 定义 implementation agent 可以做什么。它应包含：

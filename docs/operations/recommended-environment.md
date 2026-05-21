@@ -2,7 +2,7 @@
 
 [中文](recommended-environment.zh-CN.md) | [README](../../README.md)
 
-This guide describes the local environment recommended for Waygate V0.6.0h. It is operational guidance for preparing a workstation or CI-like package verification host; it is not a new requirement intake format.
+This guide describes the local environment recommended for Waygate V0.6.0k. It is operational guidance for preparing a workstation or CI-like package verification host; it is not a new requirement intake format.
 
 ## Runtime
 
@@ -75,13 +75,14 @@ Waygate does not install agent skills. Skills belong to the selected agent runti
 - `~/.codex/superpowers/skills`
 - `~/.config/opencode/skills`
 
-It reports readable `SKILL.md` files and warns when recommended workflow skills are missing. The recommendation groups are aligned with the README baseline: `planning-with-files`, startup skill checks, brainstorming, writing plans, TDD, systematic debugging, `test-strategy` / `testing-strategy`, `code-simplifier`, verification-before-completion, code review, plan execution, `webapp-testing`, and `frontend-design` / `ui-ux-pro-max` for UI-heavy work. These warnings are advisory; controller state and gate artifacts remain the facts for workflow completion.
+It reports readable `SKILL.md` files and warns when recommended workflow skills are missing. The recommendation groups are aligned with the README baseline: `planning-with-files`, startup skill checks, brainstorming, writing plans, TDD, systematic debugging, `test-strategy` / `testing-strategy`, `code-simplifier`, verification-before-completion, code review, plan execution, `webapp-testing`, and required `ui-ux-pro-max` for UI-heavy work. `frontend-design` may be installed for new visual exploration or local polish, but cannot replace `ui-ux-pro-max` for UI/Web/prototype production consistency work. These warnings are advisory; controller state and gate artifacts remain the facts for workflow completion.
 
 `waygate doctor` also reports `claude_assets` for `~/.claude/commands`, `~/.claude/agents`, `~/.claude/rules`, and `~/.claude/plugins`. It reports only path, status, and count; it does not read cache, file-history, secrets, tokens, or environment variable values.
 
 Recommended skill boundary:
 
 - Keep workflow skills such as planning, TDD, debugging, testing strategy, verification, code simplification, code review, webapp testing, and UI/UX design support in the agent environment.
+- Install `ui-ux-pro-max` for UI/Web/prototype work. `frontend-design` can assist with new visual exploration or local polish, but it cannot replace `ui-ux-pro-max`.
 - Do not assume the Debian package installs or upgrades those skills.
 - Treat skills as role enablement, while `session.json`, `events.jsonl`, `approvals/`, and `artifacts/` remain the workflow facts.
 
@@ -95,12 +96,13 @@ bash packaging/debian/build-deb.sh
 
 The generated package installs the `waygate` wrapper under `/usr/bin/waygate`, the Python package under `/usr/lib/waygate`, and user documentation under `/usr/share/doc/waygate`.
 
-V0.6.0h also installs:
+V0.6.0k also installs:
 
 - `/usr/share/doc/waygate/docs/operations/recommended-environment.md`
 - `/usr/share/doc/waygate/docs/operations/recommended-environment.zh-CN.md`
 - `/usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.md`
 - `/usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.zh-CN.md`
+- `/usr/share/doc/waygate/docs/workflow/ui-ux-skill-policy.md`
 
 ## PATH Shadow Handling
 

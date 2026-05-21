@@ -2,7 +2,7 @@
 
 [中文](USAGE.zh-CN.md) | [README](README.md)
 
-This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.0j Requirements infrastructure follow-up, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), and [docs/architecture.md](docs/architecture.md).
+This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.0j Requirements infrastructure follow-up, V0.6.0k UI/UX skill policy, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md), and [docs/architecture.md](docs/architecture.md).
 
 For V0.6.0h environment preparation, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For an introduction and best-practices walkthrough, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
@@ -23,7 +23,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.0j_all.deb
+sudo apt install ./dist/waygate_0.6.0k_all.deb
 waygate --help
 waygate doctor
 waygate doctor --color auto

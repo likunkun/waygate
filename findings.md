@@ -1,5 +1,21 @@
 # 发现与决策
 
+## 2026-05-21 V0.6.0k UI/UX Skill Policy
+
+- UI/Web/prototype、可点击原型、prototype evidence 和生产 UI 一致性工作需要稳定使用 `ui-ux-pro-max`；把 `frontend-design` 当成等价 skill 会让既有产品 UI/原型一致性工作退回到泛视觉探索，削弱 route、DOM/组件、交互、可访问性、布局和遮挡检查。
+- `frontend-design` 的边界保留为全新视觉探索或局部视觉润色辅助；它不能替代既有产品 UI、prototype conformance、production UI consistency 或 prototype fidelity 工作。
+- UI/原型设计前必须先盘点真实 UI 事实源：route、DOM/组件、既有页面结构、截图、历史设计或参考环境。只根据 prose 设计原型不足以证明既有产品一致性。
+- `waygate doctor` 的 `ui_ux_design` 推荐项应以 `ui-ux-pro-max` 为 required/ok 匹配；只安装 `frontend-design` 时输出 warning/manual action，避免环境诊断误导 agent 认为技能已经满足。
+- V0.6.0k 只收敛 skill policy，不回滚 V0.6.0j 和 Controller Prototype Fidelity Gate 的 L1-L4 视觉证据规则。
+
+## 2026-05-21 Controller Prototype Fidelity Gate
+
+- UI/Web prototype conformance 的默认验收边界应是 L1 visual evidence + L2 structural/interaction，而不是像素级一致；这样能防止“页面差很多但 route/text E2E 通过”，同时避免把需求期 HTML 原型误当成高保真设计稿。
+- L3 screenshot regression 和 L4 pixel exact 只应由 Requirements、prototype manifest 或 test case 显式声明触发；品牌 Logo、固定尺寸组件和高保真设计稿可升级到 L4，普通业务页面不默认承担像素级门槛。
+- Unit Plan 是视觉证据计划的入口：prototype conformance test case 必须声明 prototype screenshot、production screenshot、viewport、entrypoint、action path，交互 surface 还要有 interaction screenshot；`expected` 必须覆盖布局/结构/顺序和真实点击后的交互，而不是 route/text visible。
+- Verifier 的 `visual_evidence_refs` 是终验事实源，Builder summary 或自然语言截图说明不能替代。stdout/stderr marker 让 Playwright 等 E2E 命令把截图路径和 action path 结构化写入 `verification.json`。
+- Final Acceptance 必须把每个 surface 的 visual evidence 展示出来供人工审阅；`passed` 状态本身不能证明原型一致，缺 prototype/production screenshot、缺 action path、交互截图缺失、目标被 overlay/fixed header 遮挡或显式 L3/L4 缺回归结果都应阻断。
+
 ## 2026-05-20 Controller Verifier 失败后的 Builder 精确复现闭环
 
 - Controller Verifier 的失败命令是下一轮 Builder 调试的事实源；Builder 自测通过不能替代 controller 上一轮 failed command 的复现记录。

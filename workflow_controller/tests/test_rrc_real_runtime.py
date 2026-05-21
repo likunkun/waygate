@@ -684,6 +684,8 @@ def test_run_verifier_executes_verification_commands_in_workspace_and_records_re
         'page_errors': [],
         'request_failures': [],
         'screenshot_refs': [],
+        'visual_evidence_refs': {},
+        'visual_evidence_issue': '',
     }
 
 
@@ -851,6 +853,122 @@ def test_run_verifier_records_browser_runtime_errors_and_fails_e2e(tmp_path: Pat
     assert row['status'] == 'failed'
     assert row['browser_console_errors'] == ['TypeError: failed to render course card']
     assert row['screenshot_refs'] == ['screenshots/runtime.png']
+
+
+def test_run_verifier_parses_visual_evidence_markers(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    command = 'npx playwright test tests/e2e/prototype-conformance.spec.ts'
+
+    def fake_run_verification_commands(state, workspace_dir, progress_callback=None):
+        return [
+            {
+                'command': command,
+                'returncode': 0,
+                'ok': True,
+                'stdout': '\n'.join([
+                    'PROTOTYPE_SCREENSHOT: artifacts/requirements-draft/prototypes/dashboard.png',
+                    'PRODUCTION_SCREENSHOT: artifacts/unit-01/screenshots/dashboard-production.png',
+                    'INTERACTION_SCREENSHOT: artifacts/unit-01/screenshots/dashboard-after-click.png',
+                    'VISUAL_EVIDENCE: {"viewport":"desktop 1440x900","entrypoint":"/dashboard/teacher","action_path":["Open /dashboard/teacher","Click Preview"],"fidelity_level":"structural_interaction"}',
+                ]),
+                'stderr': '',
+            }
+        ]
+
+    monkeypatch.setattr(builder_module, 'run_verification_commands', fake_run_verification_commands)
+    state = {
+        'currentUnitId': 'unit-01',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': 'unit-01',
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-VISUAL-EVIDENCE',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'dashboard keeps prototype region order and opens preview panel after clicking Preview',
+                        'prototype_conformance': ['teacher-dashboard'],
+                        'production_targets': ['/dashboard/teacher'],
+                        'user_steps': ['Open /dashboard/teacher', 'Click Preview'],
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / 'unit-01'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    row = verification['evidence_rows'][0]
+    assert row['visual_evidence_refs'] == {
+        'prototype_screenshot': 'artifacts/requirements-draft/prototypes/dashboard.png',
+        'production_screenshot': 'artifacts/unit-01/screenshots/dashboard-production.png',
+        'interaction_screenshot': 'artifacts/unit-01/screenshots/dashboard-after-click.png',
+        'viewport': 'desktop 1440x900',
+        'entrypoint': '/dashboard/teacher',
+        'action_path': ['Open /dashboard/teacher', 'Click Preview'],
+        'fidelity_level': 'structural_interaction',
+    }
+
+
+def test_run_verifier_marks_prototype_conformance_without_l1_l2_visual_evidence_invalid(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    command = 'npx playwright test tests/e2e/prototype-conformance.spec.ts'
+
+    def fake_run_verification_commands(state, workspace_dir, progress_callback=None):
+        return [
+            {
+                'command': command,
+                'returncode': 0,
+                'ok': True,
+                'stdout': '',
+                'stderr': '',
+            }
+        ]
+
+    monkeypatch.setattr(builder_module, 'run_verification_commands', fake_run_verification_commands)
+    state = {
+        'currentUnitId': 'unit-01',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': 'unit-01',
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-MISSING-VISUAL-EVIDENCE',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'dashboard keeps prototype region order and opens preview panel after clicking Preview',
+                        'prototype_conformance': ['teacher-dashboard'],
+                        'production_targets': ['/dashboard/teacher'],
+                        'user_steps': ['Open /dashboard/teacher', 'Click Preview'],
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / 'unit-01'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification failed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['passed'] is False
+    assert verification['evidence_rows'][0]['status'] == 'invalid'
+    assert verification['evidence_rows'][0]['visual_evidence_refs'] == {}
+    assert any(issue['type'] == 'invalid_prototype_visual_evidence' for issue in verification['issues'])
 
 
 def test_run_verifier_supports_bash_source_in_approved_verification_command(tmp_path: Path) -> None:

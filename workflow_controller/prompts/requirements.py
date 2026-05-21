@@ -131,9 +131,11 @@ Write the Markdown body to this exact file:
 Requirements approval 会被 controller 预检：每条 AC 必须声明 verification layer；每个 active must AO 必须映射到 AC，或显式 deferred/rejected/out_of_scope 并写明原因。
 V0.3.4 还要求每条 covered AC 在 Design/Architecture Traceability Matrix 中同时映射 Product Design Ref 和 Technical Architecture Ref。
 UI/原型设计约束：
+- 凡涉及 UI、Web、可点击原型、prototype evidence 或生产 UI 一致性验证，必须显式使用 `ui-ux-pro-max` skill。
+- `frontend-design` 只能作为全新视觉探索或局部视觉润色的可选辅助；`frontend-design` 不能替代既有产品 UI/原型一致性工作。
 - 当生成 prototype evidence、可审阅设计说明或 clickable webpage prototype 时，原型设计默认必须遵循现有系统风格。
 - 除非用户或 spec 明确要求创新、重设计或探索新视觉方向，不要引入与现有产品明显不一致的新视觉语言、布局模式或交互范式。
-- 必须先从目标项目代码、现有页面、历史设计、截图、文档或参考环境中提取风格基线，并保持信息架构、导航结构、组件形态、视觉密度、颜色/字体/间距、交互模式和文案语气的一致性。
+- 必须先盘点真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境，再从目标项目代码、现有页面、历史设计、截图、文档或参考环境中提取风格基线，并保持信息架构、导航结构、组件形态、视觉密度、颜色/字体/间距、交互模式和文案语气的一致性。
 - 如果确实需要偏离现有系统风格，偏离点必须写入 `## 4.8 已澄清事项、关键假设与待确认风险`，并说明偏离原因、影响范围和需要人工确认的风险。
 
 {infrastructure_intake_section}
@@ -291,6 +293,8 @@ def _target_project_infrastructure_intake_prompt_section(state: dict[str, Any]) 
 - 文档地址必须结构化盘点：正式维护文档、Controller 过程证据、外部 Agent / 人工沟通生成文档、外部 wiki / 设计稿 / API 文档、缺失但需要沉淀的文档；每项必须说明用途或可信度。不要只写 `docs/`、`README`、`USAGE` 或 `暂无`。
 - 架构、交互逻辑、接口说明和依赖信息必须覆盖：模块边界、数据流、用户交互、状态流转、API/CLI/事件接口、错误语义、系统依赖、服务依赖和验证依赖，并能被 Unit Plan 消费。
 - 当目标项目需要 UI/UX、包含浏览器可见界面或 `currentUnitNeedsUiDesign=true` 时，Requirements Gate 必须在人工确认前包含 prototype evidence 或可审阅设计说明。
+- UI/Web/prototype 工作必须显式使用 `ui-ux-pro-max`；`frontend-design` 只能辅助全新视觉探索或局部润色，不能替代既有产品 UI/原型一致性工作。
+- 设计 prototype evidence 前必须盘点真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境；不得只根据文字描述自由创作。
 - 当目标项目是 Web 系统时，必须包含可点击、可操作、可在浏览器中使用的 clickable webpage prototype，不接受静态截图、纯文字描述或不可点击线框；必须记录访问方式、页面状态、核心点击路径、AC 映射、真实实现目标和每个可交互 UI surface。
 - 当目标项目需要 UI/UX、包含浏览器可见界面、是 Web 系统，或 Requirements 声明原型是 UI/UX 合约时，必须额外写出 `artifacts/requirements-draft/prototype-manifest.json`。该 JSON 必须包含 prototypes 列表；每个条目必须包含 prototype id, type, path or URL, title, linked ACs, linked journeys, page states, click path, implementation_targets, surface_contracts, thumbnail or preview hint, and review guidance。
 - `implementation_targets` 是原型到真实生产 UI 的验收映射；每个 target 必须至少包含 `kind` 和 `path`，例如 `{ "kind": "route", "path": "/dashboard/teacher" }`。兼容别名为 `production_targets` / `real_targets`，但推荐输出 `implementation_targets`。

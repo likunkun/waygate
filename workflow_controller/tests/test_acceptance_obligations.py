@@ -64,6 +64,23 @@ def _write_prototype_manifest_for_gate(
     return manifest_path
 
 
+def _visual_evidence_plan(
+    *,
+    prototype: str = 'artifacts/requirements-draft/prototypes/requirements-prototype/baseline.png',
+    production: str = 'artifacts/unit-01/screenshots/dashboard-production.png',
+    interaction: str = 'artifacts/unit-01/screenshots/dashboard-preview-after-click.png',
+    entrypoint: str = '/dashboard/preview',
+) -> dict[str, object]:
+    return {
+        'prototype_screenshot': prototype,
+        'production_screenshot': production,
+        'interaction_screenshot': interaction,
+        'viewport': 'desktop 1440x900',
+        'entrypoint': entrypoint,
+        'action_path': ['Open the production entrypoint', 'Click Preview'],
+    }
+
+
 def _write_surface_prototype_manifest_for_gate(gate: Path) -> Path:
     state_root = gate.parent.parent if gate.parent.name == 'approvals' else gate.parent
     draft_dir = state_root / 'artifacts' / 'requirements-draft'
@@ -1235,6 +1252,7 @@ def test_unit_plan_accepts_real_route_prototype_conformance_test(tmp_path: Path)
                         'expected': 'route /dashboard/preview shows Dashboard and Preview states, preserves the primary action order, and opens the preview panel after clicking Preview',
                         'prototype_conformance': ['requirements-prototype'],
                         'production_targets': ['/dashboard/preview'],
+                        'visual_evidence_plan': _visual_evidence_plan(),
                     }
                 ],
             }
@@ -1242,6 +1260,150 @@ def test_unit_plan_accepts_real_route_prototype_conformance_test(tmp_path: Path)
     }
 
     validate_unit_plan_prototype_conformance(requirements, unit_plan, state)
+
+
+def test_unit_plan_rejects_prototype_conformance_without_l1_l2_visual_evidence_plan(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    _write_prototype_manifest_for_gate(requirements, ac='AC-21')
+    unit_plan = tmp_path / 'approvals' / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n\n## Test Case Matrix\n', encoding='utf-8')
+    state = {
+        'currentUnitId': 'unit-01',
+        'currentUnitIsWebSystem': True,
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-NO-VISUAL-EVIDENCE',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'fixture': 'teacher with one active course and one pending review',
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts --project=chromium',
+                        'expected': 'route /dashboard/preview preserves the primary action order and opens the preview panel after clicking Preview',
+                        'prototype_conformance': ['requirements-prototype'],
+                        'production_targets': ['/dashboard/preview'],
+                        'user_steps': ['Open /dashboard/preview', 'Click Preview'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='missing L1 visual evidence plan'):
+        validate_unit_plan_prototype_conformance(requirements, unit_plan, state)
+
+
+def test_unit_plan_rejects_route_text_only_prototype_conformance_expected(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    _write_prototype_manifest_for_gate(requirements, ac='AC-21')
+    unit_plan = tmp_path / 'approvals' / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n\n## Test Case Matrix\n', encoding='utf-8')
+    state = {
+        'currentUnitId': 'unit-01',
+        'currentUnitIsWebSystem': True,
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-TEXT-ONLY',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'fixture': 'teacher with one active course and one pending review',
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts --project=chromium',
+                        'expected': 'route /dashboard/preview loads and the text Teacher Dashboard is visible',
+                        'prototype_conformance': ['requirements-prototype'],
+                        'production_targets': ['/dashboard/preview'],
+                        'user_steps': ['Open /dashboard/preview'],
+                        'visual_evidence_plan': _visual_evidence_plan(),
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='missing L2 structural/interaction assertions'):
+        validate_unit_plan_prototype_conformance(requirements, unit_plan, state)
+
+
+def test_unit_plan_requires_l4_plan_for_explicit_pixel_exact_prototype_contract(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 品牌 Logo surface 必须像素级符合原型合约。\n',
+        encoding='utf-8',
+    )
+    manifest_path = _write_prototype_manifest_for_gate(requirements, ac='AC-21')
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest['prototypes'][0]['fidelity_required'] = 'pixel_exact'
+    manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
+    unit_plan = tmp_path / 'approvals' / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n\n## Test Case Matrix\n', encoding='utf-8')
+    state = {
+        'currentUnitId': 'unit-01',
+        'currentUnitIsWebSystem': True,
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-PIXEL-NO-REGRESSION',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'fixture': 'teacher dashboard with brand logo',
+                        'command': 'npx playwright test tests/e2e/teacher-dashboard.spec.ts --project=chromium',
+                        'expected': 'brand logo region preserves size, placement, color, and opens the preview panel after clicking Preview',
+                        'prototype_conformance': ['requirements-prototype'],
+                        'production_targets': ['/dashboard/preview'],
+                        'user_steps': ['Open /dashboard/preview', 'Click Preview'],
+                        'visual_evidence_plan': _visual_evidence_plan(),
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='missing L4 pixel-exact evidence plan'):
+        validate_unit_plan_prototype_conformance(requirements, unit_plan, state)
+
+
+def test_unit_plan_visual_fidelity_rules_do_not_apply_without_ui_web_prototype_manifest(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-1 [verification: integration]: CLI 输出 structured summary。\n',
+        encoding='utf-8',
+    )
+    unit_plan = tmp_path / 'approvals' / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n\n## Test Case Matrix\n', encoding='utf-8')
+
+    validate_unit_plan_prototype_conformance(
+        requirements,
+        unit_plan,
+        {'currentUnitId': 'unit-01', 'currentUnitIsWebSystem': False, 'units': []},
+    )
 
 
 def test_unit_plan_requires_each_surface_target_not_adjacent_dialog(tmp_path: Path) -> None:
@@ -1274,6 +1436,12 @@ def test_unit_plan_requires_each_surface_target_not_adjacent_dialog(tmp_path: Pa
                         'prototype_surfaces': ['publish-target-dialog'],
                         'production_targets': ['component:OpenMAIC/components/course/PublishTargetDialog.tsx'],
                         'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        'visual_evidence_plan': _visual_evidence_plan(
+                            prototype='artifacts/requirements-draft/prototypes/course-ops/publish-dialog.png',
+                            production='artifacts/unit-01/screenshots/publish-dialog.png',
+                            interaction='artifacts/unit-01/screenshots/publish-dialog-after-click.png',
+                            entrypoint='/dashboard/teacher',
+                        ),
                     }
                 ],
             }
@@ -1317,6 +1485,12 @@ def test_unit_plan_accepts_required_surface_target_with_real_entrypoint_steps(tm
                         'prototype_surfaces': ['publish-target-dialog'],
                         'production_targets': ['component:OpenMAIC/components/course/PublishTargetDialog.tsx'],
                         'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        'visual_evidence_plan': _visual_evidence_plan(
+                            prototype='artifacts/requirements-draft/prototypes/course-ops/publish-dialog.png',
+                            production='artifacts/unit-01/screenshots/publish-dialog.png',
+                            interaction='artifacts/unit-01/screenshots/publish-dialog-after-click.png',
+                            entrypoint='/dashboard/teacher',
+                        ),
                     },
                     {
                         'id': 'TC-PROTO-ASSIGN-MANAGE-DIALOG',
@@ -1329,6 +1503,12 @@ def test_unit_plan_accepts_required_surface_target_with_real_entrypoint_steps(tm
                         'prototype_surfaces': ['assignment-management-dialog'],
                         'production_targets': ['component:OpenMAIC/components/course/AssignManageDialog.tsx'],
                         'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
+                        'visual_evidence_plan': _visual_evidence_plan(
+                            prototype='artifacts/requirements-draft/prototypes/course-ops/assign-dialog.png',
+                            production='artifacts/unit-01/screenshots/assign-dialog.png',
+                            interaction='artifacts/unit-01/screenshots/assign-dialog-after-click.png',
+                            entrypoint='/dashboard/teacher',
+                        ),
                     },
                 ],
             }
@@ -1400,6 +1580,158 @@ def test_final_acceptance_blocks_missing_surface_evidence(tmp_path: Path) -> Non
         ValueError,
         match='surface assignment-management-dialog target component:OpenMAIC/components/course/AssignManageDialog.tsx via TC-PROTO-ASSIGN-MANAGE-DIALOG: missing',
     ):
+        validate_final_prototype_conformance(
+            state=state,
+            artifacts_dir=artifacts_dir,
+            requirements_path=requirements,
+        )
+
+
+def test_final_acceptance_blocks_passed_prototype_evidence_without_visual_screenshots(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    _write_prototype_manifest_for_gate(requirements, ac='AC-21')
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'npx playwright test tests/e2e/teacher-dashboard.spec.ts --project=chromium'
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-VISUAL-MISSING',
+                        'acceptance_criterion': 'AC-21',
+                        'acceptance_obligations': [],
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'dashboard keeps prototype region order and opens preview panel after clicking Preview',
+                        'status': 'passed',
+                        'result_index': 0,
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'golden_path': True,
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': '/dashboard/preview',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'screenshot_refs': [],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-VISUAL-MISSING',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'dashboard keeps prototype region order and opens preview panel after clicking Preview',
+                        'prototype_conformance': ['requirements-prototype'],
+                        'production_targets': ['/dashboard/preview'],
+                        'user_steps': ['Open /dashboard/preview', 'Click Preview'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='missing prototype screenshot'):
+        validate_final_prototype_conformance(
+            state=state,
+            artifacts_dir=artifacts_dir,
+            requirements_path=requirements,
+        )
+
+
+def test_final_acceptance_blocks_explicit_screenshot_regression_without_result(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须使用截图回归符合原型合约。\n',
+        encoding='utf-8',
+    )
+    manifest_path = _write_prototype_manifest_for_gate(requirements, ac='AC-21')
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest['prototypes'][0]['fidelity_required'] = 'screenshot_regression'
+    manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'npx playwright test tests/e2e/teacher-dashboard.spec.ts --project=chromium'
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-SCREENSHOT-REGRESSION',
+                        'acceptance_criterion': 'AC-21',
+                        'acceptance_obligations': [],
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'dashboard keeps prototype region order and opens preview panel after clicking Preview',
+                        'status': 'passed',
+                        'result_index': 0,
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'golden_path': True,
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': '/dashboard/preview',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'screenshot_refs': [],
+                        'visual_evidence_refs': _visual_evidence_plan(),
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-SCREENSHOT-REGRESSION',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'dashboard keeps prototype region order and opens preview panel after clicking Preview',
+                        'prototype_conformance': ['requirements-prototype'],
+                        'production_targets': ['/dashboard/preview'],
+                        'user_steps': ['Open /dashboard/preview', 'Click Preview'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='missing screenshot regression result'):
         validate_final_prototype_conformance(
             state=state,
             artifacts_dir=artifacts_dir,

@@ -35,7 +35,7 @@ RECOMMENDED_SKILL_GROUPS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ('code_review', ('requesting-code-review', 'superpowers:requesting-code-review', 'receiving-code-review', 'superpowers:receiving-code-review'), 'Install requesting-code-review or receiving-code-review for concrete review and rework loops.'),
     ('plan_execution', ('executing-plans', 'superpowers:executing-plans', 'subagent-driven-development', 'superpowers:subagent-driven-development'), 'Install executing-plans or subagent-driven-development for approved multi-step plan execution.'),
     ('webapp_testing', ('webapp-testing',), 'Install webapp-testing for browser-visible workflow verification.'),
-    ('ui_ux_design', ('frontend-design', 'ui-ux-pro-max'), 'Install frontend-design or ui-ux-pro-max for UI-heavy requirements.'),
+    ('ui_ux_design', ('ui-ux-pro-max',), 'Install ui-ux-pro-max for UI/Web/prototype production consistency work. frontend-design is optional for new visual exploration or local polish, but cannot replace ui-ux-pro-max.'),
 )
 
 RECOMMENDED_TMUX_CONFIG: tuple[tuple[str, str, str], ...] = (

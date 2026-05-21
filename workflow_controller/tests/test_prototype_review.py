@@ -283,6 +283,7 @@ def test_prototype_manifest_normalizes_surface_contracts_and_aliases(tmp_path: P
             ],
             'linked_acceptance_criteria': ['AC-01'],
             'required': True,
+            'fidelity_required': 'structural_interaction',
         }
     ]
 

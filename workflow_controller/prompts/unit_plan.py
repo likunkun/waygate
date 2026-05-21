@@ -76,6 +76,11 @@ Document Deliverables Matrix 约束：
 - 纯代码小修可以声明“不需要正式文档变更”，但必须写清楚原因；不能用沉默来表示不需要。
 - `Required For Acceptance` 为 `true` 的文档动作会在 Final Acceptance 阻断缺失文件；历史缺失但未声明 required 的文档不作为本 unit 终验阻断。
 
+UI/UX skill policy:
+- UI/Web/prototype test case 必须保留 `ui-ux-pro-max` 设计/交互检查；不能只写 `frontend-design` 或泛化“使用设计技能”。
+- `frontend-design` 只能作为全新视觉探索或局部视觉润色的可选辅助，不能替代既有产品 UI/原型一致性工作。
+- 计划中的 UI/Web/prototype 验证必须覆盖交互、可访问性、布局、遮挡检查，并映射到真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境。
+
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
 - 如果已批准 requirements 包含 `Design/Architecture Traceability Matrix`，每个 test case 还必须保留对应 AC 的 `product_design_refs` 和 `technical_architecture_refs`，并与 requirements 中的 Product Design Ref / Technical Architecture Ref 一致。
@@ -91,6 +96,10 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - 每个测试用例必须追溯到一条 AC，并在 `expected` 字段中描述可断言的具体值（如字段值、数组长度、排序关系），不接受"页面正常渲染"、"无报错"或"截图留存"作为唯一断言。
 - 如果 Requirements 的 prototype manifest 包含 `surface_contracts`，每个 `required: true` surface 的每个 `implementation_targets[]` 必须至少有一个真实生产 UI 一致性测试；相邻弹窗、抽屉或面板的测试不能代替当前 surface。
 - 测试用例必须在 Controller State Patch 的 `test_cases[]` 中写 `prototype_conformance: ["<prototype-id>"]`、`prototype_surfaces: ["<surface-id>"]`、`production_targets: ["<route-or-target>"]`、`user_steps[]`，并包含具体 `command` 与非弱断言 `expected`。旧 prototype-level manifest 没有 `surface_contracts` 时仍用 `implementation_targets` 做兼容验收。
+- Prototype conformance 的默认 fidelity 合同是 `visual_evidence + structural_interaction`（等同 L1+L2）。如果 Requirements 或 manifest 明确 `fidelity_required: screenshot_regression|pixel_exact`，测试用例必须保留同等或更高 fidelity，并声明截图回归或像素级证据计划。
+- 每个 prototype conformance test case 必须包含 `visual_evidence_plan`：`prototype_screenshot`、`production_screenshot`、`viewport`、`entrypoint`、`action_path` 必填；交互 surface 还必须包含 `interaction_screenshot`。L3/L4 必须额外声明 `screenshot_regression`、`pixel_tolerance` 或等价像素断言计划。
+- `expected` 不能只写 route/text visible、页面正常或截图留存；必须包含视觉/布局/结构顺序断言和真实点击后的交互断言，并明确检查 fixed header、badge、modal、overlay 等不会遮挡关键控件。
+- Prototype conformance E2E 命令必须在 stdout/stderr 输出可解析 marker：`PROTOTYPE_SCREENSHOT: <path>`、`PRODUCTION_SCREENSHOT: <path>`、交互 surface 的 `INTERACTION_SCREENSHOT: <path>`，以及 `VISUAL_EVIDENCE: {{...}}` JSON（至少包含 viewport、entrypoint、action_path、fidelity_level）。
 - 浏览器 route/page/dialog/drawer/panel/form/component surface 的 prototype conformance 测试层级必须是 `e2e`，命令必须从真实生产入口打开该 surface（如 Playwright 打开 `/dashboard/teacher` 后点击 `CourseCard -> 分配管理`）；只测试 `requirements-draft/prototypes`、`prototype-review`、`file://...prototype` 或静态 prototype spec，只能证明 artifact 有效，不能算生产 UI 一致性。
 - 对不适合 E2E 的 AC，必须说明为什么降级到 unit/functional/integration，并保留可执行命令。
 - 使用 `webapp-testing` skill 生成带真实数据断言的 Playwright 测试文件，而不是人工操作步骤清单。
@@ -213,7 +222,18 @@ Area -> Target Path -> Action -> Required For Acceptance -> Evidence / Reason
           "prototype_conformance": ["<prototype id from requirements prototype manifest when applicable>"],
           "prototype_surfaces": ["<surface id from surface_contracts when applicable>"],
           "production_targets": ["<route/page/component target from implementation_targets when applicable>"],
-          "user_steps": ["<open real production route>", "<click real entrypoint to open the surface>"]
+          "fidelity_required": "structural_interaction|screenshot_regression|pixel_exact",
+          "user_steps": ["<open real production route>", "<click real entrypoint to open the surface>"],
+          "visual_evidence_plan": {{
+            "prototype_screenshot": "<baseline prototype screenshot path>",
+            "production_screenshot": "<production implementation screenshot path>",
+            "interaction_screenshot": "<post-click screenshot path when interactive>",
+            "viewport": "<viewport size/device>",
+            "entrypoint": "<real production entrypoint>",
+            "action_path": ["<open route>", "<click target>"],
+            "screenshot_regression": "<required for L3/L4, include threshold or result artifact>",
+            "pixel_tolerance": "<required for L4 when pixel_exact>"
+          }}
         }}
       ],
       "verification_commands": ["<command>"],

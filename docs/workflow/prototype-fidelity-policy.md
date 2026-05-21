@@ -1,0 +1,45 @@
+# Prototype Fidelity Policy
+
+Waygate treats UI/Web prototypes as acceptance contracts when Requirements mark a prototype surface as required. Final Acceptance cannot rely only on route-loaded or text-visible E2E assertions for those surfaces.
+
+## Fidelity Levels
+
+| Level | Name | Required Evidence |
+| --- | --- | --- |
+| L1 | `visual_evidence` | Prototype screenshot, production screenshot, viewport, entrypoint, and action path. |
+| L2 | `structural_interaction` | L1 plus assertions for layout/structure/order and real clicks; interactive surfaces also need an interaction screenshot and obstruction checks for fixed headers, badges, modals, drawers, and overlays. |
+| L3 | `screenshot_regression` | L1/L2 plus a screenshot regression result with threshold or diff artifact. |
+| L4 | `pixel_exact` | L1/L2 plus strict screenshot/pixel evidence for brand, logo, or fixed-size high-fidelity components. |
+
+Default required UI/Web prototype surfaces use L1 + L2. L3 and L4 apply only when Requirements, the prototype manifest, or a test case explicitly declares `fidelity_required: screenshot_regression` or `pixel_exact`.
+
+## Unit Plan Contract
+
+Prototype conformance test cases must include `prototype_conformance`, `prototype_surfaces` when applicable, `production_targets`, real `user_steps`, concrete visual/layout/interaction `expected` assertions, and a `visual_evidence_plan`.
+
+The evidence plan must include:
+
+- `prototype_screenshot`
+- `production_screenshot`
+- `viewport`
+- `entrypoint`
+- `action_path`
+- `interaction_screenshot` for interactive surfaces
+- screenshot regression or pixel tolerance fields for L3/L4
+
+## Verifier Markers
+
+Prototype conformance E2E commands should emit:
+
+```text
+PROTOTYPE_SCREENSHOT: <path>
+PRODUCTION_SCREENSHOT: <path>
+INTERACTION_SCREENSHOT: <path>
+VISUAL_EVIDENCE: {"viewport":"desktop 1440x900","entrypoint":"/route","action_path":["Open /route","Click target"],"fidelity_level":"structural_interaction"}
+```
+
+The Verifier records these in `visual_evidence_refs` while preserving legacy `screenshot_refs`.
+
+## Final Acceptance
+
+Final Acceptance renders the Prototype Conformance Matrix and Visual Prototype Evidence sections. A required surface is blocked when visual evidence is missing, a key target is obstructed, or explicit L3/L4 fidelity lacks screenshot regression or pixel evidence.

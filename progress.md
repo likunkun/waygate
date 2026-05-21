@@ -1,5 +1,40 @@
 # 进度日志
 
+## 会话：2026-05-21
+
+### V0.6.0k UI/UX Skill Policy
+- **状态：** implementation verified; full regression passed; packaged as `0.6.0k`.
+- Requirements prompt 现在明确 UI/Web/prototype、可点击原型、prototype evidence 和生产 UI 一致性工作必须使用 `ui-ux-pro-max`，并要求先盘点真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境；`frontend-design` 只能作为全新视觉探索或局部润色辅助。
+- Unit Plan prompt 要求 UI/Web/prototype test case 保留 `ui-ux-pro-max` 设计/交互检查，不能只写 `frontend-design` 或泛化“使用设计技能”；Builder prompt 和 UI Design Brief 同步要求按交互、可访问性、布局和遮挡检查实现与验证。
+- `waygate doctor` 的 `skill_recommendations.ui_ux_design` 改为要求 `ui-ux-pro-max`：只安装 `frontend-design` 时输出 warning/manual action；两者都安装时优先 `matched=ui-ux-pro-max`。
+- `init` / `run` 等命令现在第一行输出 `waygate <version>`；`start` / `go` / `drive` 等连续运行命令在带时间戳的第一行输出版本号，便于现场确认实际启动的版本且不破坏 `drive` 每行带时间戳的输出契约。
+- 正式文档新增 `docs/workflow/ui-ux-skill-policy.md` 并登记到 `docs/README.md`；README、USAGE、ROADMAP、CHANGELOG 和 recommended-environment 文档不再把 `frontend-design` 与 `ui-ux-pro-max` 作为等价选择。
+- 版本更新为 `0.6.0k`，已生成 `dist/waygate_0.6.0k_all.deb`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `72 passed`
+  - `python3 -m pytest workflow_controller/tests/test_diagnostics.py -q` -> `16 passed`
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `506 passed in 69.04s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0k_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0k_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0k / all / python3`
+  - 解包后执行 `usr/bin/waygate start --dry-run --max-steps 0` -> 第一行 `[HH:MM:SS] waygate 0.6.0k`
+
+### Controller Prototype Fidelity Gate
+- **状态：** implementation verified; full regression passed.
+- Prototype conformance 现在按 fidelity 分级处理：默认 required UI/Web surface 需要 L1 visual evidence + L2 structural/interaction evidence；只有 Requirements、manifest 或 test case 明确 `screenshot_regression` / `pixel_exact` 时才启用 L3/L4。
+- Unit Plan prototype conformance 校验新增 `visual_evidence_plan` 要求，拒绝缺 prototype/production screenshot、action path、交互截图计划、route/text visible 弱断言，以及显式 L4 缺像素级证据计划。
+- Verifier evidence rows 保留 `screenshot_refs`，新增 `visual_evidence_refs`，并解析 `PROTOTYPE_SCREENSHOT:`、`PRODUCTION_SCREENSHOT:`、`INTERACTION_SCREENSHOT:` 和 `VISUAL_EVIDENCE: {...}` marker；prototype conformance E2E 缺 L1/L2 证据会标记 invalid evidence。
+- Final Acceptance `Prototype Conformance Matrix` 新增 Fidelity、Visual Evidence、Prototype Screenshot、Production Screenshot、Interaction Screenshot 和 Action Path 列，并新增 `Visual Prototype Evidence` 小节；缺截图、缺 action path、交互截图缺失、遮挡或显式 L3/L4 缺截图回归结果都会阻断终验。
+- 正式文档新增 `docs/workflow/prototype-fidelity-policy.md` 并登记到 `docs/README.md`，`docs/workflow.md` 同步说明视觉证据 marker 和终验展示。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `61 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `70 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `183 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `23 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_verifier.py -q` -> `6 passed`
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `10 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `501 passed in 70.56s`
+
 ## 会话：2026-05-20
 
 ### Controller Verifier 失败后的 Builder 精确复现闭环

@@ -107,6 +107,8 @@ Builder rules:
 - Follow the Unit Plan scope, non-goals, done_when, and verification_commands.
 - 先读取 Unit Plan Test Case Matrix；在实现功能前，创建或更新 command 指向的测试文件。
 - 读取 Unit Plan Document Deliverables Matrix；`Required For Acceptance = true` 的文档动作必须在本 unit 中落到对应 `docs/*` 或登记入口，纯代码小修则保持 Unit Plan 中的“不需要正式文档变更”说明。
+- 当本 unit 涉及 UI、Web、可点击原型、prototype evidence 或生产 UI 一致性验证时，使用 `ui-ux-pro-max` skill；`frontend-design` 不能替代既有产品 UI/原型一致性工作，只能辅助全新视觉探索或局部润色。
+- UI/Web/prototype 实现和验证必须覆盖交互、可访问性、布局、遮挡检查，并基于真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境。
 - 优先创建并跑通标记为 `golden_path: true` 的测试；这是交给人工最终验收前必须先通过的核心正常流程。
 - Treat the main goal as making the AC-mapped tests pass, not merely producing implementation changes.
 - For defect-fix units, add a regression test for each defect when feasible; if not feasible, leave explicit manual evidence.
@@ -120,6 +122,9 @@ E2E unit rules (applies when workflow_validation_level is "closure"):
 - `verification_commands` must run the Playwright test suite (e.g. `npx playwright test`); the unit is done only when this command exits 0.
 - 如果数据准备、服务启动或验证命令无法运行，写 BLOCKED 并说明精确阻塞原因；不要伪造通过证据，也不要用截图结论标记 done。
 - Do not use screenshots as the sole acceptance evidence. Screenshots may supplement but cannot replace programmatic assertions.
+- For prototype conformance test cases, run the real production entrypoint and real click path from `user_steps`; do not satisfy the case with container-visible, route-loaded, or text-visible assertions only.
+- Prototype conformance E2E output must include visual evidence markers: `PROTOTYPE_SCREENSHOT: <path>`, `PRODUCTION_SCREENSHOT: <path>`, `INTERACTION_SCREENSHOT: <path>` for interactive surfaces, and `VISUAL_EVIDENCE: {{...}}` with viewport, entrypoint, action_path, and fidelity_level.
+- Prototype conformance assertions must verify structure/order and interaction behavior, including that fixed headers, badges, modals, drawers, overlays, and loading masks do not obstruct the key clickable target.
 - 完成 summary 必须说明覆盖了哪些 AC、创建或修改了哪些测试文件、实际运行了哪些 verification commands。
 """
 
@@ -142,6 +147,11 @@ Objective: {payload.get('objective') or 'Not specified'}
 
 ## Design Checks
 {checks}
+
+## Skill Policy
+- Use `ui-ux-pro-max` for UI, Web, clickable prototype, prototype evidence, and production UI consistency work.
+- `frontend-design` is optional for new visual exploration or local visual polish, but it cannot replace existing product UI/prototype consistency work.
+- Verify 交互、可访问性、布局、遮挡检查 against real routes, DOM/components, existing page structure, screenshots, historical design, or reference environments.
 """
 
 

@@ -18,6 +18,9 @@ from workflow_controller.evidence_policy import (
     case_environment_kind,
     case_real_entrypoint,
     evidence_row_real_e2e_issue,
+    fidelity_label,
+    normalize_fidelity_required,
+    visual_evidence_issue,
 )
 from workflow_controller.networking import browser_display_host, url_host
 
@@ -706,10 +709,14 @@ def _normalize_prototype(
         prototype_label=raw_id or str(index),
         issues=issues,
     )
+    fidelity_required = normalize_fidelity_required(
+        _first_present(raw, 'fidelity_required', 'fidelityRequired', 'fidelity_level', 'fidelityLevel')
+    )
     surface_contracts = _normalize_surface_contracts(
         raw,
         prototype_label=raw_id or str(index),
         requirements_ac_ids=requirements_ac_ids,
+        default_fidelity_required=fidelity_required,
         issues=issues,
     )
     if require_implementation_targets and not implementation_targets and not surface_contracts:
@@ -773,6 +780,7 @@ def _normalize_prototype(
         'linked_journeys': _string_list(raw.get('linked_journeys') or raw.get('journeys')),
         'page_states': page_states,
         'click_path': click_path,
+        'fidelity_required': fidelity_required,
         'implementation_targets': implementation_targets,
         'surface_contracts': surface_contracts,
         'thumbnail': str(raw.get('thumbnail') or '').strip(),
@@ -786,6 +794,7 @@ def _normalize_surface_contracts(
     *,
     prototype_label: str,
     requirements_ac_ids: set[str],
+    default_fidelity_required: str,
     issues: list[str],
 ) -> list[dict[str, Any]]:
     raw_surfaces = _first_present(raw, 'surface_contracts', 'ui_surfaces', 'page_state_targets')
@@ -853,6 +862,11 @@ def _normalize_surface_contracts(
         if required is not True:
             issues.append(f'prototype {prototype_label} surface {surface_label} missing required=true')
 
+        fidelity_required = normalize_fidelity_required(
+            _first_present(surface, 'fidelity_required', 'fidelityRequired', 'fidelity_level', 'fidelityLevel'),
+            default=default_fidelity_required,
+        )
+
         if not surface_id or not title or kind not in ALLOWED_SURFACE_KINDS:
             continue
         normalized.append({
@@ -865,6 +879,7 @@ def _normalize_surface_contracts(
             'implementation_targets': implementation_targets,
             'linked_acceptance_criteria': [ac.upper() for ac in linked_acs],
             'required': required is True,
+            'fidelity_required': fidelity_required,
         })
     return normalized
 
@@ -941,8 +956,11 @@ def prototype_conformance_matrix_rows(
             'surface_title': contract.get('surface_title') or '',
             'surface_kind': contract.get('surface_kind') or '',
             'entrypoints': contract.get('entrypoints') or [],
+            'click_path': contract.get('click_path') or [],
             'linked_acceptance_criteria': contract.get('linked_acceptance_criteria') or [],
             'production_target': _implementation_target_label(target),
+            'fidelity_required': normalize_fidelity_required(contract.get('fidelity_required')),
+            'fidelity_label': fidelity_label(contract.get('fidelity_required')),
         }
         if not matched_cases:
             rows.append({
@@ -957,12 +975,28 @@ def prototype_conformance_matrix_rows(
                 'uses_core_api_mock': False,
                 'runtime_errors': 0,
                 'evidence_issue': 'missing',
+                'visual_evidence_refs': {},
+                'visual_evidence_status': 'missing evidence',
+                'visual_evidence_issue': 'missing prototype screenshot',
+                'prototype_screenshot': '',
+                'production_screenshot': '',
+                'interaction_screenshot': '',
+                'action_path': [],
+                'viewport': '',
+                'visual_entrypoint': '',
             })
             continue
         for case in matched_cases:
             evidence = _matching_evidence_row(case, evidence_rows)
             effective_evidence = _prototype_effective_evidence_row(case, evidence)
-            evidence_issue = evidence_row_real_e2e_issue(effective_evidence) if effective_evidence else 'missing'
+            real_evidence_issue = evidence_row_real_e2e_issue(effective_evidence) if effective_evidence else 'missing'
+            visual_refs = (effective_evidence or {}).get('visual_evidence_refs') or {}
+            visual_issue = visual_evidence_issue(
+                visual_refs,
+                fidelity_level=base_row['fidelity_required'],
+                requires_interaction=_contract_requires_interaction_evidence(contract),
+            ) if effective_evidence else 'missing prototype screenshot'
+            evidence_issue = _prototype_combined_evidence_issue(real_evidence_issue, visual_issue)
             status = 'passed' if effective_evidence and not evidence_issue else str((evidence or {}).get('status') or 'missing')
             if evidence_issue and status == 'passed':
                 status = f'invalid: {evidence_issue}'
@@ -978,6 +1012,15 @@ def prototype_conformance_matrix_rows(
                 'uses_core_api_mock': bool((effective_evidence or {}).get('uses_core_api_mock')),
                 'runtime_errors': _prototype_runtime_error_count(effective_evidence or {}),
                 'evidence_issue': evidence_issue,
+                'visual_evidence_refs': visual_refs,
+                'visual_evidence_status': 'complete' if not visual_issue else visual_issue,
+                'visual_evidence_issue': visual_issue,
+                'prototype_screenshot': str(visual_refs.get('prototype_screenshot') or '').strip(),
+                'production_screenshot': str(visual_refs.get('production_screenshot') or '').strip(),
+                'interaction_screenshot': str(visual_refs.get('interaction_screenshot') or '').strip(),
+                'action_path': _string_list(visual_refs.get('action_path')),
+                'viewport': str(visual_refs.get('viewport') or '').strip(),
+                'visual_entrypoint': str(visual_refs.get('entrypoint') or '').strip(),
             })
     return rows
 
@@ -1055,7 +1098,13 @@ def prototype_required_target_contracts(normalized_manifest: dict[str, Any]) -> 
                         'surface_title': str(surface.get('title') or '').strip(),
                         'surface_kind': str(surface.get('kind') or '').strip(),
                         'entrypoints': surface.get('entrypoints') or [],
+                        'click_path': surface.get('click_path') or [],
+                        'page_states': surface.get('page_states') or [],
                         'linked_acceptance_criteria': surface.get('linked_acceptance_criteria') or [],
+                        'fidelity_required': normalize_fidelity_required(
+                            surface.get('fidelity_required'),
+                            default=prototype.get('fidelity_required') or 'structural_interaction',
+                        ),
                         'target': target,
                     })
             continue
@@ -1068,7 +1117,10 @@ def prototype_required_target_contracts(normalized_manifest: dict[str, Any]) -> 
                 'surface_title': '',
                 'surface_kind': '',
                 'entrypoints': [],
+                'click_path': prototype.get('click_path') or [],
+                'page_states': prototype.get('page_states') or [],
                 'linked_acceptance_criteria': prototype.get('linked_acceptance_criteria') or [],
+                'fidelity_required': normalize_fidelity_required(prototype.get('fidelity_required')),
                 'target': target,
             })
     return contracts
@@ -1255,7 +1307,23 @@ def _prototype_effective_evidence_row(
     row.setdefault('mocked_routes', [])
     for field in ('browser_console_errors', 'page_errors', 'request_failures', 'screenshot_refs'):
         row.setdefault(field, [])
+    row.setdefault('visual_evidence_refs', {})
     return row
+
+
+def _prototype_combined_evidence_issue(real_evidence_issue: str, visual_issue: str) -> str:
+    if real_evidence_issue == 'invalid' and visual_issue:
+        return visual_issue
+    return real_evidence_issue or visual_issue
+
+
+def _contract_requires_interaction_evidence(contract: dict[str, Any]) -> bool:
+    surface_kind = str(contract.get('surface_kind') or '').strip().lower()
+    if surface_kind in BROWSER_SURFACE_KINDS:
+        return True
+    if contract.get('entrypoints'):
+        return True
+    return len(_string_list(contract.get('click_path'))) > 1
 
 
 def _prototype_runtime_error_count(row: dict[str, Any]) -> int:

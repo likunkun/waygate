@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,8 +14,12 @@ from workflow_controller import __version__
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _timestamped_version_line_re() -> str:
+    return rf'^\[\d{{2}}:\d{{2}}:\d{{2}}\] {re.escape(f"waygate {__version__}")}$'
+
+
 def test_version_flag_outputs_package_version() -> None:
-    assert __version__ == '0.6.0j'
+    assert __version__ == '0.6.0k'
     result = subprocess.run(
         [sys.executable, '-m', 'workflow_controller.cli', '--version'],
         text=True,
@@ -23,6 +28,28 @@ def test_version_flag_outputs_package_version() -> None:
     )
     assert result.returncode == 0
     assert f'waygate {__version__}' in result.stdout
+
+
+def test_cli_start_prints_runtime_version(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-m',
+            'workflow_controller.cli',
+            'start',
+            '--state-dir',
+            str(tmp_path / 'state'),
+            '--dry-run',
+            '--max-steps',
+            '0',
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert re.match(_timestamped_version_line_re(), result.stdout.splitlines()[0])
 
 
 def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
@@ -80,6 +107,22 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
         capture_output=True,
         check=False,
     )
+    unpacked_start = subprocess.run(
+        [
+            str(extract_dir / 'usr/bin/waygate'),
+            'start',
+            '--state-dir',
+            str(tmp_path / 'pkg-state'),
+            '--dry-run',
+            '--max-steps',
+            '0',
+        ],
+        cwd=tmp_path,
+        env={**env, 'WAYGATE_LIB_DIR': str(extract_dir / 'usr/lib/waygate')},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
     control_dir = tmp_path / 'control'
     subprocess.run(
         ['dpkg-deb', '-e', str(deb_path), str(control_dir)],
@@ -93,6 +136,8 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     assert version == __version__
     assert unpacked_version.returncode == 0, unpacked_version.stderr + unpacked_version.stdout
     assert unpacked_version.stdout.strip() == f'waygate {__version__}'
+    assert unpacked_start.returncode == 0, unpacked_start.stderr + unpacked_start.stdout
+    assert re.match(_timestamped_version_line_re(), unpacked_start.stdout.splitlines()[0])
     assert './usr/bin/waygate' in contents
     assert './usr/lib/waygate/workflow_controller/cli.py' in contents
     assert './usr/share/doc/waygate/README.md' in contents
@@ -104,6 +149,8 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     assert './usr/share/doc/waygate/docs/architecture.md' in contents
     assert './usr/share/doc/waygate/docs/README.md' in contents
     assert './usr/share/doc/waygate/docs/workflow.zh-CN.md' in contents
+    assert './usr/share/doc/waygate/docs/workflow/prototype-fidelity-policy.md' in contents
+    assert './usr/share/doc/waygate/docs/workflow/ui-ux-skill-policy.md' in contents
     assert './usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.md' in contents
     assert './usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.zh-CN.md' in contents
     assert './usr/share/doc/waygate/docs/operations/recommended-environment.md' in contents
@@ -140,7 +187,7 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     for expected in ['Python 3', 'pytest', 'tmux', 'Claude Code', 'Codex', 'Plannotator', 'skills', 'dpkg-deb', 'Waygate Markdown spec']:
         assert expected in readme_zh
     for doc in [readme, readme_zh, usage, usage_zh, roadmap, roadmap_zh, changelog, changelog_zh]:
-        assert 'V0.6.0j' in doc or '0.6.0j' in doc
+        assert 'V0.6.0k' in doc or '0.6.0k' in doc
         assert 'recommended-environment' in doc or '推荐环境' in doc
         assert 'doctor' in doc or '环境检测' in doc or '介绍' in doc
 
@@ -158,7 +205,7 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
         'focus:',
         'action_required',
         '--color',
-        '0.6.0j',
+        '0.6.0k',
     ]:
         assert expected in packaged_docs
 
@@ -172,8 +219,16 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
         assert '20000' in doc
         assert 'skills' in doc or 'skill' in doc
         assert 'ui-ux-pro-max' in doc
+        assert 'frontend-design' in doc
+        assert 'cannot replace' in doc or '不能替代' in doc
         assert 'claude_assets' in doc
         assert 'PATH shadow' in doc
+
+    ui_policy = (ROOT / 'docs/workflow/ui-ux-skill-policy.md').read_text(encoding='utf-8')
+    assert '0.6.0k' in ui_policy
+    assert 'ui-ux-pro-max' in ui_policy
+    assert 'frontend-design' in ui_policy
+    assert '不能替代' in ui_policy or 'cannot replace' in ui_policy
 
     for doc in [product_intro, product_intro_zh]:
         assert 'Requirements' in doc

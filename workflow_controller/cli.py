@@ -16,6 +16,13 @@ from workflow_controller.rrc_controller import (
 )
 from workflow_controller.state_machine.actions import compute_next_allowed_action
 
+DIRECT_STARTUP_VERSION_COMMANDS = {'init', 'run'}
+
+
+def _print_direct_startup_version_if_needed(command: str) -> None:
+    if command in DIRECT_STARTUP_VERSION_COMMANDS:
+        print(f'waygate {__version__}')
+
 
 def _build_strategist_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
     enabled = getattr(args, 'test_strategist', False)
@@ -255,6 +262,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    _print_direct_startup_version_if_needed(args.command)
 
     if args.command == 'doctor':
         print(render_doctor_report(color_mode=args.color), end='')
@@ -335,6 +343,7 @@ def main() -> None:
                 color_mode=args.color,
                 actor=args.actor,
                 strategist_overrides=_build_role_overrides(args),
+                print_startup_version=True,
             )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
@@ -343,7 +352,13 @@ def main() -> None:
 
     if args.command == 'drive':
         try:
-            controller.drive(max_steps=args.max_steps, verbose=args.verbose, color_mode=args.color, actor=args.actor)
+            controller.drive(
+                max_steps=args.max_steps,
+                verbose=args.verbose,
+                color_mode=args.color,
+                actor=args.actor,
+                print_startup_version=True,
+            )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
