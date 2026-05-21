@@ -5769,6 +5769,174 @@ def test_requirements_auto_revision_budget_still_blocks_repeated_same_reason(tmp
     )
 
 
+def test_unit_plan_auto_revision_budget_resets_when_invalid_reason_changes(tmp_path: Path, monkeypatch) -> None:
+    from workflow_controller.gates.parsers import write_gate_file
+
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'REQUIREMENTS_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(tmp_path / 'workspace'),
+            'agentRunner': 'tmux-codex',
+            'agentCommand': 'codex',
+            'tmuxTarget': '1.2',
+            'unitPlanAutoRevisionMax': 2,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(gate_path, '# Unit Plan\n')
+
+    reasons = iter([
+        'unit plan gate invalid: missing AC16 traceability',
+        'unit plan gate invalid: missing AC18 traceability',
+        'unit plan gate invalid: prototype conformance missing production target',
+        None,
+    ])
+    revisions: list[str] = []
+
+    def fake_refresh_unit_plan_gate_validation(state: dict[str, Any]) -> dict[str, Any]:
+        reason = next(reasons)
+        state = dict(state)
+        state['blockedReason'] = reason
+        return state
+
+    monkeypatch.setattr(controller, '_refresh_unit_plan_gate_validation', fake_refresh_unit_plan_gate_validation)
+
+    def fake_revise_unit_plan_gate(*, controller_validation_only: bool = False) -> None:
+        assert controller_validation_only is True
+        revisions.append(controller.store.load_state()['blockedReason'])
+
+    monkeypatch.setattr(controller, '_revise_unit_plan_gate', fake_revise_unit_plan_gate)
+
+    state = controller._auto_revise_invalid_unit_plan_draft(controller.store.load_state())
+
+    assert revisions == [
+        'unit plan gate invalid: missing AC16 traceability',
+        'unit plan gate invalid: missing AC18 traceability',
+        'unit plan gate invalid: prototype conformance missing production target',
+    ]
+    assert state['status'] == 'active'
+    assert state.get('blockedReason') is None
+
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    requested = [
+        event['payload']
+        for event in events
+        if event['type'] == 'unit_plan_draft_auto_revision_requested'
+    ]
+    assert [event['attempt'] for event in requested] == [1, 1, 1]
+    assert [event['total_attempt'] for event in requested] == [1, 2, 3]
+    artifact = json.loads(
+        (state_dir / 'artifacts' / 'unit-plan-draft' / 'controller-validation-error.json')
+        .read_text(encoding='utf-8')
+    )
+    assert artifact['attempt'] == 1
+    assert artifact['reason'] == 'unit plan gate invalid: prototype conformance missing production target'
+
+
+def test_unit_plan_auto_revision_budget_blocks_repeated_same_reason_with_attempt_payloads(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from workflow_controller.gates.parsers import write_gate_file
+
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'REQUIREMENTS_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(tmp_path / 'workspace'),
+            'agentRunner': 'tmux-codex',
+            'agentCommand': 'codex',
+            'tmuxTarget': '1.2',
+            'unitPlanAutoRevisionMax': 2,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    write_gate_file(gate_path, '# Unit Plan\n')
+    reason = 'unit plan gate invalid: missing AC16 traceability'
+    revisions: list[str] = []
+
+    def fake_refresh_unit_plan_gate_validation(state: dict[str, Any]) -> dict[str, Any]:
+        state = dict(state)
+        state['blockedReason'] = reason
+        return state
+
+    monkeypatch.setattr(controller, '_refresh_unit_plan_gate_validation', fake_refresh_unit_plan_gate_validation)
+
+    def fake_revise_unit_plan_gate(*, controller_validation_only: bool = False) -> None:
+        assert controller_validation_only is True
+        revisions.append(controller.store.load_state()['blockedReason'])
+
+    monkeypatch.setattr(controller, '_revise_unit_plan_gate', fake_revise_unit_plan_gate)
+
+    state = controller._auto_revise_invalid_unit_plan_draft(controller.store.load_state())
+
+    assert revisions == [reason, reason]
+    assert state['status'] == 'blocked'
+    assert state['blockedReason'] == f'unit plan gate invalid after automatic revisions: {reason}'
+
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    requested = [
+        event['payload']
+        for event in events
+        if event['type'] == 'unit_plan_draft_auto_revision_requested'
+    ]
+    assert [event['attempt'] for event in requested] == [1, 2]
+    assert [event['total_attempt'] for event in requested] == [1, 2]
+    blocked = next(
+        event['payload']
+        for event in events
+        if event['type'] == 'unit_plan_draft_auto_revision_blocked'
+    )
+    assert blocked['attempts'] == 2
+    assert blocked['consecutive_attempts'] == 3
+    assert blocked['total_attempts'] == 2
+
+
 def test_unit_plan_draft_auto_revises_controller_invalid_gate_before_human_review(
     tmp_path: Path,
     monkeypatch,

@@ -64,6 +64,7 @@ The Unit Plan defines what the implementation agent may do. It should include:
 - a `Controller State Patch` JSON block.
 
 The controller validates the plan before approval. Invalid plans are not marked approved.
+When Unit Plan preflight routes a draft back automatically, `unitPlanAutoRevisionMax` limits consecutive revisions for the same normalized invalid reason. A different invalid reason is treated as progress and resets the consecutive counter; request events record both the current-reason `attempt` and the cumulative `total_attempt`.
 
 ## Implementation Stage
 

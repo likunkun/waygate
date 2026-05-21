@@ -64,6 +64,7 @@ Unit Plan 定义 implementation agent 可以做什么。它应包含：
 - `Controller State Patch` JSON 块。
 
 Controller 会在 approval 前校验计划。无效计划不会被标记为 approved。
+Unit Plan 预检自动打回时，`unitPlanAutoRevisionMax` 限制的是同一个 normalized invalid reason 的连续修订次数。不同 invalid reason 视为有效推进并重置连续计数；request event 同时记录当前 reason 的连续 `attempt` 和本轮累计 `total_attempt`。
 
 ## Implementation 阶段
 

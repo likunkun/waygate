@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-05-21 Unit Plan 自动打回连续原因计数
+
+- Unit Plan 草案预检自动修订预算应与 Requirements 保持同一语义：风险点是同一个 controller invalid reason 被反复修不掉，而不是一轮 Unit Plan 内出现了多个不同缺口。
+- `unitPlanAutoRevisionMax` 继续保留默认 5 和 state 覆盖机制，但语义调整为连续相同 reason 的最大自动修订次数；reason 变化时连续计数重置。
+- `unit_plan_draft_auto_revision_requested` 的 `attempt` 表示当前 reason 的连续 attempt，`total_attempt` 表示本轮 Unit Plan 草案累计自动打回次数；`controller-validation-error.json` 的 `attempt` 同样记录当前 reason 的连续 attempt。
+- 相同 reason 连续超过上限仍会进入 `unit_plan_draft_auto_revision_blocked`，blocked event 同时记录 `consecutive_attempts` 和 `total_attempts`，避免 drafter 在同一错误上无限循环。
+
 ## 2026-05-21 V0.6.0k UI/UX Skill Policy
 
 - UI/Web/prototype、可点击原型、prototype evidence 和生产 UI 一致性工作需要稳定使用 `ui-ux-pro-max`；把 `frontend-design` 当成等价 skill 会让既有产品 UI/原型一致性工作退回到泛视觉探索，削弱 route、DOM/组件、交互、可访问性、布局和遮挡检查。

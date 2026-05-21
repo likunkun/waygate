@@ -2,6 +2,17 @@
 
 ## 会话：2026-05-21
 
+### Unit Plan 自动打回连续原因计数修复
+- **状态：** complete
+- `unitPlanAutoRevisionMax` 现在表示同一个 controller invalid reason 连续最多自动打回 5 次；如果本次 Unit Plan 预检失败原因与上次不同，视为有效推进并重置连续计数。
+- `unit_plan_draft_auto_revision_requested` 继续用 `attempt` 表示当前 reason 的连续 attempt，并新增 `total_attempt`；`unit_plan_draft_auto_revision_blocked` 新增 `consecutive_attempts` 和 `total_attempts`；`controller-validation-error.json` 的 `attempt` 记录当前 reason 的连续 attempt。
+- Requirements 自动打回语义保持不变；本轮仅对齐 Unit Plan 自动打回计数。
+- 已验证 RED：新增 Unit Plan 自动打回测试先失败于不同 reason 仍被总次数预算阻塞、request event 缺少 `total_attempt`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_unit_plan_auto_revision_budget_resets_when_invalid_reason_changes workflow_controller/tests/test_rrc_controller.py::test_unit_plan_auto_revision_budget_blocks_repeated_same_reason_with_attempt_payloads workflow_controller/tests/test_rrc_controller.py::test_requirements_auto_revision_budget_resets_when_invalid_reason_changes workflow_controller/tests/test_rrc_controller.py::test_requirements_auto_revision_budget_still_blocks_repeated_same_reason -q` -> `4 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `185 passed in 10.70s`
+  - `python3 -m pytest workflow_controller/tests -q` -> `508 passed in 69.58s`
+
 ### V0.6.0k UI/UX Skill Policy
 - **状态：** implementation verified; full regression passed; packaged as `0.6.0k`.
 - Requirements prompt 现在明确 UI/Web/prototype、可点击原型、prototype evidence 和生产 UI 一致性工作必须使用 `ui-ux-pro-max`，并要求先盘点真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境；`frontend-design` 只能作为全新视觉探索或局部润色辅助。

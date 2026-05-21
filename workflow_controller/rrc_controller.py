@@ -2956,8 +2956,10 @@ class RalphRefinerController:
         )
         output_func = getattr(self, '_drive_progress_callback', None)
         compact_reporter = getattr(self, '_drive_compact_reporter', None)
-        attempts = 0
-        while attempts < max_revisions:
+        consecutive_attempts = 0
+        total_attempts = 0
+        last_reason_key: str | None = None
+        while True:
             if compact_reporter is not None:
                 compact_reporter.print_status(
                     state,
@@ -2969,7 +2971,15 @@ class RalphRefinerController:
             if not reason.startswith('unit plan gate invalid:'):
                 return state
 
-            attempts += 1
+            reason_key = _auto_revision_reason_key(reason)
+            if reason_key == last_reason_key:
+                consecutive_attempts += 1
+            else:
+                last_reason_key = reason_key
+                consecutive_attempts = 1
+            if consecutive_attempts > max_revisions:
+                break
+            total_attempts += 1
             state['unitPlanAccepted'] = False
             state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
             self._save_state(state)
@@ -2977,12 +2987,13 @@ class RalphRefinerController:
                 'task_id': state.get('task_id'),
                 'path': str(gate_path),
                 'reason': reason,
-                'attempt': attempts,
+                'attempt': consecutive_attempts,
+                'total_attempt': total_attempts,
             })
             self._write_controller_validation_artifact(
                 gate='unit-plan',
                 reason=reason,
-                attempt=attempts,
+                attempt=consecutive_attempts,
             )
             if compact_reporter is not None:
                 compact_reporter.print_status(
@@ -3003,8 +3014,6 @@ class RalphRefinerController:
             self._revise_unit_plan_gate(controller_validation_only=True)
             state = self.store.load_state()
 
-        state = self._refresh_unit_plan_gate_validation(state)
-        reason = str(state.get('blockedReason') or '')
         if reason.startswith('unit plan gate invalid:'):
             state['unitPlanAccepted'] = False
             state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
@@ -3017,6 +3026,8 @@ class RalphRefinerController:
                 'path': str(gate_path),
                 'reason': reason,
                 'attempts': max_revisions,
+                'consecutive_attempts': consecutive_attempts,
+                'total_attempts': total_attempts,
             })
         return state
 
