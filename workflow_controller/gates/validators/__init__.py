@@ -481,7 +481,11 @@ def validate_requirements_acceptance_quality(
                 + '; add Product Design Ref and Technical Architecture Ref for every AC'
             )
 
-    prototype_contract_content = _requirements_prototype_contract_content(content)
+    issues.extend(_requirements_e2e_review_matrix_issues(content, state))
+
+    prototype_contract_content = _requirements_content_without_e2e_review_section(
+        _requirements_prototype_contract_content(content)
+    )
     content_declares_prototype_contract = _requirements_declares_prototype_contract(prototype_contract_content, state)
     if _requirements_need_uiux_prototype(state) and not _requirements_has_uiux_prototype_evidence(prototype_contract_content):
         issues.append(
@@ -858,6 +862,553 @@ _REQUIREMENTS_INFRASTRUCTURE_CATEGORIES = [
     ('架构/交互逻辑/接口说明', ('架构/交互逻辑/接口说明', '架构、交互逻辑、接口说明')),
     ('依赖信息', ('依赖信息',)),
 ]
+
+_REQUIREMENTS_E2E_REVIEW_COLUMNS = [
+    ('ac_journey', 'AC / Journey'),
+    ('method', 'E2E Method'),
+    ('entrypoint', 'Real Entrypoint'),
+    ('user_steps', 'User Steps'),
+    ('fixture', 'Fixture / Test Data / Setup'),
+    ('command', 'Verification Command'),
+    ('environment_kind', 'Environment Kind'),
+    ('dependencies', 'Required Env / Dependencies'),
+    ('mock_policy', 'Mock Policy'),
+    ('assertions', 'Expected Assertions'),
+    ('notes', 'Human Review Notes'),
+]
+
+
+def _requirements_e2e_review_matrix_issues(content: str, state: dict[str, Any]) -> list[str]:
+    e2e_ac_ids = _requirements_e2e_acceptance_criterion_ids(content)
+    e2e_journey_ids = _requirements_active_e2e_journey_ids(content)
+    explicit_e2e_text = _requirements_text_explicitly_requires_e2e_review(content, state)
+    if explicit_e2e_text and not e2e_ac_ids and not e2e_journey_ids:
+        return [
+            'Requirements declares E2E/browser review but does not map it to an e2e AC or active e2e Journey; '
+            'map the E2E review to a specific AC or Journey before approval'
+        ]
+
+    if not e2e_ac_ids and not e2e_journey_ids:
+        return []
+
+    section = _requirements_e2e_review_section(content)
+    if not section.strip():
+        return [
+            'Requirements E2E review requires `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）` '
+            'before human approval; add the fixed-column E2E method/prerequisite matrix for every e2e AC and active e2e Journey'
+        ]
+
+    rows, header_issue = _requirements_e2e_review_rows(section)
+    if header_issue:
+        return [header_issue]
+
+    issues: list[str] = []
+    row_ids = _requirements_e2e_review_row_ids(rows)
+    for ac_id in sorted(e2e_ac_ids):
+        if ac_id not in row_ids:
+            issues.append(f'{ac_id} missing Requirements 4.6 E2E review matrix row')
+    for journey_id in sorted(e2e_journey_ids):
+        if journey_id not in row_ids:
+            issues.append(f'{journey_id} missing Requirements 4.6 E2E review matrix row')
+
+    for row in rows:
+        if not _requirements_e2e_review_row_has_required_mapping(row, e2e_ac_ids, e2e_journey_ids):
+            continue
+        label = row.get('ac_journey') or 'unknown AC/Journey'
+        issues.extend(_requirements_e2e_review_row_quality_issues(row, label))
+    return issues
+
+
+def _requirements_e2e_acceptance_criterion_ids(content: str) -> set[str]:
+    ids: set[str] = set()
+    for section_name in ('验收标准', 'Acceptance Criteria'):
+        ids.update(_requirements_e2e_ac_ids_in_section(_markdown_section(content, section_name)))
+    ids.update(_requirements_e2e_ac_ids_in_traceability(content))
+    return ids
+
+
+def _requirements_e2e_ac_ids_in_section(section: str) -> set[str]:
+    ids: set[str] = set()
+    for line in section.splitlines():
+        if _is_markdown_table_separator(line):
+            continue
+        line_ids = _requirements_ac_ids_in_text(line)
+        if not line_ids:
+            continue
+        if _requirements_verification_layer_from_line(line) == 'e2e':
+            ids.update(line_ids)
+    return ids
+
+
+def _requirements_e2e_ac_ids_in_traceability(content: str) -> set[str]:
+    ids: set[str] = set()
+    section = _markdown_section(content, 'Requirements Traceability Matrix') or _markdown_section(content, '需求可追溯矩阵')
+    header: dict[str, int] | None = None
+    for line in section.splitlines():
+        cells = _markdown_table_cells(line)
+        if not cells:
+            continue
+        if _requirements_e2e_traceability_header(cells):
+            header = _requirements_e2e_traceability_indices(cells)
+            continue
+        indices = header or {'ac': 1, 'layer': 3}
+        ac_cell = _cell_at(cells, indices.get('ac'))
+        layer_cell = _cell_at(cells, indices.get('layer'))
+        if _normalize_requirements_verification_layer(layer_cell) == 'e2e':
+            ids.update(_requirements_ac_ids_in_text(ac_cell))
+    return ids
+
+
+def _requirements_e2e_traceability_header(cells: list[str]) -> bool:
+    normalized = [_normalized_table_header(cell) for cell in cells]
+    return 'ac' in normalized and ('verificationlayer' in normalized or '验证层级' in normalized)
+
+
+def _requirements_e2e_traceability_indices(cells: list[str]) -> dict[str, int]:
+    indices: dict[str, int] = {}
+    for index, cell in enumerate(cells):
+        normalized = _normalized_table_header(cell)
+        if normalized == 'ac':
+            indices['ac'] = index
+        elif normalized in {'verificationlayer', 'layer', '验证层级'}:
+            indices['layer'] = index
+    return indices
+
+
+def _requirements_active_e2e_journey_ids(content: str) -> set[str]:
+    section = _markdown_section(content, 'Journey Acceptance Matrix')
+    ids: set[str] = set()
+    header: dict[str, int] | None = None
+    for line in section.splitlines():
+        cells = _markdown_table_cells(line)
+        if not cells:
+            continue
+        if _requirements_journey_matrix_header(cells):
+            header = _requirements_journey_matrix_indices(cells)
+            continue
+        indices = header or {'journey': 0, 'status': 2, 'layer': 5}
+        status = _normalized_table_value(_cell_at(cells, indices.get('status')))
+        layer = _normalize_requirements_verification_layer(_cell_at(cells, indices.get('layer')))
+        if status == 'active' and layer == 'e2e':
+            ids.update(_requirements_journey_ids_in_text(_cell_at(cells, indices.get('journey'))))
+    return ids
+
+
+def _requirements_journey_matrix_header(cells: list[str]) -> bool:
+    normalized = [_normalized_table_header(cell) for cell in cells]
+    return 'journey' in normalized and 'status' in normalized and (
+        'verificationlayer' in normalized or 'layer' in normalized or '验证层级' in normalized
+    )
+
+
+def _requirements_journey_matrix_indices(cells: list[str]) -> dict[str, int]:
+    indices: dict[str, int] = {}
+    for index, cell in enumerate(cells):
+        normalized = _normalized_table_header(cell)
+        if normalized in {'journey', 'journeyid', '旅程', '旅程id'}:
+            indices['journey'] = index
+        elif normalized in {'status', '状态'}:
+            indices['status'] = index
+        elif normalized in {'verificationlayer', 'layer', '验证层级'}:
+            indices['layer'] = index
+    return indices
+
+
+def _requirements_text_explicitly_requires_e2e_review(content: str, state: dict[str, Any]) -> bool:
+    del state
+    test_strategy = _markdown_section(content, 'Test Strategy') or _markdown_section(content, '测试策略')
+    if _requirements_text_has_e2e_review_marker(test_strategy):
+        return True
+    contract_content = _requirements_content_without_e2e_review_section(_requirements_prototype_contract_content(content))
+    return _requirements_text_has_real_browser_contract_marker(contract_content)
+
+
+def _requirements_text_has_e2e_review_marker(text: str) -> bool:
+    normalized = _normalized_requirements_text(text)
+    if not normalized:
+        return False
+    e2e_markers = [
+        'playwright',
+        'cypress',
+        'browser e2e',
+        'browser test',
+        'end-to-end',
+        'end to end',
+        'e2e',
+        '浏览器',
+        '端到端',
+    ]
+    negative_markers = ['不涉及', '无需', '不需要', 'not required', 'not needed', 'not applicable']
+    return any(marker in normalized for marker in e2e_markers) and not any(
+        marker in normalized for marker in negative_markers
+    )
+
+
+def _requirements_text_has_real_browser_contract_marker(text: str) -> bool:
+    for line in text.splitlines():
+        normalized = _normalized_requirements_text(line)
+        if not normalized or _is_markdown_table_separator(normalized):
+            continue
+        has_browser = any(
+            marker in normalized
+            for marker in [
+                'real browser proof',
+                'real browser evidence',
+                'browser proof',
+                'playwright proof',
+                '真实浏览器证明',
+                '真实浏览器证据',
+                '浏览器证明',
+                '真实浏览器',
+            ]
+        )
+        has_contract = any(
+            marker in normalized
+            for marker in ['prototype', '原型', 'ui contract', 'ui 合约', 'web', 'production ui', '生产 ui']
+        )
+        if has_browser and has_contract:
+            return True
+    return False
+
+
+def _requirements_content_without_e2e_review_section(content: str) -> str:
+    lines = content.splitlines()
+    output: list[str] = []
+    skipping = False
+    skip_level = 0
+    for line in lines:
+        heading = _requirements_markdown_heading(line)
+        if heading:
+            level, heading_text = heading
+            normalized = _normalized_requirements_text(heading_text)
+            if '4.6' in normalized and (
+                'e2e' in normalized or '测试方法' in normalized or 'prerequisite' in normalized
+            ):
+                skipping = True
+                skip_level = level
+                continue
+            if skipping and level <= skip_level:
+                skipping = False
+        if not skipping:
+            output.append(line)
+    return '\n'.join(output)
+
+
+def _requirements_e2e_review_section(content: str) -> str:
+    return (
+        _markdown_section(content, 'E2E Test Method & Prerequisite Matrix')
+        or _markdown_section(content, 'E2E 测试方法')
+        or _markdown_section(content, '4.6 E2E')
+    )
+
+
+def _requirements_e2e_review_rows(section: str) -> tuple[list[dict[str, str]], str | None]:
+    header_indices: dict[str, int] | None = None
+    rows: list[dict[str, str]] = []
+    for line in section.splitlines():
+        cells = _markdown_table_cells(line)
+        if not cells:
+            continue
+        if _requirements_e2e_review_header(cells):
+            header_indices = _requirements_e2e_review_indices(cells)
+            continue
+        if header_indices is None:
+            continue
+        row = {
+            key: _cell_at(cells, header_indices.get(key))
+            for key, _label in _REQUIREMENTS_E2E_REVIEW_COLUMNS
+        }
+        if not any(value.strip() for value in row.values()):
+            continue
+        rows.append(row)
+
+    if header_indices is None:
+        return [], (
+            'Requirements 4.6 E2E review matrix missing fixed columns: '
+            + ', '.join(label for _key, label in _REQUIREMENTS_E2E_REVIEW_COLUMNS)
+        )
+    missing = [
+        label
+        for key, label in _REQUIREMENTS_E2E_REVIEW_COLUMNS
+        if key not in header_indices
+    ]
+    if missing:
+        return rows, 'Requirements 4.6 E2E review matrix missing fixed column(s): ' + ', '.join(missing)
+    return rows, None
+
+
+def _requirements_e2e_review_header(cells: list[str]) -> bool:
+    normalized = {_normalized_table_header(cell) for cell in cells}
+    return 'acjourney' in normalized and 'e2emethod' in normalized
+
+
+def _requirements_e2e_review_indices(cells: list[str]) -> dict[str, int]:
+    expected = {
+        _normalized_table_header(label): key
+        for key, label in _REQUIREMENTS_E2E_REVIEW_COLUMNS
+    }
+    indices: dict[str, int] = {}
+    for index, cell in enumerate(cells):
+        key = expected.get(_normalized_table_header(cell))
+        if key:
+            indices[key] = index
+    return indices
+
+
+def _requirements_e2e_review_row_ids(rows: list[dict[str, str]]) -> set[str]:
+    ids: set[str] = set()
+    for row in rows:
+        ids.update(_requirements_ac_ids_in_text(row.get('ac_journey', '')))
+        ids.update(_requirements_journey_ids_in_text(row.get('ac_journey', '')))
+    return ids
+
+
+def _requirements_e2e_review_row_has_required_mapping(
+    row: dict[str, str],
+    e2e_ac_ids: set[str],
+    e2e_journey_ids: set[str],
+) -> bool:
+    mapped_ids = _requirements_ac_ids_in_text(row.get('ac_journey', '')) | _requirements_journey_ids_in_text(
+        row.get('ac_journey', '')
+    )
+    return bool(mapped_ids & (e2e_ac_ids | e2e_journey_ids))
+
+
+def _requirements_e2e_review_row_quality_issues(row: dict[str, str], label: str) -> list[str]:
+    issues: list[str] = []
+    for key, column_label in _REQUIREMENTS_E2E_REVIEW_COLUMNS:
+        if _requirements_e2e_cell_is_placeholder(row.get(key, '')):
+            issues.append(f'{label} Requirements 4.6 {column_label} is empty or placeholder')
+
+    if not _requirements_e2e_method_is_specific(row.get('method', '')):
+        issues.append(f'{label} Requirements 4.6 E2E Method must name a real browser/end-to-end method')
+    if not _requirements_e2e_entrypoint_is_real(row.get('entrypoint', '')):
+        issues.append(f'{label} Requirements 4.6 Real Entrypoint must be a real route, URL, page, command, or service entrypoint')
+    if not _requirements_e2e_user_steps_are_specific(row.get('user_steps', '')):
+        issues.append(f'{label} Requirements 4.6 User Steps must describe concrete user actions')
+    if not _requirements_e2e_fixture_is_specific(row.get('fixture', '')):
+        issues.append(f'{label} Requirements 4.6 Fixture / Test Data / Setup must define fixed data or setup')
+    if not _requirements_e2e_command_is_specific(row.get('command', '')):
+        issues.append(f'{label} Requirements 4.6 Verification Command must be a concrete executable command')
+    if _normalized_table_value(row.get('environment_kind', '')) not in REAL_E2E_ENVIRONMENT_KINDS:
+        issues.append(
+            f"{label} Requirements 4.6 Environment Kind must be local_real or production_readonly, not "
+            f"{row.get('environment_kind') or 'missing'}"
+        )
+    if _requirements_e2e_mock_policy_allows_core_api_mock(row.get('mock_policy', '')):
+        issues.append(f'{label} Requirements 4.6 Mock Policy must not allow core API mock/stub routes')
+    if not _requirements_e2e_assertions_are_strong(row.get('assertions', '')):
+        issues.append(
+            f'{label} Requirements 4.6 Expected Assertions must contain concrete machine-checkable assertions; '
+            'screenshots or human observation cannot be the only assertion'
+        )
+    return issues
+
+
+def _requirements_e2e_cell_is_placeholder(value: str) -> bool:
+    normalized = _normalized_table_value(value)
+    if not normalized:
+        return True
+    compact = re.sub(r'[\s`*_，。:：;；、,./\\|-]+', '', normalized)
+    placeholders = {
+        'tbd',
+        'todo',
+        'pending',
+        'na',
+        'n/a',
+        'none',
+        'null',
+        'unknown',
+        '待补',
+        '待确认',
+        '未指定',
+        '暂无',
+        '无',
+        '不涉及',
+        '待unitplan映射',
+        'expectedcommand',
+        '待unitplan补充',
+    }
+    return normalized in placeholders or compact in placeholders
+
+
+def _requirements_e2e_method_is_specific(value: str) -> bool:
+    normalized = _normalized_table_value(value)
+    if _requirements_e2e_cell_is_placeholder(value):
+        return False
+    method_markers = ['playwright', 'cypress', 'browser', 'end-to-end', 'end to end', 'e2e', 'pytest', '浏览器', '端到端']
+    return any(marker in normalized for marker in method_markers)
+
+
+def _requirements_e2e_entrypoint_is_real(value: str) -> bool:
+    normalized = _normalized_table_value(value)
+    if _requirements_e2e_cell_is_placeholder(value):
+        return False
+    invalid_markers = ['requirements-draft', 'prototype-review', 'prototype manifest', 'screenshot', '截图', 'artifact only']
+    if any(marker in normalized for marker in invalid_markers):
+        return False
+    return bool(
+        re.search(r'https?://|(?:^|\s)/[A-Za-z0-9_./:-]+', value)
+        or any(marker in normalized for marker in ['route', 'url', 'page', 'command', 'cli', 'service', '生产', '真实'])
+    )
+
+
+def _requirements_e2e_user_steps_are_specific(value: str) -> bool:
+    normalized = _normalized_table_value(value)
+    if _requirements_e2e_cell_is_placeholder(value):
+        return False
+    action_markers = [
+        'open',
+        'click',
+        'submit',
+        'login',
+        'navigate',
+        'select',
+        'type',
+        'create',
+        '打开',
+        '点击',
+        '提交',
+        '登录',
+        '选择',
+        '输入',
+        '创建',
+    ]
+    return ('->' in value or len(normalized.split()) >= 4) and any(marker in normalized for marker in action_markers)
+
+
+def _requirements_e2e_fixture_is_specific(value: str) -> bool:
+    normalized = _normalized_table_value(value)
+    if _requirements_e2e_cell_is_placeholder(value):
+        return False
+    fixture_markers = [
+        'fixture',
+        'seed',
+        'test data',
+        'setup',
+        'migration',
+        'database',
+        'db',
+        'account',
+        'user',
+        '测试数据',
+        '固定数据',
+        '测试账号',
+        '初始化',
+        '迁移',
+    ]
+    return any(marker in normalized for marker in fixture_markers)
+
+
+def _requirements_e2e_command_is_specific(value: str) -> bool:
+    normalized = _normalized_table_value(value)
+    if _requirements_e2e_cell_is_placeholder(value):
+        return False
+    generic_patterns = [
+        r'^(?:npx\s+|pnpm\s+exec\s+|npm\s+exec\s+)?playwright\s+test$',
+        r'^pytest$',
+        r'^python\s+-m\s+pytest$',
+        r'^browser\s+test$',
+        r'^e2e\s+test$',
+        r'^expected\s+playwright\s+command$',
+    ]
+    if any(re.fullmatch(pattern, normalized) for pattern in generic_patterns):
+        return False
+    command_markers = ['playwright', 'cypress', 'pytest', 'npm', 'pnpm', 'yarn', 'bun', 'python']
+    has_command = any(marker in normalized for marker in command_markers)
+    has_specific_target = bool(
+        re.search(r'\btests?/', value)
+        or re.search(r'\.(?:spec|test)\.(?:ts|tsx|js|jsx|py)\b', value)
+        or re.search(r'\s--(?:grep|project|config|headed|browser)\b', value)
+    )
+    return has_command and has_specific_target
+
+
+def _requirements_e2e_mock_policy_allows_core_api_mock(value: str) -> bool:
+    normalized = _normalized_table_value(value).replace('`', '')
+    if _requirements_e2e_cell_is_placeholder(value):
+        return True
+    risky_markers = [
+        'core api mock',
+        'core api stub',
+        'mock core api',
+        'stub core api',
+        'page.route',
+        'route.fulfill',
+        'mock api server',
+        'mocked api',
+        'stubbed api',
+        'fixture-only server',
+        '核心 api mock',
+        '核心业务 api mock',
+    ]
+    if not any(marker in normalized for marker in risky_markers):
+        return False
+    negated_patterns = [
+        r'\bno\b.{0,80}(core api|page\.route|route\.fulfill|mock|stub)',
+        r'\bwithout\b.{0,80}(core api|page\.route|route\.fulfill|mock|stub)',
+        r'(禁止|不得|不允许|不能|不).{0,80}(core api|核心|page\.route|route\.fulfill|mock|stub)',
+    ]
+    return not any(re.search(pattern, normalized) for pattern in negated_patterns)
+
+
+def _requirements_e2e_assertions_are_strong(value: str) -> bool:
+    normalized = _normalized_table_value(value)
+    if _requirements_e2e_cell_is_placeholder(value):
+        return False
+    weak_markers = ['screenshot', '截图', 'human observation', '人工观察', 'manual observe', 'reviewer observes']
+    strong_markers = [
+        'assert',
+        'expect',
+        'equals',
+        'count',
+        'status',
+        'field',
+        'row',
+        'database',
+        'persist',
+        'api',
+        'dom',
+        'text',
+        'value',
+        'sorting',
+        'order',
+        'permission',
+        'export',
+        'confirmation',
+        'id',
+        '断言',
+        '数量',
+        '状态',
+        '字段',
+        '持久化',
+        '排序',
+        '权限',
+        '导出',
+        '文案',
+    ]
+    return any(marker in normalized for marker in strong_markers) and not (
+        any(marker in normalized for marker in weak_markers)
+        and not any(marker in normalized for marker in strong_markers)
+    )
+
+
+def _requirements_journey_ids_in_text(text: str) -> set[str]:
+    return {match.group(0).upper() for match in re.finditer(r'\bJ-\d+(?:[-.]\d+)*\b', text, re.IGNORECASE)}
+
+
+def _normalized_table_header(value: str) -> str:
+    return re.sub(r'[\s`*_/\-|（）()]+', '', str(value or '').strip().lower())
+
+
+def _normalized_table_value(value: str) -> str:
+    return re.sub(r'\s+', ' ', str(value or '').strip().strip('`*_')).strip().lower()
+
+
+def _cell_at(cells: list[str], index: int | None) -> str:
+    if index is None or index < 0 or index >= len(cells):
+        return ''
+    return cells[index]
 
 
 def _requirements_target_infrastructure_required(state: dict[str, Any]) -> bool:

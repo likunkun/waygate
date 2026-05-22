@@ -83,6 +83,7 @@ UI/UX skill policy:
 
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
+- 必须沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图；除非创建 Requirements change request 并重新通过 Requirements gate，否则 Unit Plan 不得弱化这些前置审阅结论。
 - 如果已批准 requirements 包含 `Design/Architecture Traceability Matrix`，每个 test case 还必须保留对应 AC 的 `product_design_refs` 和 `technical_architecture_refs`，并与 requirements 中的 Product Design Ref / Technical Architecture Ref 一致。
 - 如果已批准 requirements 包含 active Journey，closure/E2E test case 必须在 JSON `test_cases[]` 中显式写 Journey 映射字段。推荐使用 `covers_journeys: ["J-001"]` 或 `journey_ids: ["J-001"]`；`journey_refs` / `journeyRefs` 只是历史兼容别名，不作为推荐输出字段。
 - Journey 映射不能只放在 Markdown prose、Journey Acceptance Matrix、设计引用或架构引用中；controller 只从 `test_cases[]` 的结构化字段生成 Journey 合约和证据。

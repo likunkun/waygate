@@ -1,5 +1,21 @@
 # 进度日志
 
+## 会话：2026-05-22
+
+### V0.6.2 Requirements-stage E2E 前置审阅门禁
+- **状态：** implementation verified; full regression passed.
+- Requirements prompt 和默认 Requirements gate body 新增固定 `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）`，位于 4.5 之后、4.7 之前。
+- Requirements preflight 现在在 e2e AC、active e2e Journey、明确 Playwright/browser/end-to-end 测试策略或 Web/原型/UI 真实浏览器证明需求出现时，要求 4.6 矩阵并校验真实入口、用户步骤、fixture/setup、具体命令、`local_real|production_readonly`、mock policy 和强断言。
+- Unit Plan prompt 要求继承已批准 4.6 的 E2E 方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图。
+- 正式文档新增 `docs/workflow/requirements-e2e-review-policy.md`，并登记到 `docs/README.md`；`docs/workflow.md` 和 `docs/workflow.zh-CN.md` 已同步说明。
+- 已完成定向验证：
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `73 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `72 passed`
+  - `python3 -m pytest workflow_controller/tests/gates/test_gates_structure.py -q` -> `19 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `186 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `521 passed in 67.89s`
+- 用户要求打包后已执行 `bash packaging/debian/build-deb.sh`，生成 `dist/waygate_0.6.0k_all.deb`；`dpkg-deb --field dist/waygate_0.6.0k_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0k / all / python3`。本次未做版本号 bump。
+
 ## 会话：2026-05-21
 
 ### Unit Plan 自动打回连续原因计数修复

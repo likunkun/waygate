@@ -253,6 +253,10 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert 'covered/deferred/rejected/out_of_scope' in requirements_prompt
     assert '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）' in requirements_prompt
     assert '| AC | Product Design Ref | Technical Architecture Ref | Notes |' in requirements_prompt
+    assert '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）' in requirements_prompt
+    assert '| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |' in requirements_prompt
+    assert 'local_real|production_readonly' in requirements_prompt
+    assert '截图只能作为辅助 artifact' in requirements_prompt
     assert '## 4.7 Journey Acceptance Matrix' in requirements_prompt
     assert '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |' in requirements_prompt
     assert 'e2e 或 workflow_validation_level=closure' in requirements_prompt
@@ -270,6 +274,7 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '`fixture`' in unit_plan_prompt
     assert '`product_design_refs`' in unit_plan_prompt
     assert '`technical_architecture_refs`' in unit_plan_prompt
+    assert '沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图' in unit_plan_prompt
     assert '测试命令退出码为 0 且断言覆盖 AC' in unit_plan_prompt
     assert '对不适合 E2E 的 AC' in unit_plan_prompt
     requirements_body = render_requirements_gate_body(state)
@@ -282,6 +287,8 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert 'unit / functional / integration / e2e / manual' in requirements_body
     assert '需求可追溯矩阵' in requirements_body
     assert '设计与架构可追溯矩阵' in requirements_body
+    assert 'E2E 测试方法与前置依赖矩阵' in requirements_body
+    assert '| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |' in requirements_body
     assert 'Journey Acceptance Matrix' in requirements_body
     assert '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |' in requirements_body
     assert '已澄清事项、关键假设与待确认风险' in requirements_body

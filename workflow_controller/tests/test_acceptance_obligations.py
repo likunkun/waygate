@@ -179,6 +179,68 @@ def _valid_infrastructure_section() -> str:
     )
 
 
+def _valid_requirements_e2e_matrix_section(
+    *,
+    ac_journey: str = 'AC-01; J-001',
+    method: str = 'Playwright browser test in Chromium against local dev server',
+    entrypoint: str = '`/orders` production route via `pnpm dev`',
+    user_steps: str = 'Open `/orders` -> click `Create order` -> submit item `SKU-123`',
+    fixture: str = 'Seed user `teacher@example.test`, order fixture `tests/fixtures/orders/ac-01.json`, run migrations',
+    command: str = 'DATABASE_URL=file:./test.db pnpm exec playwright test tests/e2e/orders.spec.ts --project=chromium --grep @AC-01',
+    environment_kind: str = 'local_real',
+    dependencies: str = '`DATABASE_URL`, local app server on 127.0.0.1:4173, seeded SQLite test DB',
+    mock_policy: str = 'No core API mocks; no `page.route("**/api/**")`; external payment API uses test account only',
+    assertions: str = 'Assert confirmation id `ORD-1001`, order row count 1, status `Submitted`, and persisted order total `42.00`',
+    notes: str = 'Reviewer confirms route, fixture, command, env, mock policy, and assertions before approval',
+) -> str:
+    return (
+        '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）\n'
+        '| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        f'| {ac_journey} | {method} | {entrypoint} | {user_steps} | {fixture} | `{command}` | {environment_kind} | {dependencies} | {mock_policy} | {assertions} | {notes} |\n'
+    )
+
+
+def _requirements_gate_with_e2e_policy(
+    matrix_section: str | None,
+    *,
+    acceptance_layer: str = 'e2e',
+    journey_layer: str = 'e2e',
+    test_strategy: str = '- Playwright E2E covers AC-01 with real browser assertions.\n',
+) -> str:
+    content = (
+        '# 需求与验收确认\n\n'
+        '## 1. 需求\n'
+        '- 用户可以从订单页面创建订单并看到持久化结果。\n\n'
+        '## 2. 用户旅程\n'
+        '- J-001 订单创建正常路径：打开订单页面 -> 创建订单 -> 查看确认状态。\n\n'
+        '## 3. 验收标准\n'
+        f'- AC-01 [verification: {acceptance_layer}]: 用户用固定 fixture 创建订单后，页面显示确认号 `ORD-1001`、列表新增 1 条订单并持久化状态 `Submitted`。\n\n'
+        '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）\n'
+        '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        f'| 无 active must AO | AC-01 | covered | {acceptance_layer} | E2E browser evidence required. |\n\n'
+        '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）\n'
+        '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+        '| --- | --- | --- | --- |\n'
+        '| AC-01 | PD-ORDER-01 | TA-ORDER-01 | 订单创建闭环。 |\n\n'
+    )
+    if matrix_section is not None:
+        content += matrix_section.strip() + '\n\n'
+    content += (
+        '## 4.7 Journey Acceptance Matrix\n'
+        '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        f'| J-001 | 订单创建正常路径 | active | Open orders -> create order -> see confirmation | AC-01 | {journey_layer} | expected Playwright command | TC-AC-01-E2E | 待 Unit Plan 映射 |\n\n'
+        '## 4.8 已澄清事项、关键假设与待确认风险\n'
+        '- 已澄清事项：订单创建验收需要真实浏览器路径和固定 fixture。\n\n'
+        f'{_valid_infrastructure_section()}\n'
+        '## 5. 测试策略（Test Strategy）\n'
+        f'{test_strategy}'
+    )
+    return content
+
+
 def _valid_nested_infrastructure_section() -> str:
     return (
         '## 4.9 目标项目基础设施信息\n'
@@ -1009,6 +1071,89 @@ def test_requirements_approval_accepts_out_of_scope_with_blank_ac_and_reason(tmp
     }
 
     validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_e2e_ac_requires_4_6_review_matrix(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(_requirements_gate_with_e2e_policy(None), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='E2E.*4\\.6'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_e2e_review_matrix_accepts_complete_ac_and_journey_row(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(_valid_requirements_e2e_matrix_section()),
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_e2e_review_matrix_requires_rows_for_e2e_ac_and_journey(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(ac_journey='AC-01')
+        ),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='J-001.*4\\.6'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+@pytest.mark.parametrize(
+    ('matrix_kwargs', 'expected_issue'),
+    [
+        ({'entrypoint': 'TBD'}, 'Real Entrypoint'),
+        ({'user_steps': 'pending'}, 'User Steps'),
+        ({'fixture': 'N/A'}, 'Fixture / Test Data / Setup'),
+        ({'command': 'playwright test'}, 'Verification Command'),
+        ({'environment_kind': 'component_mock'}, 'Environment Kind'),
+        ({'mock_policy': 'Mock core API with page.route("**/api/orders") and route.fulfill'}, 'Mock Policy'),
+        ({'assertions': 'screenshot retained and reviewer observes the page'}, 'Expected Assertions'),
+    ],
+)
+def test_requirements_e2e_review_matrix_rejects_incomplete_or_non_real_rows(
+    tmp_path: Path,
+    matrix_kwargs: dict[str, str],
+    expected_issue: str,
+) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(**matrix_kwargs)
+        ),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match=expected_issue):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_explicit_e2e_strategy_must_map_to_e2e_ac_or_active_journey(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(),
+            acceptance_layer='functional',
+            journey_layer='functional',
+            test_strategy='- Playwright browser E2E must prove the order creation flow.\n',
+        ),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='map.*E2E.*AC.*Journey'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+def test_requirements_non_e2e_gate_does_not_need_4_6_review_matrix(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(_minimal_requirements_gate_with_infrastructure(_valid_infrastructure_section()), encoding='utf-8')
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
 
 
 def test_v0_6_0_uiux_project_requires_prototype_before_requirements_human_confirmation(tmp_path: Path) -> None:

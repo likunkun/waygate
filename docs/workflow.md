@@ -49,6 +49,8 @@ User-supplied infrastructure facts are not accepted as verified by default. The 
 Before a human sees the gate, the controller can preflight it. Missing AC mapping, missing verification layers, and malformed traceability can route the draft back to the drafter automatically.
 The preflight also rejects vague infrastructure placeholders such as `暂无` or `不清楚`, unsupported `未发现` / `没有` claims, and 4.9 statements that claim `用户确认` or `已验证` without corresponding 4.8 traceability.
 
+If Requirements declare or imply real E2E/browser acceptance, humans must review `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）` before approval. The matrix maps each E2E AC or active E2E Journey to the method, real entrypoint, user steps, fixture/setup, concrete command, environment kind, dependencies, mock policy, and expected assertions. The controller rejects missing rows, generic commands, non-real entrypoints, `component_mock`/mocked core API policies, and screenshots or human observation used as the only assertion. The full policy is registered in [docs/workflow/requirements-e2e-review-policy.md](workflow/requirements-e2e-review-policy.md).
+
 UI, Web, clickable prototype, prototype evidence, and production UI consistency work must use `ui-ux-pro-max`. `frontend-design` can assist new visual exploration or local polish, but cannot replace `ui-ux-pro-max` for existing product UI/prototype consistency. The full V0.6.0k policy is registered in [docs/workflow/ui-ux-skill-policy.md](workflow/ui-ux-skill-policy.md).
 
 ## Unit Plan Stage
@@ -64,6 +66,7 @@ The Unit Plan defines what the implementation agent may do. It should include:
 - a `Controller State Patch` JSON block.
 
 The controller validates the plan before approval. Invalid plans are not marked approved.
+When approved Requirements include 4.6 E2E review details, Unit Plan must preserve the approved method, real entrypoint, fixture/setup, command dependencies, environment kind, mock policy, and assertion intent unless a Requirements change request is approved first.
 When Unit Plan preflight routes a draft back automatically, `unitPlanAutoRevisionMax` limits consecutive revisions for the same normalized invalid reason. A different invalid reason is treated as progress and resets the consecutive counter; request events record both the current-reason `attempt` and the cumulative `total_attempt`.
 
 ## Implementation Stage

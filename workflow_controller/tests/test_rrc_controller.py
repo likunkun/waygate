@@ -45,6 +45,14 @@ def _requirements_body_with_infrastructure(body: str) -> str:
     return body.rstrip() + '\n\n' + _requirements_infrastructure_section()
 
 
+def _requirements_e2e_review_matrix(ac_journey: str = 'AC-1; J-001') -> str:
+    return f"""## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）
+| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| {ac_journey} | Playwright browser test in Chromium against local app | `/delivery` production route | Open `/delivery` -> submit request `D-100` -> view confirmation | Seed delivery fixture `tests/fixtures/delivery.json` and test user `user@example.test` | `DATABASE_URL=file:test.db pnpm exec playwright test tests/e2e/delivery.spec.ts --project=chromium --grep @AC-1` | local_real | `DATABASE_URL`, local app server, seeded SQLite test DB | No core API mocks; no `page.route("**/api/**")`; external services use test account only | Assert confirmation `D-100`, persisted status `submitted`, and visible row count 1 | Reviewer confirms route, fixture, command, env, mock policy, and assertions before approval |
+"""
+
+
 def run_rrc(
     *args: str,
     cwd: Path | None = None,
@@ -5426,7 +5434,7 @@ def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_re
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
-"""),
+""" + _requirements_e2e_review_matrix('AC-1')),
         _requirements_body_with_infrastructure("""# 需求与验收确认
 
 ## 3. 验收标准
@@ -5437,6 +5445,7 @@ def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_re
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
 
+""" + _requirements_e2e_review_matrix() + """
 ## Journey Acceptance Matrix
 | Journey | Title | Status | Steps | AC | Verification Layer |
 | --- | --- | --- | --- | --- | --- |
@@ -6911,7 +6920,7 @@ def test_requirements_approval_blocks_e2e_ac_without_journey_contract(tmp_path: 
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
-"""),
+""" + _requirements_e2e_review_matrix('AC-1')),
     )
 
     with pytest.raises(ValueError, match='requirements gate invalid:.*journey'):
@@ -6962,6 +6971,7 @@ def test_requirements_approval_writes_journey_contract_artifact(tmp_path: Path) 
 | --- | --- | --- | --- | --- |
 | 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
 
+""" + _requirements_e2e_review_matrix() + """
 ## Journey Acceptance Matrix
 | Journey | Title | Status | Steps | AC | Verification Layer |
 | --- | --- | --- | --- | --- | --- |
@@ -6992,6 +7002,62 @@ def test_requirements_approval_writes_journey_contract_artifact(tmp_path: Path) 
     assert journey['test_cases'] == []
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['journeyContractPath'] == str(artifact_path)
+
+
+def test_requirements_approval_rejects_e2e_gate_without_4_6_review_matrix(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    from workflow_controller.gates.parsers import write_gate_file
+
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(
+        gate_path,
+        _requirements_body_with_infrastructure("""# 需求与验收确认
+
+## 3. 验收标准
+- AC-1 [verification: e2e]: User completes the delivery journey with persisted confirmation `D-100`.
+
+## Requirements Traceability Matrix
+| AO | AC | Status | Verification Layer | Evidence/Reason |
+| --- | --- | --- | --- | --- |
+| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+
+## Journey Acceptance Matrix
+| Journey | Title | Status | Steps | AC | Verification Layer |
+| --- | --- | --- | --- | --- | --- |
+| J-001 | Delivery happy path | active | Start request -> complete delivery -> see confirmation | AC-1 | e2e |
+"""),
+    )
+
+    with pytest.raises(ValueError, match='requirements gate invalid:.*E2E.*4\\.6'):
+        controller.approve_human_gate('requirements', actor='tester')
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['requirementsAccepted'] is False
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['blockedReason'].startswith('requirements gate invalid:')
+    assert '4.6' in state['blockedReason']
 
 
 def test_run_rejects_preapproved_requirements_missing_ac_verification_layer(tmp_path: Path) -> None:

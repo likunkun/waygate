@@ -126,6 +126,8 @@ class TestGeneratorsLayer:
         assert 'covered/deferred/rejected/out_of_scope' in body
         assert '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）' in body
         assert '| AC | Product Design Ref | Technical Architecture Ref | Notes |' in body
+        assert '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）' in body
+        assert '| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |' in body
         assert '## 4.7 Journey Acceptance Matrix' in body
         assert '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |' in body
         assert 'prototype evidence' in body

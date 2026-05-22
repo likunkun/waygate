@@ -49,6 +49,8 @@ Requirements drafter 会生成 Markdown gate，包含：
 人类看到 gate 之前，controller 可以先做预检。缺 AC 映射、缺 verification layer、traceability 格式错误等问题会自动打回 drafter。
 预检也会拒绝 `暂无`、`不清楚` 等空泛基础设施占位、缺少依据的 `未发现` / `没有` 声明，以及 4.9 声称“用户确认”或“已验证”但 4.8 没有对应留痕的内容。
 
+如果 Requirements 声明或隐含真实 E2E / 浏览器验收，人工批准前必须审阅 `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）`。该矩阵把每个 E2E AC 或 active E2E Journey 映射到测试方法、真实入口、用户步骤、fixture/setup、具体命令、环境类型、依赖、mock policy 和预期断言。Controller 会拒绝缺行、泛化命令、非真实入口、`component_mock`/核心 API mock，以及把截图或人工观察当成唯一断言的写法。完整规则已登记在 [docs/workflow/requirements-e2e-review-policy.md](workflow/requirements-e2e-review-policy.md)。
+
 UI、Web、可点击原型、prototype evidence 和生产 UI 一致性工作必须使用 `ui-ux-pro-max`。`frontend-design` 可以辅助全新视觉探索或局部润色，但不能替代 `ui-ux-pro-max` 做既有产品 UI/原型一致性工作。完整 V0.6.0k policy 已登记在 [docs/workflow/ui-ux-skill-policy.md](workflow/ui-ux-skill-policy.md)。
 
 ## Unit Plan 阶段
@@ -64,6 +66,7 @@ Unit Plan 定义 implementation agent 可以做什么。它应包含：
 - `Controller State Patch` JSON 块。
 
 Controller 会在 approval 前校验计划。无效计划不会被标记为 approved。
+如果已批准 Requirements 包含 4.6 E2E 审阅细节，Unit Plan 必须继承已批准的测试方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图；除非先通过 Requirements change request，不能在 Unit Plan 中弱化这些结论。
 Unit Plan 预检自动打回时，`unitPlanAutoRevisionMax` 限制的是同一个 normalized invalid reason 的连续修订次数。不同 invalid reason 视为有效推进并重置连续计数；request event 同时记录当前 reason 的连续 `attempt` 和本轮累计 `total_attempt`。
 
 ## Implementation 阶段

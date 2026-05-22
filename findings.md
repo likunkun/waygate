@@ -1,5 +1,13 @@
 # 发现与决策
 
+## 2026-05-22 Requirements-stage E2E 前置审阅门禁
+
+- 真实 E2E / 浏览器验收的测试方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图必须在 Requirements 人工批准前暴露；否则 Unit Plan 才发现缺口时，人类已经批准了不完整的验收合同。
+- 触发条件必须只看真实 AC、active Journey、Test Strategy 或明确 Web/原型/UI 合同内容；模板指导文本不能单独触发 4.6 或 prototype manifest 要求。
+- 当文本要求 E2E 但没有 e2e AC 或 active e2e Journey 时，正确修复不是只补一张 4.6 表，而是先把 E2E 审阅映射到具体 AC 或 Journey。
+- `environment_kind` 在 Requirements 4.6 阶段只接受 `local_real` 和 `production_readonly`；`component_mock` / `contract_mock` / `visual` 仍只能作为后续 Unit Plan 的辅助非 E2E 测试语义。
+- 截图和人工观察只能作为辅助 artifact；Expected Assertions 必须包含 DOM/API/数据库/状态/数量/排序/权限/导出内容等可机器断言的具体期望。
+
 ## 2026-05-21 Unit Plan 自动打回连续原因计数
 
 - Unit Plan 草案预检自动修订预算应与 Requirements 保持同一语义：风险点是同一个 controller invalid reason 被反复修不掉，而不是一轮 Unit Plan 内出现了多个不同缺口。
