@@ -12,6 +12,7 @@ from workflow_controller.rrc_controller import (
     DEFAULT_MAX_AUTOMATIC_STEPS,
     RalphRefinerController,
     add_go_parser,
+    _format_recoverable_wait_message,
     normalize_go_args,
 )
 from workflow_controller.state_machine.actions import compute_next_allowed_action
@@ -138,6 +139,13 @@ def parse_args() -> argparse.Namespace:
     )
     status_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
     status_parser.add_argument('--auto-approve', action='store_true', help='Reflect auto-approve mode in status/runtime decisions')
+
+    retry_parser = subparsers.add_parser(
+        'retry',
+        help='Clear a recoverable agent wait and leave the workflow ready to run the same stage again',
+        allow_abbrev=False,
+    )
+    retry_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
 
     approve_parser = subparsers.add_parser(
         'approve',
@@ -297,6 +305,16 @@ def main() -> None:
         print(render_status_line(state))
         return
 
+    if args.command == 'retry':
+        try:
+            state = controller.retry_recoverable_agent_wait()
+        except Exception as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            raise SystemExit(1) from None
+        next_action = state.get('nextAction') or compute_next_allowed_action(state)
+        print(f'status=retry-ready currentStep={state.get("currentStep")} nextAction={next_action}')
+        return
+
     if args.command == 'approve':
         try:
             gate_path = controller.approve_human_gate(args.gate, actor=args.actor)
@@ -370,6 +388,8 @@ def main() -> None:
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
+        if state.get('recoverableAgentWait'):
+            print(_format_recoverable_wait_message(state))
         print(render_status_line(state))
         return
 
