@@ -2,7 +2,7 @@
 
 [English](recommended-environment.md) | [README](../../README.zh-CN.md)
 
-本文说明 Waygate V0.6.0k 推荐的本地运行环境。它是给工作站或类 CI 打包验证环境使用的运维说明，不是新的需求 intake 格式。
+本文说明 Waygate V0.6.0m 推荐的本地运行环境。它是给工作站或类 CI 打包验证环境使用的运维说明，不是新的需求 intake 格式。
 
 ## 运行时
 
@@ -96,12 +96,13 @@ bash packaging/debian/build-deb.sh
 
 生成的 package 会把 `waygate` wrapper 安装到 `/usr/bin/waygate`，Python package 安装到 `/usr/lib/waygate`，用户文档安装到 `/usr/share/doc/waygate`。
 
-V0.6.0k 还会安装：
+V0.6.0m 还会安装：
 
 - `/usr/share/doc/waygate/docs/operations/recommended-environment.md`
 - `/usr/share/doc/waygate/docs/operations/recommended-environment.zh-CN.md`
 - `/usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.md`
 - `/usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.zh-CN.md`
+- `/usr/share/doc/waygate/docs/workflow/requirements-e2e-review-policy.md`
 - `/usr/share/doc/waygate/docs/workflow/ui-ux-skill-policy.md`
 
 ## PATH shadow 处理

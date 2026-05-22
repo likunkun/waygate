@@ -2,6 +2,14 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.0m
+
+- Unit Plan 新增 `golden_path: true` 前置校验：golden path test case 必须是 `layer=e2e`，使用 `local_real` 或 `production_readonly`，声明真实入口，提供 fixture/setup，使用出现在 `verification_commands` 中的具体命令，包含强 expected 断言，并且不得 mock/stub 核心业务 API。
+- Requirements 中声明 E2E 的 AC 和 active E2E Journey 必须在 Unit Plan 中映射到 `layer=e2e` test case，才能通过 Unit Plan approval。
+- 明确 E2E 不等于浏览器专属：API-only 和 service-only golden path 可以使用 pytest/API/service E2E 调真实入口。
+- Unit Plan Test Case Matrix 显式展示 Golden Path 列，并与 Layer、Environment、Real Entry、Core API Mock 一起供人工审核。
+- Requirements/Unit Plan prompt、workflow 文档、README/USAGE 和 package version 已同步到 `0.6.0m`。
+
 ## 0.6.0k
 
 - Requirements、Unit Plan、Builder 和 UI Design Brief prompt contract 对 UI/Web/prototype 工作明确要求使用 `ui-ux-pro-max`。

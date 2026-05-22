@@ -15,7 +15,9 @@ from workflow_controller.gates.validators import validate_final_document_deliver
 from workflow_controller.gates.validators import validate_unit_plan_acceptance_obligation_coverage
 from workflow_controller.gates.validators import validate_unit_plan_design_architecture_traceability
 from workflow_controller.gates.validators import validate_unit_plan_document_deliverables
+from workflow_controller.gates.validators import validate_unit_plan_golden_path
 from workflow_controller.gates.validators import validate_unit_plan_prototype_conformance
+from workflow_controller.gates.validators import validate_unit_plan_real_e2e_evidence_policy
 from workflow_controller.prototype_review import validate_final_prototype_conformance
 
 
@@ -740,6 +742,172 @@ def test_unit_plan_approval_passes_when_all_must_obligations_are_covered(tmp_pat
     }
 
     validate_unit_plan_acceptance_obligation_coverage(gate, state)
+
+
+def test_unit_plan_golden_path_rejects_non_e2e_layer() -> None:
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'workflow_validation_level': 'closure',
+                'test_cases': [
+                    {
+                        'id': 'TC-API-GOLDEN',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'integration',
+                        'golden_path': True,
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': 'POST /api/orders',
+                        'fixture': 'tests/fixtures/order.json',
+                        'command': 'pytest tests/integration/test_orders.py -q',
+                        'expected': 'assert response.status_code == 201 and response.json()["id"] is present',
+                    }
+                ],
+                'verification_commands': ['pytest tests/integration/test_orders.py -q'],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match='layer=e2e'):
+        validate_unit_plan_golden_path(state)
+
+
+def test_unit_plan_golden_path_rejects_missing_real_entrypoint() -> None:
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'workflow_validation_level': 'closure',
+                'test_cases': [
+                    {
+                        'id': 'TC-API-GOLDEN',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'e2e',
+                        'golden_path': True,
+                        'environment_kind': 'local_real',
+                        'fixture': 'tests/fixtures/order.json',
+                        'command': 'pytest tests/e2e/test_orders_api.py -q',
+                        'expected': 'assert response.status_code == 201 and response.json()["status"] == "created"',
+                    }
+                ],
+                'verification_commands': ['pytest tests/e2e/test_orders_api.py -q'],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match='real_entrypoint'):
+        validate_unit_plan_golden_path(state)
+
+
+def test_unit_plan_golden_path_rejects_mock_environment_kind() -> None:
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'workflow_validation_level': 'closure',
+                'test_cases': [
+                    {
+                        'id': 'TC-API-GOLDEN',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'e2e',
+                        'golden_path': True,
+                        'environment_kind': 'component_mock',
+                        'real_entrypoint': 'POST /api/orders',
+                        'fixture': 'tests/fixtures/order.json',
+                        'command': 'pytest tests/e2e/test_orders_api.py -q',
+                        'expected': 'assert response.status_code == 201 and response.json()["status"] == "created"',
+                    }
+                ],
+                'verification_commands': ['pytest tests/e2e/test_orders_api.py -q'],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match='environment_kind'):
+        validate_unit_plan_golden_path(state)
+
+
+def test_unit_plan_accepts_api_only_e2e_golden_path(tmp_path: Path) -> None:
+    requirements = tmp_path / 'requirements-and-acceptance.md'
+    requirements.write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-01 [verification: e2e]: API creates an order through the real service endpoint.\n\n'
+        '## 4.6 E2E Test Method & Prerequisite Matrix\n'
+        '| AC/Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Dependencies | Mock Policy | Expected Assertions | Notes |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        '| AC-01 | pytest API/service E2E | POST /api/orders | POST a real order payload and fetch created order | tests/fixtures/order.json seeded into local service DB | `pytest tests/e2e/test_orders_api.py -q` | local_real | local API service and test database | no core API mocks | assert status_code == 201 and persisted order status == created | API-only system, no browser required |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'workflow_validation_level': 'closure',
+                'test_cases': [
+                    {
+                        'id': 'TC-API-GOLDEN',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'e2e',
+                        'golden_path': True,
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': 'POST /api/orders',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'fixture': 'tests/fixtures/order.json and local service DB seed',
+                        'command': 'pytest tests/e2e/test_orders_api.py -q',
+                        'expected': 'assert response.status_code == 201 and persisted order status == created',
+                    }
+                ],
+                'verification_commands': ['pytest tests/e2e/test_orders_api.py -q'],
+            }
+        ]
+    }
+
+    validate_unit_plan_golden_path(state)
+    validate_unit_plan_real_e2e_evidence_policy(requirements, state)
+
+
+def test_unit_plan_requires_e2e_case_for_e2e_acceptance_criterion(tmp_path: Path) -> None:
+    requirements = tmp_path / 'requirements-and-acceptance.md'
+    requirements.write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-01 [verification: e2e]: API creates an order through the real service endpoint.\n\n'
+        '## 4.6 E2E Test Method & Prerequisite Matrix\n'
+        '| AC/Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Dependencies | Mock Policy | Expected Assertions | Notes |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        '| AC-01 | pytest API/service E2E | POST /api/orders | POST a real order payload and fetch created order | tests/fixtures/order.json seeded into local service DB | `pytest tests/e2e/test_orders_api.py -q` | local_real | local API service and test database | no core API mocks | assert status_code == 201 and persisted order status == created | API-only system, no browser required |\n',
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-API-INTEGRATION',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'integration',
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': 'POST /api/orders',
+                        'fixture': 'tests/fixtures/order.json',
+                        'command': 'pytest tests/integration/test_orders.py -q',
+                        'expected': 'assert order repository writes status created',
+                    }
+                ],
+                'verification_commands': ['pytest tests/integration/test_orders.py -q'],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match='AC-01'):
+        validate_unit_plan_real_e2e_evidence_policy(requirements, state)
 
 
 def test_unit_plan_approval_accepts_non_padded_ao_ids(tmp_path: Path) -> None:

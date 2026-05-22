@@ -116,6 +116,8 @@ if sys.argv[1:2] == ["paste-buffer"]:
                             "acceptance_criterion": "Verification command passes.",
                             "layer": "e2e",
                             "golden_path": True,
+                            "environment_kind": "local_real",
+                            "real_entrypoint": "CLI verifier command in workspace",
                             "fixture": "workspace delivery artifact",
                             "command": "python -c \\"from pathlib import Path; assert Path('delivery.txt').read_text(encoding='utf-8') == 'ready\\\\n'; print('delivery verified')\\"",
                             "expected": "delivery.txt contains ready newline",

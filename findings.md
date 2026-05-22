@@ -1,5 +1,13 @@
 # 发现与决策
 
+## 2026-05-22 V0.6.0m Golden Path E2E 前置校验
+
+- `golden_path: true` 表示最终验收主路径，不应由 `unit`、`integration`、`manual` 或 mock/contract 测试承担；否则 Final Acceptance 才暴露 evidence row 非 E2E，会把可在 Unit Plan 阶段发现的问题推迟到验收末端。
+- Unit Plan approval 是阻断错误 golden path 的正确位置：它已经拿到结构化 `test_cases[]`、`verification_commands` 和 Requirements 4.6 E2E 审阅结果，可以在人工批准前暴露 layer、environment、real entry、mock policy、fixture/setup、command 和 assertion 缺口。
+- E2E 的语义是跨真实入口验证业务主路径，不等于必须使用浏览器。UI/Web/prototype golden path 通常需要 Playwright/browser E2E；API-only 或 service-only 项目可以用 pytest/API/service E2E 调真实 API/service endpoint。
+- `workflow_validation_level=closure` 只能说明单元承担闭环验收责任，不能替代 test case 的 `layer=e2e`。Requirements 中声明 E2E 的 AC 或 active Journey 必须在 Unit Plan 中映射到真实 `layer=e2e` test case。
+- Final Acceptance 的 real E2E evidence gate 仍保留为最后防线，用于阻断 evidence row 中非 E2E、缺真实入口、核心 API mock、非真实环境和 runtime errors；人工同意不能绕过该 evidence gate。
+
 ## 2026-05-22 Recoverable Agent Timeout / `waygate retry`
 
 - Agent 超时、pane idle 但未写 DONE、或用户暂时无响应，属于 runner 层 transient wait，不是 Requirements 或 Unit Plan 合同错误；把这种情况置为 `blocked` 会迫使用户错误地用 `waygate revise` 修改上游 gate。

@@ -226,9 +226,9 @@ UI/原型设计约束：
 
 规则：
 - 每个 e2e AC 和每个 active e2e Journey 必须至少有一行，`AC / Journey` 写明对应 AC ID 和 / 或 Journey ID。
-- E2E Method 必须说明真实浏览器/端到端方法，例如 Playwright/Cypress/pytest-browser，不要只写“人工查看”。
+- E2E Method 必须说明真实端到端方法，例如 Playwright/Cypress/pytest API/service E2E；API-only 或 service-only 项目不要求浏览器，但必须调用真实 API/service 入口。不要只写“人工查看”。
 - Real Entrypoint 必须是真实生产 route、URL、页面、CLI 或服务入口，不能只指向 prototype、artifact、mock server 或截图。
-- User Steps 必须写打开入口后的具体用户操作路径。
+- User Steps 必须写打开入口后的具体用户/API/service 操作路径。
 - Fixture / Test Data / Setup 必须写固定测试数据、fixture、seed、迁移、测试账号或 setup 方式。
 - Verification Command 必须是具体可执行命令，不能只写 `playwright test`、`pytest` 或“待 Unit Plan 补充”。
 - Environment Kind 只能是 `local_real|production_readonly`（即 `local_real` 或 `production_readonly`）。
@@ -245,7 +245,7 @@ UI/原型设计约束：
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 规则：
-- 如果出现 e2e 或 workflow_validation_level=closure，必须至少一行 active Journey。
+- 如果出现 e2e 或 workflow_validation_level=closure，必须至少一行 active Journey；active e2e Journey 后续必须映射到 Unit Plan `layer=e2e` test case。
 - Status 只能使用 active / deferred / rejected / out_of_scope。
 - active Journey 必须填写 Journey ID、Title、Steps、AC 和 Verification Layer。
 - Steps 使用 `->` 分隔关键路径步骤；AC 必须列出关联的 AC ID。

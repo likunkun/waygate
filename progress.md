@@ -2,6 +2,24 @@
 
 ## 会话：2026-05-22
 
+### V0.6.0m Golden Path E2E 前置校验
+- **状态：** implementation verified; full regression passed; packaged as `0.6.0m`.
+- Unit Plan approval 现在会在人工确认阶段阻断 `golden_path: true` 但不是 `layer=e2e`、缺真实入口、使用 `component_mock`/`contract_mock`/`visual` 等非真实环境、缺 fixture/setup、命令未进入 `verification_commands`、expected 过弱或声明核心 API mock/stub 的测试用例。
+- Requirements 中声明 E2E 的 AC 或 active E2E Journey，必须在 Unit Plan 中映射到 `layer=e2e` test case；`workflow_validation_level=closure` 不再替代 e2e Journey 的 test case layer。
+- API-only / service-only 项目不要求浏览器字段；只要使用真实入口、真实环境、真实 fixture/setup 和 pytest/API/service E2E 命令即可承担 golden path。
+- Unit Plan Test Case Matrix 现在显式展示 Golden Path 列，并继续展示 Layer、Environment、Real Entry 和 Core API Mock，便于人工审核。
+- 已完成 RED/GREEN 定向验证：
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_unit_plan_golden_path_rejects_non_e2e_layer workflow_controller/tests/test_acceptance_obligations.py::test_unit_plan_golden_path_rejects_missing_real_entrypoint workflow_controller/tests/test_acceptance_obligations.py::test_unit_plan_golden_path_rejects_mock_environment_kind workflow_controller/tests/test_acceptance_obligations.py::test_unit_plan_accepts_api_only_e2e_golden_path workflow_controller/tests/test_acceptance_obligations.py::test_unit_plan_requires_e2e_case_for_e2e_acceptance_criterion -q` -> RED: `4 failed, 1 passed`; GREEN: `5 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_prompt_contracts_require_ac_mapped_executable_e2e_assertions workflow_controller/tests/gates/test_gates_structure.py::TestGeneratorsLayer::test_render_unit_plan_gate_body workflow_controller/tests/test_packaging.py::test_version_flag_outputs_package_version -q` -> RED: `3 failed`; GREEN: `3 passed`
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_acceptance_obligations.py -q` -> `341 passed`
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `532 passed in 70.69s`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.0m_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.0m_all.deb Package Version Architecture Depends` -> `waygate / 0.6.0m / all / python3`
+  - `WAYGATE_LIB_DIR=<extract>/usr/lib/waygate <extract>/usr/bin/waygate --version` -> `waygate 0.6.0m`
+  - `WAYGATE_LIB_DIR=<extract>/usr/lib/waygate <extract>/usr/bin/waygate retry --help` -> `usage: waygate retry [-h] [--state-dir STATE_DIR]`
+
 ### Recoverable Agent Timeout / `waygate retry`
 - **状态：** implementation verified; full regression passed.
 - Agent runner 返回 `timeout` 或 `agent_idle_without_done` 时不再把 workflow 置为 blocked，也不要求通过 `waygate revise` 回到 Requirements / Unit Plan；controller 记录 `recoverableAgentWait`，保持当前 stage、`status=active` 和既有 approvals。

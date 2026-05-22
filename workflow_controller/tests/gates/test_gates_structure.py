@@ -145,7 +145,7 @@ class TestGeneratorsLayer:
         assert body.index('## 审批摘要') < body.index('## Controller State Patch')
         assert '## Human Confirmation' not in body
         assert 'Controller State Patch' in body
-        assert '| 验收标准 | 测试用例 | 层级 | Environment | Real Entry | Core API Mock | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in body
+        assert '| 验收标准 | 测试用例 | 层级 | Environment | Real Entry | Core API Mock | Golden Path | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in body
         patch = extract_unit_plan_state_patch(body)
         assert patch['currentUnitId'] == 'u1'
 

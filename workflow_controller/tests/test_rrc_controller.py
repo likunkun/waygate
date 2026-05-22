@@ -7658,6 +7658,8 @@ def test_unit_plan_approval_rejects_active_journey_without_mapped_test_case(tmp_
           "acceptance_criterion": "AC-1",
           "layer": "e2e",
           "fixture": "tests/fixtures/delivery.json",
+          "environment_kind": "local_real",
+          "real_entrypoint": "/delivery",
           "command": "pytest tests/e2e/test_delivery.py -q",
           "expected": "delivery confirmation is visible",
           "golden_path": true
@@ -7762,6 +7764,8 @@ def test_unit_plan_approval_enriches_journey_contract_from_mapped_test_case(tmp_
           "acceptance_criterion": "AC-1",
           "layer": "e2e",
           "fixture": "tests/fixtures/delivery.json",
+          "environment_kind": "local_real",
+          "real_entrypoint": "/delivery",
           "command": "pytest tests/e2e/test_delivery.py -q",
           "expected": "delivery confirmation is visible",
           "golden_path": true
@@ -7871,6 +7875,8 @@ def test_unit_plan_approval_accepts_covers_journeys_mapping(tmp_path: Path) -> N
           "acceptance_criterion": "AC-1",
           "layer": "e2e",
           "fixture": "tests/fixtures/delivery.json",
+          "environment_kind": "local_real",
+          "real_entrypoint": "/delivery",
           "command": "pytest tests/e2e/test_delivery.py -q",
           "expected": "delivery confirmation is visible",
           "golden_path": true
@@ -7975,6 +7981,8 @@ def test_unit_plan_approval_accepts_backticked_journey_contract_ids(tmp_path: Pa
           "acceptance_criterion": "AC-1",
           "layer": "e2e",
           "fixture": "tests/fixtures/delivery.json",
+          "environment_kind": "local_real",
+          "real_entrypoint": "/delivery",
           "command": "pytest tests/e2e/test_delivery.py -q",
           "expected": "delivery confirmation is visible",
           "golden_path": true
@@ -8080,6 +8088,8 @@ def test_unit_plan_approval_accepts_journey_refs_mapping(tmp_path: Path) -> None
           "acceptance_criterion": "AC-1",
           "layer": "e2e",
           "fixture": "tests/fixtures/delivery.json",
+          "environment_kind": "local_real",
+          "real_entrypoint": "/delivery",
           "command": "pytest tests/e2e/test_delivery.py -q",
           "expected": "delivery confirmation is visible",
           "golden_path": true

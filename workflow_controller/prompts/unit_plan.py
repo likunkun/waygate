@@ -90,7 +90,8 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - Verifier 会从 test cases 生成 `verification.json` 的 `evidence_rows`；因此每个 test case 的 AC、AO、layer、command/evidence、expected 和 `golden_path` 必须可直接审计。
 - 每个浏览器或运行时测试用例必须声明或可推导 `environment_kind`：真实本地 E2E 使用 `local_real`，只读生产验收使用 `production_readonly`；只有 `component_mock` / `contract_mock` / `visual` 辅助测试可以设置 `allows_mock: true` 和 `mocked_routes`。
 - `layer=e2e`、`golden_path: true`、`prototype_conformance`、Journey closure 或 Web 系统验收测试不得 mock/stub 核心业务 API。包含 `page.route("**/api/...")`、`route.fulfill()`、mock API server、fixture-only server 或 `route_common(page, ...)` 的浏览器测试只能作为非 E2E 辅助证据，不能覆盖 AC/Journey/golden path/prototype surface。
-- 真实 E2E 测试必须写 `entrypoint` 或 `real_entrypoint`（真实页面/route/命令入口），并使用真实服务/API 与真实测试数据准备；截图只能作为补充 artifact，不能替代 DOM/API/行为断言。
+- `golden_path: true` 必须同时声明 `layer: "e2e"`、`environment_kind: "local_real"` 或 `"production_readonly"`、`entrypoint` 或 `real_entrypoint`、真实 fixture/setup 或 test data、可执行 `command`、强 `expected` 断言，并且 `command` 必须出现在 `verification_commands`。
+- 真实 E2E 测试必须写 `entrypoint` 或 `real_entrypoint`（真实页面/route/URL/CLI/API/service 入口），并使用真实服务/API 与真实测试数据准备；截图只能作为补充 artifact，不能替代 DOM/API/行为断言。API-only 或 service-only 项目的 golden path 可以使用 pytest/API/service E2E，不要求浏览器。
 - 至少一个 E2E test case 必须标记 `golden_path: true`，表示人工最终验收前必须先跑通的核心正常流程。
 - `verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`），并包含实际执行这些 E2E 测试和 golden path 的命令；不接受"截图留证"或人工步骤作为完成条件。
 - `done_when` 必须是"测试命令退出码为 0 且断言覆盖 AC"，不接受"截图已上传"、"人工确认"或"浏览器路径已验证"。
@@ -148,7 +149,7 @@ controller state 中的已知单元：
 
 创建一张表，表达以下精确映射：
 
-Acceptance Criterion -> Test Case -> Journey -> Layer -> Command/Evidence -> Expected Result
+Acceptance Criterion -> Test Case -> Journey -> Layer -> Environment -> Real Entry -> Core API Mock -> Golden Path -> Command/Evidence -> Expected Result
 
 缺陷修复模式下，每条验收标准和每个最终验收缺陷都必须至少有一个具体测试用例或明确人工证据。typecheck/lint/tsc 等静态检查可以出现，但不能单独算作行为覆盖。
 E2E 层的测试用例必须有可执行 `command`（Playwright/pytest 命令），并声明 `fixture` 或测试数据准备方式；`evidence` 字段留空；`expected` 必须描述具体可断言的值，不接受"页面渲染成功"、"无报错"或"截图留存"。

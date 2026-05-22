@@ -536,6 +536,7 @@ def validate_requirements_acceptance_quality(
 
 def validate_unit_plan_golden_path(state: dict[str, Any]) -> None:
     missing: list[str] = []
+    workspace_dir = _state_workspace_dir(state)
     for unit in state.get('units') or []:
         if not isinstance(unit, dict) or bool(unit.get('passes')):
             continue
@@ -547,12 +548,11 @@ def validate_unit_plan_golden_path(state: dict[str, Any]) -> None:
         if not golden_cases:
             missing.append(f'unit {unit_id} requires a golden_path test case before final acceptance')
             continue
-        valid_case = next((case for case in golden_cases if _golden_path_case_is_executable(case, commands)), None)
-        if valid_case is None:
-            missing.append(
-                f'unit {unit_id} golden_path test case must include command, fixture, concrete expected result, '
-                'and that command must appear in verification_commands'
-            )
+        for case in golden_cases:
+            issue = _golden_path_case_issue(case, commands, workspace_dir)
+            if issue:
+                case_id = str(case.get('id') or case.get('name') or 'unknown-test')
+                missing.append(f'unit {unit_id} golden_path test case {case_id} {issue}')
     if missing:
         raise ValueError('unit plan golden_path coverage is incomplete: ' + '; '.join(missing))
 
@@ -593,13 +593,17 @@ def validate_unit_plan_real_e2e_evidence_policy(
             ac_id for ac_id, layer in _requirements_acceptance_criterion_layers(requirements_content).items()
             if layer == 'e2e'
         }
+        e2e_ac_ids.update(_requirements_e2e_acceptance_criterion_ids(requirements_content))
+    e2e_journey_ids = _requirements_active_e2e_journey_ids(requirements_content) if requirements_content else set()
 
     issues: list[str] = []
     real_or_production_cases: list[dict[str, Any]] = []
+    covered_e2e_ac_ids: set[str] = set()
+    covered_e2e_journey_ids: set[str] = set()
     production_required = _requirements_request_production_readonly_evidence(requirements_content, state)
     state_web_system = bool(state.get('currentUnitIsWebSystem'))
     for unit in state.get('units') or []:
-        if not isinstance(unit, dict) or bool(unit.get('passes')):
+        if not isinstance(unit, dict):
             continue
         unit_id = str(unit.get('id') or 'unknown-unit')
         unit_web_system = state_web_system or bool(unit.get('currentUnitIsWebSystem') or unit.get('web_system'))
@@ -609,6 +613,11 @@ def validate_unit_plan_real_e2e_evidence_policy(
             case_id = str(case.get('id') or case.get('name') or 'unknown-test')
             command = str(case.get('command') or '').strip()
             environment_kind = case_environment_kind(case)
+            if str(case.get('layer') or '').strip().lower() == 'e2e':
+                covered_e2e_ac_ids.update(_case_acceptance_criterion_ids(case))
+                covered_e2e_journey_ids.update(_case_journey_ids(case))
+            if bool(unit.get('passes')):
+                continue
             mocked_routes = _case_core_api_mock_routes(case, command, workspace_dir)
             requires_real = case_requires_real_e2e(
                 case,
@@ -634,6 +643,10 @@ def validate_unit_plan_real_e2e_evidence_policy(
                     'allows_mock=true with environment_kind component_mock, contract_mock, or visual'
                 )
 
+    for ac_id in sorted(e2e_ac_ids - covered_e2e_ac_ids):
+        issues.append(f'requirements e2e acceptance criterion {ac_id} must map to a layer=e2e Unit Plan test case')
+    for journey_id in sorted(e2e_journey_ids - covered_e2e_journey_ids):
+        issues.append(f'requirements e2e journey {journey_id} must map to a layer=e2e Unit Plan test case')
     if production_required:
         if not any(case_environment_kind(case) == 'production_readonly' for case in real_or_production_cases):
             issues.append(
@@ -2510,13 +2523,101 @@ def _is_golden_path_case(case: Any) -> bool:
 
 
 
-def _golden_path_case_is_executable(case: dict[str, Any], verification_commands: list[str]) -> bool:
+def _golden_path_case_issue(
+    case: dict[str, Any],
+    verification_commands: list[str],
+    workspace_dir: Path | None,
+) -> str:
+    layer = str(case.get('layer') or '').strip().lower()
+    if layer != 'e2e':
+        return 'must be layer=e2e'
+
+    environment_kind = case_environment_kind(case)
+    if environment_kind not in REAL_E2E_ENVIRONMENT_KINDS:
+        return f'environment_kind must be local_real or production_readonly, not {environment_kind or "missing"}'
+
     command = str(case.get('command') or '').strip()
-    fixture = str(case.get('fixture') or case.get('test_data') or case.get('testData') or '').strip()
+    if not _case_has_explicit_real_entrypoint(case):
+        return 'must declare real_entrypoint or entrypoint'
+
+    fixture = _case_fixture_or_setup(case)
     expected = str(case.get('expected') or case.get('expected_result') or case.get('expectedResult') or '').strip()
     if not command or not fixture or _expected_is_weak(expected):
-        return False
-    return any(command == candidate or command in candidate or candidate in command for candidate in verification_commands)
+        return 'must include command, fixture/setup or test data, and a concrete expected result'
+    if not any(command == candidate or command in candidate or candidate in command for candidate in verification_commands):
+        return 'command must appear in verification_commands'
+
+    mocked_routes = _case_core_api_mock_routes(case, command, workspace_dir)
+    if mocked_routes or case_declares_core_api_mock(case):
+        return f'must not use core API mock/stub routes: {mocked_routes or case_declared_mocked_routes(case) or ["declared"]}'
+    return ''
+
+
+def _case_has_explicit_real_entrypoint(case: dict[str, Any]) -> bool:
+    return bool(
+        str(
+            case.get('real_entrypoint')
+            or case.get('realEntrypoint')
+            or case.get('entrypoint')
+            or case.get('entry_point')
+            or ''
+        ).strip()
+    )
+
+
+def _case_fixture_or_setup(case: dict[str, Any]) -> str:
+    value = (
+        case.get('fixture')
+        or case.get('test_data')
+        or case.get('testData')
+        or case.get('setup')
+        or case.get('fixtures')
+    )
+    if isinstance(value, list):
+        return ' '.join(str(item).strip() for item in value if str(item).strip())
+    return str(value or '').strip()
+
+
+def _case_acceptance_criterion_ids(case: dict[str, Any]) -> set[str]:
+    values = _case_string_values(
+        case.get('acceptance_criteria')
+        or case.get('acceptanceCriteria')
+        or case.get('acceptance_criterion')
+        or case.get('acceptanceCriterion')
+    )
+    ids: set[str] = set()
+    for value in values:
+        ids.update(_requirements_ac_ids_in_text(value))
+    return ids
+
+
+def _case_journey_ids(case: dict[str, Any]) -> set[str]:
+    values = _case_string_values(
+        case.get('journey_id')
+        or case.get('journeyId')
+        or case.get('journey')
+        or case.get('journeys')
+        or case.get('journey_ids')
+        or case.get('journeyIds')
+        or case.get('covers_journeys')
+        or case.get('coversJourneys')
+        or case.get('journey_refs')
+        or case.get('journeyRefs')
+    )
+    ids: set[str] = set()
+    for value in values:
+        ids.update(_requirements_journey_ids_in_text(value))
+        if not ids and re.match(r'(?i)^J-\d+(?:[-.]\d+)*$', value.strip()):
+            ids.add(value.strip().upper())
+    return ids
+
+
+def _case_string_values(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if value is None:
+        return []
+    return [str(value).strip()] if str(value).strip() else []
 
 
 

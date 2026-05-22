@@ -308,8 +308,8 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '',
         '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）',
         '',
-        '- 当任一 AC 为 `verification: e2e`、任一 active Journey 为 `e2e`、测试策略明确要求 Playwright/browser/end-to-end，或 Web/原型/UI 合约需要真实浏览器证明时，本节必须填写并供人工批准前审阅。',
-        '- 每个 e2e AC 和每个 active e2e Journey 必须有对应行；不涉及真实 E2E / 浏览器验收时，可以保留表头并说明不适用。',
+        '- 当任一 AC 为 `verification: e2e`、任一 active Journey 为 `e2e`、测试策略明确要求 Playwright/browser/API/service end-to-end，或 Web/原型/UI 合约需要真实浏览器证明时，本节必须填写并供人工批准前审阅。',
+        '- 每个 e2e AC 和每个 active e2e Journey 必须有对应行；API-only/service-only 项目可以使用 pytest/API/service E2E，不要求浏览器；不涉及真实 E2E 时，可以保留表头并说明不适用。',
         '- Environment Kind 只能使用 `local_real|production_readonly`（即 `local_real` 或 `production_readonly`）；Required Env / Dependencies 只写 env key、服务或依赖名称，不写 secret 值。',
         '- Mock Policy 必须声明核心业务 API 不得 mock/stub；截图只能作为辅助 artifact，不能作为唯一断言。',
         '',
@@ -318,7 +318,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '',
         '## 4.7 Journey Acceptance Matrix',
         '',
-        '- e2e 或 closure 验收必须至少有一行 active Journey；不涉及时可以只保留表头。',
+        '- e2e 或 closure 验收必须至少有一行 active Journey；Unit Plan 中 active e2e Journey 必须映射到 `layer=e2e` test case，不涉及时可以只保留表头。',
         '- Steps 使用 `->` 分隔关键路径步骤；AC 填关联 AC ID；Verification Layer 只能使用 functional / integration / e2e / manual。',
         '',
         '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |',
@@ -581,8 +581,8 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         '',
         '## 附录 B：测试用例矩阵（Test Case Matrix）',
         '',
-        '| 验收标准 | 测试用例 | 层级 | Environment | Real Entry | Core API Mock | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |',
-        '|---|---|---|---|---|---|---|---|---|---|---|',
+        '| 验收标准 | 测试用例 | 层级 | Environment | Real Entry | Core API Mock | Golden Path | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |',
+        '|---|---|---|---|---|---|---|---|---|---|---|---|',
     ])
     for unit in state.get('units', []):
         test_cases = _unit_test_cases(unit)
@@ -614,10 +614,10 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
             fixture = str(case.get('fixture') or case.get('test_data') or case.get('testData') or '未指定')
             command_or_evidence = str(case.get('command') or case.get('evidence') or '未指定')
             expected = str(case.get('expected') or case.get('expected_result') or case.get('expectedResult') or '未指定')
-            golden_path = ' · Golden Path' if case.get('golden_path') is True else ''
-            lines.append(f'| {criterion} | {case_id}{golden_path} | {layer} | {environment_kind} | {real_entrypoint} | {core_api_mock} | {product_design_refs} | {technical_architecture_refs} | {fixture} | {command_or_evidence} | {expected} |')
-    if lines[-1] == '|---|---|---|---|---|---|---|---|---|---|---|':
-        lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | local_real/production_readonly/component_mock/contract_mock/visual | 真实页面或命令入口 | no | 补充产品设计引用 | 补充技术架构引用 | 补充 fixture 或测试数据 | 补充命令或人工证据 | 补充预期结果 |')
+            golden_path = 'yes' if case.get('golden_path') is True else 'no'
+            lines.append(f'| {criterion} | {case_id} | {layer} | {environment_kind} | {real_entrypoint} | {core_api_mock} | {golden_path} | {product_design_refs} | {technical_architecture_refs} | {fixture} | {command_or_evidence} | {expected} |')
+    if lines[-1] == '|---|---|---|---|---|---|---|---|---|---|---|---|':
+        lines.append('| 补充验收标准 | 补充测试用例 ID | unit/functional/integration/e2e/manual | local_real/production_readonly/component_mock/contract_mock/visual | 真实页面或命令入口 | no | no | 补充产品设计引用 | 补充技术架构引用 | 补充 fixture 或测试数据 | 补充命令或人工证据 | 补充预期结果 |')
     document_deliverable_row = (
         '| workflow/architecture/operations/product | 待补 docs/... | create/update/register | true | 当前 unit 涉及长期产品、架构、流程或运维事实；必须替换为具体文档动作。 |'
         if unit_plan_requires_document_deliverables(state)
@@ -669,7 +669,7 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         '- [ ] 每个目标都映射到一个或多个单元。',
         '- [ ] 每个单元都声明了足够的验证证据。',
         '- [ ] 涉及长期产品、架构、流程或运维事实的 unit 已在 Document Deliverables Matrix 声明文档动作，或明确说明不需要正式文档变更及原因。',
-        '- [ ] E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言，并至少标记一个 Golden Path 正常流程。',
+        '- [ ] E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言；`golden_path: true` 的测试用例均为 `layer=e2e` 且至少标记一个 Golden Path 正常流程。',
         '- [ ] E2E/golden_path/prototype/Journey/Web 系统验收使用真实入口、真实服务/API 和真实测试数据；mock/stub API 只作为非 E2E 辅助测试。',
         '- [ ] fragment 单元没有声称完整场景闭环。',
         '- [ ] closure 单元包含功能或 E2E 闭环证据。',

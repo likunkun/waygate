@@ -544,6 +544,8 @@ if sys.argv[1:2] == ["paste-buffer"]:
                             "acceptance_criterion": "Delivery objective",
                             "layer": "e2e",
                             "golden_path": True,
+                            "environment_kind": "local_real",
+                            "real_entrypoint": "CLI verifier command in workspace",
                             "fixture": "Delivery fixture creates a normal delivery flow.",
                             "command": "python -c \\"print('verified')\\"",
                             "expected": "verification command prints verified for the normal delivery flow",

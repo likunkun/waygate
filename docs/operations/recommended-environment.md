@@ -2,7 +2,7 @@
 
 [中文](recommended-environment.zh-CN.md) | [README](../../README.md)
 
-This guide describes the local environment recommended for Waygate V0.6.0k. It is operational guidance for preparing a workstation or CI-like package verification host; it is not a new requirement intake format.
+This guide describes the local environment recommended for Waygate V0.6.0m. It is operational guidance for preparing a workstation or CI-like package verification host; it is not a new requirement intake format.
 
 ## Runtime
 
@@ -96,12 +96,13 @@ bash packaging/debian/build-deb.sh
 
 The generated package installs the `waygate` wrapper under `/usr/bin/waygate`, the Python package under `/usr/lib/waygate`, and user documentation under `/usr/share/doc/waygate`.
 
-V0.6.0k also installs:
+V0.6.0m also installs:
 
 - `/usr/share/doc/waygate/docs/operations/recommended-environment.md`
 - `/usr/share/doc/waygate/docs/operations/recommended-environment.zh-CN.md`
 - `/usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.md`
 - `/usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.zh-CN.md`
+- `/usr/share/doc/waygate/docs/workflow/requirements-e2e-review-policy.md`
 - `/usr/share/doc/waygate/docs/workflow/ui-ux-skill-policy.md`
 
 ## PATH Shadow Handling

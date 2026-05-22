@@ -31,6 +31,7 @@ Waygate 不是要把人移出流程，而是把人的注意力放回真正重要
 | 精修与评审 | Builder 之后可进入 CodeSimplifier/Refiner 和 Reviewer。 |
 | 验证证据 | Verifier 输出结构化 evidence rows，覆盖 AC、Test Case、命令和 artifact。 |
 | 真实 E2E 证据 | V0.6.0f 阻止带核心 API mock/stub 的浏览器测试覆盖 E2E、golden path、prototype conformance 或生产证据。 |
+| Golden path 前置校验 | V0.6.0m 会在 Unit Plan 阶段阻断非真实 `layer=e2e` 的 `golden_path: true` 测试；必须有真实入口、真实环境、fixture/setup、命令和强断言。API-only/service-only E2E 不要求浏览器。 |
 | 文档生命周期 | V0.6.0i 初始化 `docs/README.md`，Requirements 盘点文档来源，Unit Plan 声明文档交付，Final Acceptance 只阻断标记为 required 的文档动作。 |
 | UI/UX skill policy | V0.6.0k 要求 UI/Web/prototype 工作使用 `ui-ux-pro-max`，`frontend-design` 只作为可选视觉探索或局部润色辅助。 |
 | 最终验收 | Final Acceptance Gate 展示证据矩阵、Journey 覆盖、Scope Audit 和返工路由。 |
@@ -53,7 +54,7 @@ Waygate 以 Python 3 代码运行。本地开发和验证使用 `python -m pytes
 
 Waygate Markdown spec intake 可通过 `init`、`start`、`go` 的 `--spec <path>` 使用。V0.5.6 只支持本地 Waygate Markdown spec 文件；识别到的外部格式会明确 deferred，不会被静默导入。
 
-V0.6.0j Requirements 基础设施追问与验证规则见 [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md)。V0.6.0k UI/UX skill policy 见 [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md)。V0.6.0i 文档生命周期入口见 [docs/README.md](docs/README.md)。V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
+V0.6.0m golden-path E2E 前置校验和 V0.6.2 Requirements E2E 审阅规则见 [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md)。V0.6.0j Requirements 基础设施追问与验证规则见 [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md)。V0.6.0k UI/UX skill policy 见 [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md)。V0.6.0i 文档生命周期入口见 [docs/README.md](docs/README.md)。V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
 
 ## Waygate Agent 使用的 Skills
 

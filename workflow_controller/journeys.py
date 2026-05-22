@@ -560,9 +560,8 @@ def _journey_mapping_issues(journey: dict[str, Any], mapping: dict[str, Any]) ->
 
     journey_layer = str(journey.get('verification_layer') or '').strip().lower()
     case_layer = str(case.get('layer') or '').strip().lower()
-    unit_level = str(unit.get('workflow_validation_level') or '').strip().lower()
-    if journey_layer == 'e2e' and case_layer != 'e2e' and unit_level != 'closure':
-        issues.append(f'{prefix} must be layer=e2e or belong to a closure unit')
+    if journey_layer == 'e2e' and case_layer != 'e2e':
+        issues.append(f'{prefix} must be layer=e2e')
 
     return issues
 

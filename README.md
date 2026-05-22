@@ -31,6 +31,7 @@ The point is not to remove the human. The point is to move human attention to th
 | Refinement and review | Builder output can pass through CodeSimplifier/Refiner and Reviewer roles before verification. |
 | Verification evidence | Verifier output includes structured evidence rows for ACs, test cases, commands, and artifacts. |
 | Real E2E evidence | V0.6.0f blocks mocked/stubbed core API browser tests from satisfying E2E, golden path, prototype conformance, or production evidence. |
+| Golden path preflight | V0.6.0m blocks `golden_path: true` Unit Plan cases unless they are real `layer=e2e` tests with a real entrypoint, real environment, concrete fixture/setup, command, and assertions. API-only/service-only E2E is valid and does not require a browser. |
 | Document lifecycle | V0.6.0i initializes `docs/README.md`, inventories document sources in Requirements, requires Unit Plan document deliverables for long-lived facts, and blocks Final Acceptance only on document actions marked required. |
 | UI/UX skill policy | V0.6.0k requires `ui-ux-pro-max` for UI/Web/prototype work and treats `frontend-design` only as optional visual exploration or polish. |
 | Final acceptance | Final approval is a gate with evidence, journey coverage, scope audit, and rejection routing. |
@@ -53,7 +54,7 @@ Real agent execution depends on the selected runner:
 
 Waygate Markdown spec intake is available through `--spec <path>` on `init`, `start`, and `go`. In V0.5.6 this supports local Waygate Markdown spec files only; detected external formats are deferred rather than imported silently.
 
-For the V0.6.0j Requirements infrastructure follow-up rules, see [docs/workflow.md](docs/workflow.md). For the V0.6.0k UI/UX skill policy, see [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md). For the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md). For the V0.6.0h recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
+For the V0.6.0m golden-path E2E preflight and V0.6.2 Requirements E2E review rules, see [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md). For the V0.6.0j Requirements infrastructure follow-up rules, see [docs/workflow.md](docs/workflow.md). For the V0.6.0k UI/UX skill policy, see [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md). For the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md). For the V0.6.0h recommended environment, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For a teaching-oriented overview and best practices, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
 ## Skills Used by Waygate Agents
 

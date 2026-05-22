@@ -189,7 +189,7 @@ def test_unit_plan_prompt_requires_test_strategy_skill_and_test_case_matrix(tmp_
 
     assert '使用 `test-strategy` skill' in prompt
     assert '## 测试用例矩阵（Test Case Matrix）' in prompt
-    assert 'Acceptance Criterion -> Test Case -> Journey -> Layer -> Command/Evidence -> Expected Result' in prompt
+    assert 'Acceptance Criterion -> Test Case -> Journey -> Layer -> Environment -> Real Entry -> Core API Mock -> Golden Path -> Command/Evidence -> Expected Result' in prompt
     assert 'JSON `test_cases[]` 中显式写 Journey 映射字段' in prompt
     assert '"test_cases"' in prompt
 
@@ -275,6 +275,8 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '`product_design_refs`' in unit_plan_prompt
     assert '`technical_architecture_refs`' in unit_plan_prompt
     assert '沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图' in unit_plan_prompt
+    assert '`golden_path: true` 必须同时声明 `layer: "e2e"`' in unit_plan_prompt
+    assert 'API-only 或 service-only 项目的 golden path 可以使用 pytest/API/service E2E' in unit_plan_prompt
     assert '测试命令退出码为 0 且断言覆盖 AC' in unit_plan_prompt
     assert '对不适合 E2E 的 AC' in unit_plan_prompt
     requirements_body = render_requirements_gate_body(state)
@@ -295,7 +297,7 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '如 agent 在 tmux pane 中向用户提问' in requirements_body
     assert '每个 active must AO' in requirements_body
     assert '截图或人工观察不能替代断言' in requirements_body
-    assert '| 验收标准 | 测试用例 | 层级 | Environment | Real Entry | Core API Mock | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
+    assert '| 验收标准 | 测试用例 | 层级 | Environment | Real Entry | Core API Mock | Golden Path | 产品设计引用 | 技术架构引用 | 测试数据/Fixture | 命令/证据 | 预期结果 |' in unit_plan_body
     assert 'E2E/closure 测试用例包含 AC、fixture、可执行命令和具体断言' in unit_plan_body
 
 
@@ -2002,6 +2004,8 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
           "acceptance_criterion": "Delivery objective",
           "layer": "e2e",
           "golden_path": true,
+          "environment_kind": "local_real",
+          "real_entrypoint": "/delivery",
           "fixture": "tests/fixtures/delivery.json",
           "command": "pytest tests/e2e/test_delivery.py -q",
           "expected": "Delivery normal flow completes with confirmation"
@@ -2794,6 +2798,8 @@ def test_unit_plan_approval_accepts_closure_unit_with_golden_path(tmp_path: Path
                                 'acceptance_criterion': 'AC-01',
                                 'layer': 'e2e',
                                 'golden_path': True,
+                                'environment_kind': 'local_real',
+                                'real_entrypoint': '/delivery',
                                 'fixture': 'tests/fixtures/delivery.json',
                                 'command': command,
                                 'expected': 'User completes normal delivery flow and sees confirmation #D-100',
@@ -2898,6 +2904,8 @@ test('delivery flow', async ({ page }) => {
                                 'acceptance_criterion': 'AC-01',
                                 'layer': 'e2e',
                                 'golden_path': True,
+                                'environment_kind': 'local_real',
+                                'real_entrypoint': '/orders',
                                 'fixture': 'tests/fixtures/delivery.json',
                                 'command': command,
                                 'expected': 'User completes normal delivery flow and sees confirmation #D-100',

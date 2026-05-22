@@ -2,6 +2,14 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.0m
+
+- Added Unit Plan preflight for `golden_path: true`: golden-path test cases must be `layer=e2e`, use `local_real` or `production_readonly`, declare a real entrypoint, provide fixture/setup, run a concrete command listed in `verification_commands`, use strong expected assertions, and avoid core business API mocks/stubs.
+- Required Requirements-declared E2E ACs and active E2E Journeys to map to `layer=e2e` Unit Plan test cases before Unit Plan approval.
+- Clarified that E2E is not browser-only: API-only and service-only golden paths can use pytest/API/service E2E against real entrypoints.
+- Rendered Golden Path as an explicit Unit Plan Test Case Matrix column alongside Layer, Environment, Real Entry, and Core API Mock.
+- Updated Requirements/Unit Plan prompts, workflow docs, README/USAGE, and package version to `0.6.0m`.
+
 ## 0.6.0k
 
 - Required `ui-ux-pro-max` in Requirements, Unit Plan, Builder, and UI Design Brief prompt contracts for UI/Web/prototype work.

@@ -2,11 +2,13 @@
 
 [中文](USAGE.zh-CN.md) | [README](README.md)
 
-This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.0j Requirements infrastructure follow-up, V0.6.0k UI/UX skill policy, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md), and [docs/architecture.md](docs/architecture.md).
+This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.0m golden-path E2E preflight, V0.6.0j Requirements infrastructure follow-up, V0.6.0k UI/UX skill policy, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md), [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md), and [docs/architecture.md](docs/architecture.md).
 
 For V0.6.0h environment preparation, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For an introduction and best-practices walkthrough, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
 V0.6.0f tightens browser acceptance evidence: Playwright or browser tests that mock/stub core business APIs cannot be used as E2E, golden path, prototype conformance, or production-readiness evidence.
+
+V0.6.0m moves golden-path E2E mistakes earlier: Unit Plan approval rejects `golden_path: true` cases that are not `layer=e2e`, lack a real entrypoint, use mock environments, omit concrete fixture/setup, or are absent from `verification_commands`. API-only or service-only E2E can use pytest/API/service commands and does not require browser fields.
 
 ## Prerequisites
 
@@ -23,7 +25,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.0k_all.deb
+sudo apt install ./dist/waygate_0.6.0m_all.deb
 waygate --help
 waygate doctor
 waygate doctor --color auto

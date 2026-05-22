@@ -218,6 +218,18 @@ Delivered work:
 - Update `waygate doctor` so `skill_recommendations.ui_ux_design` requires `ui-ux-pro-max`, warns when only `frontend-design` is installed, and prefers `ui-ux-pro-max` when both are installed.
 - Document the policy under `docs/workflow/ui-ux-skill-policy.md` and package it with the Debian docs.
 
+### V0.6.0m - Golden Path E2E Preflight
+
+Goal: catch non-real golden-path evidence during Unit Plan approval instead of waiting for Final Acceptance.
+
+Delivered work:
+
+- Block `golden_path: true` Unit Plan test cases unless they are `layer=e2e`, use `local_real` or `production_readonly`, declare a real entrypoint, include fixture/setup, run a concrete command listed in `verification_commands`, use strong expected assertions, and avoid core business API mocks/stubs.
+- Require Requirements-declared E2E ACs and active E2E Journeys to have matching `layer=e2e` Unit Plan test cases.
+- Keep API-only and service-only golden paths valid as pytest/API/service E2E against real entrypoints; browser fields are not required for non-UI systems.
+- Render Golden Path explicitly in the Unit Plan Test Case Matrix together with Layer, Environment, Real Entry, and Core API Mock.
+- Preserve Final Acceptance real E2E evidence checks as the last line of defense for non-E2E golden evidence, missing real entrypoints, mock core APIs, non-real environments, and runtime errors.
+
 ### V0.6.1 - External Spec Intake
 
 Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable.

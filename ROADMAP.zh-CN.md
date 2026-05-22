@@ -218,6 +218,18 @@
 - `waygate doctor` 的 `skill_recommendations.ui_ux_design` 改为要求 `ui-ux-pro-max`；只安装 `frontend-design` 时输出 warning 和 manual action；两者都安装时优先展示 `ui-ux-pro-max`。
 - 新增 `docs/workflow/ui-ux-skill-policy.md` 并随 Debian 文档打包。
 
+### V0.6.0m - Golden Path E2E 前置校验
+
+目标：在 Unit Plan approval 阶段提前发现非真实 golden path 证据，而不是等到 Final Acceptance 才暴露。
+
+已交付：
+
+- 阻断不满足真实 E2E 条件的 `golden_path: true` Unit Plan test case：必须是 `layer=e2e`，使用 `local_real` 或 `production_readonly`，声明真实入口，包含 fixture/setup，命令必须出现在 `verification_commands`，expected 必须是强断言，并且不得 mock/stub 核心业务 API。
+- Requirements 中声明 E2E 的 AC 和 active E2E Journey 必须映射到 `layer=e2e` Unit Plan test case。
+- 保持 API-only 和 service-only golden path 合法：可以使用 pytest/API/service E2E 调真实入口；非 UI 系统不要求浏览器字段。
+- Unit Plan Test Case Matrix 显式展示 Golden Path，并与 Layer、Environment、Real Entry、Core API Mock 一起供人工审核。
+- Final Acceptance 继续作为最后防线，阻断非 E2E golden evidence、缺真实入口、mock 核心 API、非真实环境或 runtime errors。
+
 ### V0.6.1 - External Spec Intake
 
 目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径。
