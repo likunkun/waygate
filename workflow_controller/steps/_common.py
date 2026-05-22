@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 
 
+RECOVERABLE_AGENT_RUN_STATUSES = {'timeout', 'agent_idle_without_done'}
+
+
 @dataclass
 class StepResult:
     approved: bool | None = None
@@ -27,6 +30,31 @@ class TestStrategistBlocked(RuntimeError):
 
 class TestStrategistFallbackBlocked(RuntimeError):
     pass
+
+
+class RecoverableAgentWait(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage: str,
+        runner_status: str,
+        summary_path: Path | None = None,
+        run_dir: Path | str | None = None,
+        done_path: Path | str | None = None,
+        action: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.runner_status = runner_status
+        self.summary_path = str(summary_path) if summary_path is not None else None
+        self.run_dir = str(run_dir) if run_dir is not None else None
+        self.done_path = str(done_path) if done_path is not None else None
+        self.action = action
+
+
+def is_recoverable_agent_status(status: Any) -> bool:
+    return str(status or '').strip().lower() in RECOVERABLE_AGENT_RUN_STATUSES
 
 
 def _approval_requested_by_state(state: dict[str, Any]) -> bool:

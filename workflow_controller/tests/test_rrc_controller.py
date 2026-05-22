@@ -5020,10 +5020,11 @@ def test_requirements_draft_timeout_resumes_existing_pending_run_without_redispa
     monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
     monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
 
-    with pytest.raises(RuntimeError) as exc_info:
-        controller.run_once()
+    state = controller.run_once()
 
-    assert '等了太久，先休息一下，等agent好了，再接着干' in str(exc_info.value)
+    wait = state.get('recoverableAgentWait')
+    assert wait['stage'] == 'REQUIREMENTS_DRAFT'
+    assert wait['runner_status'] == 'timeout'
     assert dispatch_count == 1
 
     body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
@@ -5053,6 +5054,7 @@ def test_requirements_draft_timeout_resumes_existing_pending_run_without_redispa
     os.utime(body_path, (newer_than_timeout, newer_than_timeout))
     os.utime(done_path, (newer_than_timeout, newer_than_timeout))
 
+    controller.retry_recoverable_agent_wait()
     state = controller.run_once()
 
     assert dispatch_count == 1
@@ -5065,6 +5067,91 @@ def test_requirements_draft_timeout_resumes_existing_pending_run_without_redispa
     )
     assert summary['status'] == 'done'
     assert summary['resumed_from_pending_run'] is True
+
+
+def test_requirements_draft_timeout_records_recoverable_wait_without_blocking(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements as requirements_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    run_dir = state_dir / 'artifacts' / 'requirements-draft' / 'runs' / 'requirements-draft-timeout'
+    done_path = run_dir / 'done.json'
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        done_path.write_text(
+            json.dumps({'status': 'pending', 'summary': 'waiting for user', 'run_id': run_dir.name}),
+            encoding='utf-8',
+        )
+        return RunnerResult(
+            backend='tmux-claude',
+            status='timeout',
+            command=['fake-claude'],
+            returncode=124,
+            stdout='',
+            stderr='still waiting',
+            run_dir=run_dir,
+            prompt_path=request.prompt_path,
+            done_path=done_path,
+            done_payload={'status': 'pending', 'run_id': run_dir.name},
+            runner_metadata={'backend': 'tmux-claude'},
+        )
+
+    monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'REQUIREMENTS_DRAFT'
+    assert state.get('blockedReason') is None
+    wait = state.get('recoverableAgentWait')
+    assert wait['stage'] == 'REQUIREMENTS_DRAFT'
+    assert wait['action'] == 'run_requirements_drafter'
+    assert wait['runner_status'] == 'timeout'
+    assert wait['done_path'] == str(done_path)
+    assert state['nextAction'] == 'run_requirements_drafter'
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert any(event['type'] == 'agent_wait_recoverable' for event in events)
 
 
 def test_requirements_draft_recovers_legacy_timed_out_summary_when_done_run_and_body_exist(
@@ -5170,6 +5257,257 @@ def test_requirements_draft_recovers_legacy_timed_out_summary_when_done_run_and_
     assert summary['done_path'] == str(done_path.resolve())
 
 
+def test_builder_timeout_records_recoverable_wait_and_keeps_current_unit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from workflow_controller.rrc_real_runtime import AgentRunResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'builder-prompt.md'
+    prompt_path.write_text('Implement delivery.', encoding='utf-8')
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'promptPath': str(prompt_path),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': False,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    run_dir = state_dir / 'artifacts' / 'unit-01' / 'runs' / 'builder-timeout'
+
+    def fake_run_agent_for_current_step(*_args, **_kwargs) -> AgentRunResult:
+        return AgentRunResult(
+            command=['tmux', 'send-keys', '-t', '1.2', 'C-m'],
+            returncode=124,
+            stdout='',
+            stderr='still waiting',
+            backend='tmux-claude',
+            status='agent_idle_without_done',
+            run_dir=str(run_dir),
+            done_payload={'status': 'pending', 'run_id': run_dir.name},
+            runner_metadata={'backend': 'tmux-claude'},
+        )
+
+    monkeypatch.setattr(
+        'workflow_controller.steps.builder.run_agent_for_current_step',
+        fake_run_agent_for_current_step,
+    )
+
+    state = controller.run_once()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state['currentUnitId'] == 'unit-01'
+    assert state.get('blockedReason') is None
+    wait = state.get('recoverableAgentWait')
+    assert wait['stage'] == 'EXECUTE_UNIT'
+    assert wait['action'] == 'run_builder'
+    assert wait['runner_status'] == 'agent_idle_without_done'
+    assert wait['run_dir'] == str(run_dir)
+    assert state['requirementsAccepted'] is True
+    assert state['unitPlanAccepted'] is True
+
+
+def test_unit_plan_draft_timeout_records_recoverable_wait_and_preserves_requirements_approval(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.unit_plan as unit_plan_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'UNIT_PLAN_DRAFT',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'tmux-claude',
+            'agentCommand': 'claude',
+            'tmuxTarget': '1.2',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req',
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': False,
+            'scopeApproved': False,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    (state_dir / 'approvals').mkdir(parents=True, exist_ok=True)
+    (state_dir / 'approvals' / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\nApproved requirements\n',
+        encoding='utf-8',
+    )
+    run_dir = state_dir / 'artifacts' / 'unit-plan-draft' / 'runs' / 'unit-plan-timeout'
+    done_path = run_dir / 'done.json'
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='1.2')
+
+    def fake_run_agent_backend(request):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        done_path.write_text(
+            json.dumps({'status': 'pending', 'summary': 'still planning', 'run_id': run_dir.name}),
+            encoding='utf-8',
+        )
+        return RunnerResult(
+            backend='tmux-claude',
+            status='timeout',
+            command=['fake-claude'],
+            returncode=124,
+            stdout='',
+            stderr='still waiting',
+            run_dir=run_dir,
+            prompt_path=request.prompt_path,
+            done_path=done_path,
+            done_payload={'status': 'pending', 'run_id': run_dir.name},
+            runner_metadata={'backend': 'tmux-claude'},
+        )
+
+    monkeypatch.setattr(unit_plan_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(unit_plan_step, 'run_agent_backend', fake_run_agent_backend)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'UNIT_PLAN_DRAFT'
+    assert state.get('blockedReason') is None
+    wait = state.get('recoverableAgentWait')
+    assert wait['stage'] == 'UNIT_PLAN_DRAFT'
+    assert wait['action'] == 'run_unit_plan_drafter'
+    assert wait['runner_status'] == 'timeout'
+    assert wait['done_path'] == str(done_path)
+    assert state['requirementsAcceptedHash'] == 'sha256:req'
+    assert state['unitPlanAccepted'] is False
+
+
+def test_retry_clears_recoverable_agent_wait_without_changing_approvals(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req',
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:plan',
+            'unitPlanAcceptedBy': 'human',
+            'scopeApproved': True,
+            'recoverableAgentWait': {
+                'stage': 'EXECUTE_UNIT',
+                'action': 'run_builder',
+                'runner_status': 'timeout',
+                'message': 'agent timed out',
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('retry', '--state-dir', str(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert 'status=retry-ready' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert 'recoverableAgentWait' not in state
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state['requirementsAcceptedHash'] == 'sha256:req'
+    assert state['unitPlanAcceptedHash'] == 'sha256:plan'
+
+
+def test_run_stops_on_existing_recoverable_agent_wait_until_retry(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'REQUIREMENTS_DRAFT',
+            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'agentRunner': 'subprocess',
+            'agentCommand': 'false',
+            'humanGatesRequired': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': False,
+            'recoverableAgentWait': {
+                'stage': 'REQUIREMENTS_DRAFT',
+                'action': 'run_requirements_drafter',
+                'runner_status': 'timeout',
+                'message': 'agent timed out',
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('run', '--state-dir', str(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert 'waygate retry' in result.stdout
+    assert 'currentStep=REQUIREMENTS_DRAFT' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['recoverableAgentWait']['runner_status'] == 'timeout'
+    assert state['status'] == 'active'
+
+
 def test_requirements_draft_does_not_recover_done_and_body_older_than_timeout(
     tmp_path: Path,
     monkeypatch,
@@ -5263,10 +5601,12 @@ def test_requirements_draft_does_not_recover_done_and_body_older_than_timeout(
     monkeypatch.setattr(requirements_step, 'make_runner', fake_make_runner)
     monkeypatch.setattr(requirements_step, 'run_agent_backend', fake_run_agent_backend)
 
-    with pytest.raises(RuntimeError) as exc_info:
-        controller.run_once()
+    state = controller.run_once()
 
-    assert '等了太久，先休息一下，等agent好了，再接着干' in str(exc_info.value)
+    wait = state.get('recoverableAgentWait')
+    assert wait['stage'] == 'REQUIREMENTS_DRAFT'
+    assert wait['runner_status'] == 'timeout'
+    assert wait['summary_path'] == str(summary_path)
     assert dispatch_count == 0
 
 

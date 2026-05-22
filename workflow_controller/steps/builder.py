@@ -35,8 +35,10 @@ from workflow_controller.prompts.builder import (
     _render_previous_controller_failure_feedback,
 )
 from workflow_controller.steps._common import (
+    RecoverableAgentWait,
     StepResult,
     NotImplementedWorkflowStep,
+    is_recoverable_agent_status,
     _approval_requested_by_state,
     _write_json,
     _write_json_result,
@@ -133,6 +135,7 @@ def run_builder(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) ->
             'mode': agent_result.backend if agent_result.backend != 'subprocess' else 'claude-code',
             'runner_status': agent_result.status,
             'runner_run_dir': agent_result.run_dir,
+            'done_path': agent_result.done_path,
             'done_payload': agent_result.done_payload or {},
             'agent_command': agent_result.command,
             'runner_metadata': agent_result.runner_metadata or {},
@@ -147,6 +150,15 @@ def run_builder(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) ->
             '\n'.join(changed_files) + ('\n' if changed_files else ''),
             encoding='utf-8',
         )
+        if is_recoverable_agent_status(agent_result.status):
+            raise RecoverableAgentWait(
+                'Builder agent is still waiting for the agent to finish.',
+                stage='EXECUTE_UNIT',
+                runner_status=agent_result.status,
+                summary_path=unit_dir / 'builder-summary.json',
+                run_dir=agent_result.run_dir,
+                done_path=agent_result.done_path,
+            )
         if agent_result.returncode != 0:
             tmux_hint = ''
             if agent_result.backend in {'tmux-claude', 'tmux-codex'}:
@@ -335,6 +347,14 @@ def run_refiner(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) ->
             env=runner.env,
         )
     )
+    if is_recoverable_agent_status(agent_result.status):
+        raise RecoverableAgentWait(
+            'CodeSimplifier is still waiting for the agent to finish.',
+            stage='REFINE_UNIT',
+            runner_status=agent_result.status,
+            run_dir=agent_result.run_dir,
+            done_path=agent_result.done_path,
+        )
 
     raw_payload = _read_json_object(result_path)
     payload = _normalize_simplifier_result(

@@ -2,6 +2,23 @@
 
 ## 会话：2026-05-22
 
+### Recoverable Agent Timeout / `waygate retry`
+- **状态：** implementation verified; full regression passed.
+- Agent runner 返回 `timeout` 或 `agent_idle_without_done` 时不再把 workflow 置为 blocked，也不要求通过 `waygate revise` 回到 Requirements / Unit Plan；controller 记录 `recoverableAgentWait`，保持当前 stage、`status=active` 和既有 approvals。
+- 新增 `waygate retry --state-dir <state-dir>`，只清除 recoverable wait 并保留 Requirements / Unit Plan / Final Acceptance approval hash 与 actor 信息。
+- Subprocess runner 的 `TimeoutExpired` 现在归一化为 `RunnerResult(status='timeout', returncode=124)`，与 tmux runner 的 recoverable status 统一处理。
+- 正式文档新增 `docs/workflow/recoverable-agent-timeout-policy.md`，并登记到 `docs/README.md`；`docs/workflow.md` 和 `docs/workflow.zh-CN.md` 已同步说明。
+- 已完成定向验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_requirements_draft_timeout_records_recoverable_wait_without_blocking workflow_controller/tests/test_rrc_controller.py::test_builder_timeout_records_recoverable_wait_and_keeps_current_unit workflow_controller/tests/test_rrc_controller.py::test_retry_clears_recoverable_agent_wait_without_changing_approvals -q` -> `3 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_requirements_draft_timeout_resumes_existing_pending_run_without_redispatch workflow_controller/tests/test_rrc_controller.py::test_requirements_draft_does_not_recover_done_and_body_older_than_timeout workflow_controller/tests/test_rrc_controller.py::test_requirements_draft_waits_on_existing_timeout_run_until_fresh_body_arrives -q` -> `3 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_run_stops_on_existing_recoverable_agent_wait_until_retry workflow_controller/tests/test_rrc_agent_runners.py::test_subprocess_runner_timeout_returns_recoverable_timeout_result -q` -> `2 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_unit_plan_draft_timeout_records_recoverable_wait_and_preserves_requirements_approval -q` -> `1 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_refiner.py workflow_controller/tests/test_rrc_builder.py workflow_controller/tests/test_rrc_agent_runners.py -q -k 'not test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_approval_gate_separate'` -> `241 passed, 1 deselected`
+  - `python3 -m pytest workflow_controller/tests -q` -> `525 passed, 2 failed`；失败均为 `0.0.0.0:20001` 已被当时正在运行的 `python3 -m workflow_controller.cli go V2.0 --auto-approve --tmux-target 7.0` 进程占用导致 prototype preview server bind 失败。
+  - `python3 -m pytest workflow_controller/tests -q -k 'not test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_and_approval_gate and not test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_approval_gate_separate'` -> `525 passed, 2 deselected`
+  - 最后补充验证：`python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_init_with_target_and_workspace_without_ralph_creates_target_acceptance_state workflow_controller/tests/test_rrc_controller.py::test_run_stops_on_existing_recoverable_agent_wait_until_retry -q` -> `2 passed`
+  - 端口释放后标准全量验证：`python3 -m pytest workflow_controller/tests -q` -> `527 passed in 72.50s`
+
 ### V0.6.2 Requirements-stage E2E 前置审阅门禁
 - **状态：** implementation verified; full regression passed.
 - Requirements prompt 和默认 Requirements gate body 新增固定 `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）`，位于 4.5 之后、4.7 之前。

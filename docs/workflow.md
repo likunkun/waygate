@@ -75,6 +75,8 @@ The Builder receives a prompt file and works on one unit. A tmux or subprocess r
 
 The completion signal is not final proof. The controller still checks the run ID, artifacts, and later verifier evidence.
 
+If an agent dispatch times out or becomes idle without writing DONE, Waygate records a recoverable wait instead of blocking or rolling back. The workflow stays on the same stage with `status=active`, no `blockedReason`, and a `recoverableAgentWait` entry in `session.json`; automatic driving stops until a human runs `waygate retry`. This is not a Requirements or Unit Plan contract revision, so `waygate revise` remains reserved for actual Requirements/Unit Plan rework. The full policy is registered in [docs/workflow/recoverable-agent-timeout-policy.md](workflow/recoverable-agent-timeout-policy.md).
+
 If the previous controller Verifier failed a specific command, the next Builder prompt includes a `Controller Verification Failure Protocol`. Builder must first rerun that exact command from the controller cwd, using the same command text rather than a filtered or adjacent command. Before DONE, the Builder must record `done_payload.controller_failure_resolution` with the failed command, reproduction result, root cause or mismatch analysis, fix summary, rerun exit code, and full approved verification run. Missing or mismatched resolution evidence blocks the workflow before Refiner; the controller Verifier remains the final source of truth.
 
 ## Refinement and Review

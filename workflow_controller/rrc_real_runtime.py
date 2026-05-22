@@ -28,6 +28,7 @@ class AgentRunResult:
     backend: str = 'subprocess'
     status: str = 'done'
     run_dir: str | None = None
+    done_path: str | None = None
     done_payload: dict[str, Any] | None = None
     runner_metadata: dict[str, Any] | None = None
 
@@ -232,6 +233,7 @@ def run_agent_for_current_step(
         backend=result.backend,
         status=result.status,
         run_dir=str(result.run_dir),
+        done_path=str(result.done_path) if result.done_path else None,
         done_payload=result.done_payload,
         runner_metadata=result.runner_metadata,
     )

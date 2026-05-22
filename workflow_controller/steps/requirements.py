@@ -11,7 +11,13 @@ from workflow_controller.runners.base import DEFAULT_AGENT_TIMEOUT_SECONDS
 from workflow_controller.gates import format_requirements_gate_body, render_requirements_gate_body, write_gate_file
 from workflow_controller.prompts.requirements import _render_requirements_draft_prompt
 from workflow_controller.requirements_dialogue_brief import write_requirements_dialogue_brief
-from workflow_controller.steps._common import StepResult, _write_json, _now_iso
+from workflow_controller.steps._common import (
+    RecoverableAgentWait,
+    StepResult,
+    is_recoverable_agent_status,
+    _write_json,
+    _now_iso,
+)
 
 
 REQUIREMENTS_DRAFT_WAIT_TIMEOUT_MESSAGE = (
@@ -114,8 +120,15 @@ def run_requirements_drafter(
         'requirements_spec': _requirements_spec_summary(state),
         'generated_at': _now_iso(),
     })
-    if result.status in _PENDING_REQUIREMENTS_DRAFT_STATUSES:
-        raise RuntimeError(REQUIREMENTS_DRAFT_WAIT_TIMEOUT_MESSAGE)
+    if is_recoverable_agent_status(result.status):
+        raise RecoverableAgentWait(
+            REQUIREMENTS_DRAFT_WAIT_TIMEOUT_MESSAGE,
+            stage='REQUIREMENTS_DRAFT',
+            runner_status=result.status,
+            summary_path=summary_path,
+            run_dir=result.run_dir,
+            done_path=result.done_path,
+        )
     if result.returncode != 0:
         raise RuntimeError(
             f"Requirements drafter failed with exit code {result.returncode}. See {summary_path}"
@@ -169,12 +182,26 @@ def _resume_pending_requirements_draft_if_ready(
         done_path = None
         done_payload: dict[str, Any] = dict(summary.get('done_payload') or {'status': 'done'})
     elif done_candidate is None:
-        raise RuntimeError(REQUIREMENTS_DRAFT_WAIT_TIMEOUT_MESSAGE)
+        raise RecoverableAgentWait(
+            REQUIREMENTS_DRAFT_WAIT_TIMEOUT_MESSAGE,
+            stage='REQUIREMENTS_DRAFT',
+            runner_status=summary_status,
+            summary_path=summary_path,
+            run_dir=summary.get('runner_run_dir'),
+            done_path=summary.get('done_path'),
+        )
     else:
         done_path, done_payload = done_candidate
     done_status = str(done_payload.get('status') or 'done')
     if done_status == 'pending':
-        raise RuntimeError(REQUIREMENTS_DRAFT_WAIT_TIMEOUT_MESSAGE)
+        raise RecoverableAgentWait(
+            REQUIREMENTS_DRAFT_WAIT_TIMEOUT_MESSAGE,
+            stage='REQUIREMENTS_DRAFT',
+            runner_status=summary_status,
+            summary_path=summary_path,
+            run_dir=summary.get('runner_run_dir'),
+            done_path=done_path,
+        )
 
     expected_run_id = Path(str(summary.get('runner_run_dir') or '')).name
     actual_run_id = str(done_payload.get('run_id') or '')

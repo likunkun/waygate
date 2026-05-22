@@ -93,6 +93,7 @@ from workflow_controller.state_machine.transitions import (
     validate_objective_coverage,
 )
 from workflow_controller.steps._common import (
+    RecoverableAgentWait,
     TestStrategistBlocked,
     TestStrategistFallbackBlocked,
 )
@@ -1719,7 +1720,64 @@ class RalphRefinerController:
         })
 
     def run_once(self) -> dict[str, Any]:
-        return self._run_once()
+        state = self.store.load_state()
+        if state.get('recoverableAgentWait'):
+            return state
+        try:
+            return self._run_once()
+        except RecoverableAgentWait as exc:
+            state = self.store.load_state()
+            action = exc.action or compute_next_allowed_action(state)
+            self._record_recoverable_agent_wait(state, action, exc)
+            self._save_state(state)
+            return state
+
+    def retry_recoverable_agent_wait(self) -> dict[str, Any]:
+        state = self.store.load_state()
+        wait = state.pop('recoverableAgentWait', None)
+        if not wait:
+            raise ValueError('No recoverable agent wait is recorded for this workflow')
+        state['status'] = 'active'
+        state['blockedReason'] = None
+        self.store.append_event('agent_wait_retry_requested', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'stage': wait.get('stage') if isinstance(wait, dict) else None,
+            'action': wait.get('action') if isinstance(wait, dict) else None,
+            'runner_status': wait.get('runner_status') if isinstance(wait, dict) else None,
+        })
+        self._save_state(state)
+        return state
+
+    def _record_recoverable_agent_wait(
+        self,
+        state: dict[str, Any],
+        action: str | None,
+        exc: RecoverableAgentWait,
+    ) -> None:
+        payload = {
+            'stage': exc.stage or state.get('currentStep'),
+            'action': exc.action or action,
+            'runner_status': exc.runner_status,
+            'message': str(exc),
+            'occurredAt': datetime.now(timezone.utc).isoformat(),
+        }
+        for key, value in {
+            'summary_path': exc.summary_path,
+            'run_dir': exc.run_dir,
+            'done_path': exc.done_path,
+        }.items():
+            if value:
+                payload[key] = value
+        state['status'] = 'active'
+        state['currentStep'] = payload['stage']
+        state['blockedReason'] = None
+        state['recoverableAgentWait'] = payload
+        self.store.append_event('agent_wait_recoverable', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            **payload,
+        })
 
     def _run_once(
         self,
@@ -2274,6 +2332,8 @@ class RalphRefinerController:
         max_no_progress_steps: int = DEFAULT_MAX_NO_PROGRESS_STEPS,
     ) -> dict[str, Any]:
         state = self.get_status()
+        if state.get('recoverableAgentWait'):
+            return state
         steps = 0
         no_progress_steps = 0
         while state.get('status') not in {'done', 'blocked', 'failed'} and steps < max_steps:
@@ -2282,6 +2342,8 @@ class RalphRefinerController:
             previous_step = state.get('currentStep')
             state = self.run_once()
             steps += 1
+            if state.get('recoverableAgentWait'):
+                break
             after_action = compute_next_allowed_action(state)
             after_key = _automatic_progress_key(state, after_action)
             if after_key == before_key:
@@ -2329,6 +2391,9 @@ class RalphRefinerController:
         state = self.get_status()
         if print_agent_target:
             self._print_agent_target_resolution(state, output_func)
+        if state.get('recoverableAgentWait'):
+            output_func(_format_recoverable_wait_message(state))
+            return state
         while state.get('status') not in {'done', 'blocked', 'failed'}:
             if verbose:
                 self._print_drive_progress(state, output_func)
@@ -2373,6 +2438,9 @@ class RalphRefinerController:
             steps += 1
             if compact_reporter is not None:
                 compact_reporter.record_transition(before_state, action, state, elapsed_seconds)
+            if state.get('recoverableAgentWait'):
+                output_func(_format_recoverable_wait_message(state))
+                return state
             after_action = compute_next_allowed_action(state)
             after_key = _automatic_progress_key(state, after_action)
             if after_key == before_key:
@@ -3102,6 +3170,19 @@ def _format_blocked_message(reason: str, *, color_enabled: bool) -> str:
     return (
         f"{_paint('[阻塞]', 'red', color_enabled)} "
         f'{_highlight_validation_tokens(reason, color_enabled=color_enabled)}'
+    )
+
+
+def _format_recoverable_wait_message(state: dict[str, Any]) -> str:
+    wait = state.get('recoverableAgentWait') if isinstance(state.get('recoverableAgentWait'), dict) else {}
+    action = wait.get('action') or state.get('nextAction') or compute_next_allowed_action(state) or '-'
+    stage = wait.get('stage') or state.get('currentStep') or '-'
+    status = wait.get('runner_status') or '-'
+    summary_path = wait.get('summary_path')
+    suffix = f' 记录：{summary_path}' if summary_path else ''
+    return (
+        f'[等待] Agent 暂未完成（阶段：{stage}，下一步：{ACTION_LABELS.get(action, action)}，'
+        f'runner={status}）。下次运行会停在同一阶段；如需重新派发，执行 `waygate retry`。{suffix}'
     )
 
 
@@ -5139,6 +5220,13 @@ def parse_args() -> argparse.Namespace:
     status_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
     status_parser.add_argument('--auto-approve', action='store_true', help='Reflect auto-approve mode in status/runtime decisions')
 
+    retry_parser = subparsers.add_parser(
+        'retry',
+        help='Clear a recoverable agent wait and leave the workflow ready to run the same stage again',
+        allow_abbrev=False,
+    )
+    retry_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
+
     approve_parser = subparsers.add_parser(
         'approve',
         help='Approve a Markdown human gate after manual review',
@@ -5354,6 +5442,16 @@ def main() -> None:
         print(render_status_line(state))
         return
 
+    if args.command == 'retry':
+        try:
+            state = controller.retry_recoverable_agent_wait()
+        except Exception as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            raise SystemExit(1) from None
+        next_action = state.get('nextAction') or compute_next_allowed_action(state)
+        print(f'status=retry-ready currentStep={state.get("currentStep")} nextAction={next_action}')
+        return
+
     if args.command == 'approve':
         try:
             gate_path = controller.approve_human_gate(args.gate, actor=args.actor)
@@ -5418,6 +5516,8 @@ def main() -> None:
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
+        if state.get('recoverableAgentWait'):
+            print(_format_recoverable_wait_message(state))
         print(render_status_line(state))
         return
 

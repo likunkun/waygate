@@ -1,5 +1,13 @@
 # 发现与决策
 
+## 2026-05-22 Recoverable Agent Timeout / `waygate retry`
+
+- Agent 超时、pane idle 但未写 DONE、或用户暂时无响应，属于 runner 层 transient wait，不是 Requirements 或 Unit Plan 合同错误；把这种情况置为 `blocked` 会迫使用户错误地用 `waygate revise` 修改上游 gate。
+- 可恢复等待的状态边界是：保持原 stage、`status=active`、清空 `blockedReason`、记录 `recoverableAgentWait` 和事件，并停止自动 loop。Requirements、Unit Plan 和 Final Acceptance approval 不应被失效。
+- `waygate retry` 只表达“允许同一阶段再次尝试/接回 pending run”，不能隐式修改 requirements、unit plan、approval gate 或 artifact；真正的合同返工仍只能走 Requirements / Unit Plan revise 或 Final Acceptance rejection routing。
+- 只有 runner status `timeout` 与 `agent_idle_without_done` 纳入 recoverable wait。Agent 显式 `blocked`、controller validation failure、verifier 环境错误、重复失败阻断和 Final Acceptance blocked route 仍然应保持真实 blocked 语义。
+- Subprocess `TimeoutExpired` 需要归一化为 `status=timeout` / `returncode=124`，否则 subprocess runner 会绕开 recoverable wait 语义并表现为未捕获异常。
+
 ## 2026-05-22 Requirements-stage E2E 前置审阅门禁
 
 - 真实 E2E / 浏览器验收的测试方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图必须在 Requirements 人工批准前暴露；否则 Unit Plan 才发现缺口时，人类已经批准了不完整的验收合同。

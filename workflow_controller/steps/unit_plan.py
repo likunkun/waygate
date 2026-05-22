@@ -17,8 +17,10 @@ from workflow_controller.prompts.unit_plan import (
     _gap_counts_from_list,
 )
 from workflow_controller.steps._common import (
+    RecoverableAgentWait,
     StepResult,
     TestStrategistFallbackBlocked,
+    is_recoverable_agent_status,
     _write_json,
     _read_json_object,
     _now_iso,
@@ -114,6 +116,15 @@ def run_unit_plan_drafter(
         body_path=body_path,
         strategist_summary=strategist_summary or _disabled_test_strategist_summary(state),
     )
+    if is_recoverable_agent_status(planner_result.status):
+        raise RecoverableAgentWait(
+            'Unit Plan drafter is still waiting for the agent to finish.',
+            stage='UNIT_PLAN_DRAFT',
+            runner_status=planner_result.status,
+            summary_path=summary_path,
+            run_dir=planner_result.run_dir,
+            done_path=getattr(planner_result, 'done_path', None),
+        )
     if planner_result.returncode != 0:
         raise RuntimeError(
             f"Unit plan drafter failed with exit code {planner_result.returncode}. See {summary_path}"
@@ -149,6 +160,7 @@ def _write_unit_plan_summary(
         'status': result.status,
         'mode': result.backend,
         'runner_run_dir': str(result.run_dir),
+        'done_path': str(done_path) if (done_path := getattr(result, 'done_path', None)) else None,
         'done_payload': result.done_payload,
         'agent_command': result.command,
         'runner_metadata': result.runner_metadata,
@@ -211,6 +223,14 @@ def _run_test_strategist_if_enabled(
         env=runner.env,
         timeout_seconds=int(state.get('testStrategistTimeoutSeconds') or state.get('unitPlanDraftTimeoutSeconds') or 1800),
     ))
+    if is_recoverable_agent_status(result.status):
+        raise RecoverableAgentWait(
+            'Test Strategist is still waiting for the agent to finish.',
+            stage='UNIT_PLAN_DRAFT',
+            runner_status=result.status,
+            run_dir=result.run_dir,
+            done_path=getattr(result, 'done_path', None),
+        )
     fallback_reason = None
     actual_independence = 'role-runner'
     if result.returncode != 0:
@@ -287,6 +307,14 @@ def _run_test_strategist_patcher(
             or 1800
         ),
     ))
+    if is_recoverable_agent_status(result.status):
+        raise RecoverableAgentWait(
+            'Test Strategist patcher is still waiting for the agent to finish.',
+            stage='UNIT_PLAN_DRAFT',
+            runner_status=result.status,
+            run_dir=result.run_dir,
+            done_path=getattr(result, 'done_path', None),
+        )
     if result.returncode != 0 and progress_callback is not None:
         progress_callback('[Test Strategist] 补充运行失败，保留原始结果')
 

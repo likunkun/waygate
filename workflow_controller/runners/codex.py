@@ -19,16 +19,29 @@ class CodexRunner(BaseRunner):
 def _run_subprocess_agent(request: RunnerRequest) -> RunnerResult:
     prompt = request.prompt_path.read_text(encoding='utf-8')
     command = _subprocess_agent_command(request.agent_command or 'claude', prompt)
-    completed = subprocess.run(
-        command,
-        cwd=request.workspace_dir,
-        text=True,
-        input=prompt if _uses_stdin_prompt(command) else None,
-        capture_output=True,
-        timeout=request.timeout_seconds,
-        check=False,
-        env={**os.environ, **request.env} if request.env else None,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=request.workspace_dir,
+            text=True,
+            input=prompt if _uses_stdin_prompt(command) else None,
+            capture_output=True,
+            timeout=request.timeout_seconds,
+            check=False,
+            env={**os.environ, **request.env} if request.env else None,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return RunnerResult(
+            backend='subprocess',
+            status='timeout',
+            command=command,
+            returncode=124,
+            stdout=_timeout_text(exc.stdout),
+            stderr=_timeout_text(exc.stderr) or f'agent timed out after {request.timeout_seconds} seconds',
+            run_dir=request.artifact_dir,
+            prompt_path=request.prompt_path,
+            runner_metadata=_request_metadata(request),
+        )
     return RunnerResult(
         backend='subprocess',
         status='done' if completed.returncode == 0 else 'failed',
@@ -69,6 +82,14 @@ def _subprocess_agent_command(agent_command: str, prompt: str) -> list[str]:
 def _uses_stdin_prompt(command: list[str]) -> bool:
     executable = Path(command[0]).name if command else ''
     return 'codex' in executable and command[-1:] == ['-']
+
+
+def _timeout_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ''
+    if isinstance(value, bytes):
+        return value.decode(errors='replace')
+    return value
 
 
 def _request_metadata(request: RunnerRequest) -> dict[str, Any]:

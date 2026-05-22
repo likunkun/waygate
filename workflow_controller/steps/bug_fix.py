@@ -7,7 +7,13 @@ from typing import Any
 from workflow_controller.prompts.bug_fix import _render_bug_fix_prompt
 from workflow_controller.rrc_real_runtime import collect_git_changed_files
 from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
-from workflow_controller.steps._common import StepResult, _now_iso, _write_json
+from workflow_controller.steps._common import (
+    RecoverableAgentWait,
+    StepResult,
+    is_recoverable_agent_status,
+    _now_iso,
+    _write_json,
+)
 
 
 def run_bug_fix(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> StepResult:
@@ -75,6 +81,15 @@ def run_bug_fix(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) ->
         env=runner.env,
         timeout_seconds=int(state.get('bugFixTimeoutSeconds') or 7200),
     ))
+    if is_recoverable_agent_status(result.status):
+        raise RecoverableAgentWait(
+            'Bug Fix Agent is still waiting for the agent to finish.',
+            stage='BUG_FIX',
+            runner_status=result.status,
+            summary_path=summary_path,
+            run_dir=result.run_dir,
+            done_path=result.done_path,
+        )
     payload = _read_bug_fix_result(result_path)
     if payload is None:
         payload = {

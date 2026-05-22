@@ -58,6 +58,41 @@ print("argv=" + " ".join(sys.argv[1:]))
     assert (workspace / 'subprocess-output.txt').read_text(encoding='utf-8') == 'changed\n'
 
 
+def test_subprocess_runner_timeout_returns_recoverable_timeout_result(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    agent = _make_executable(
+        tmp_path / 'slow-agent',
+        """#!/usr/bin/env python3
+import time
+print("started", flush=True)
+time.sleep(10)
+""",
+    )
+
+    request = RunnerRequest(
+        backend='subprocess',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-1',
+        agent_command=str(agent),
+        timeout_seconds=1,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.backend == 'subprocess'
+    assert result.status == 'timeout'
+    assert result.returncode == 124
+    assert result.command[0] == str(agent)
+    assert 'started' in result.stdout
+    assert 'agent timed out after 1 seconds' in result.stderr
+    assert result.run_dir == tmp_path / 'artifacts'
+
+
 def test_tmux_claude_runner_dispatches_prompt_and_waits_for_done_signal(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()

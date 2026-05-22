@@ -101,6 +101,7 @@
 - [x] verification_env 机制：unit/state 环境变量统一注入 verifier
 - [x] Unit Plan approval 预检：拒绝明显缺环境的验证计划
 - [x] timeout/idle 诊断：区分 idle、无输出、wrong run、invalid done
+- [x] Agent timeout/idle 可恢复等待：`timeout` / `agent_idle_without_done` 保持当前阶段 active，记录 `recoverableAgentWait`，通过 `waygate retry` 恢复，不再把 transient runner silence 当作 Requirements / Unit Plan revise。
 - [x] 完整测试通过
 - **状态：** complete
 

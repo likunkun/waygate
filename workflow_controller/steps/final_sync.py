@@ -6,7 +6,9 @@ from typing import Any
 
 from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
 from workflow_controller.steps._common import (
+    RecoverableAgentWait,
     StepResult,
+    is_recoverable_agent_status,
     _now_iso,
     _read_json_object,
     _write_json,
@@ -99,6 +101,23 @@ def run_final_acceptance_agent_sync(
             timeout_seconds=int(state.get('finalAcceptanceAgentSyncTimeoutSeconds') or 1800),
         )
     )
+    if is_recoverable_agent_status(result.status):
+        _write_sync_summary(
+            summary_path,
+            state=state,
+            status=result.status,
+            mode=result.backend,
+            reason='final acceptance agent sync is still waiting for the agent to finish',
+            runner_result=result,
+        )
+        raise RecoverableAgentWait(
+            'Final acceptance agent sync is still waiting for the agent to finish.',
+            stage='FINAL_ACCEPTANCE_AGENT_SYNC',
+            runner_status=result.status,
+            summary_path=summary_path,
+            run_dir=result.run_dir,
+            done_path=result.done_path,
+        )
     if result.returncode != 0:
         _write_sync_summary(
             summary_path,
