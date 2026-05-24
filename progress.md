@@ -1,5 +1,219 @@
 # 进度日志
 
+## 会话：2026-05-24
+
+### Annotation Agent 人工 Gate 顺序修复
+- **状态：** implementation verified; full regression passed.
+- 修复 Unit Plan 修订路径：新 gate 通过 controller preflight 后会先记录 `unit_plan_gate_preflight_completed` 并执行 fresh `unit_plan_annotation`，再返回人工确认；无效 Unit Plan 不运行 annotation。
+- 修复 Requirements / Unit Plan / Final Acceptance approval check 顺序：已 approved gate 先走 deterministic validation 和状态推进，不再在人工确认之后补跑 annotation；pending/stale gate 仍会在人工 review 前确保 annotation fresh。
+- 已完成 RED/GREEN 定向验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'revise_unit_plan_gate_runs_annotation_before_returning_to_human_gate or approved_human_gate_does_not_start_annotation_after_approval'` -> initially `4 failed`
+  - GREEN: 同一命令 -> `4 passed, 33 deselected`
+- 已完成回归验证：
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `37 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'annotation or plannotator or unit_plan or final_acceptance'` -> `66 passed, 139 deselected`
+  - `WAYGATE_PREVIEW_PORT=0 python3 -m pytest workflow_controller/tests -q` -> `619 passed in 75.99s`
+
+### Verification-Assist Agent 语义修正
+- **状态：** implementation verified; full regression passed.
+- V0.6.1 flexible evidence 现在区分两类：`descriptive_command` 仍执行命令，Agent 判断只作为人工 review context；`agent_assisted_case` 由 test case 显式声明 `verification_assist`，不执行命令，由 configured verification-assist backend 产出结构化 case artifact。
+- Unit Plan validator 新增 `verification_assist` 合同校验：同一 test case 不能同时声明 `command` 和 `verification_assist`；`verification_assist.description` 与 `verification_assist.expected` 必填；必须解析到已启用的 Agent 配置，默认复用 `final_acceptance_verification_assist`。
+- Verifier runtime 对 command cases 保持原路径；对 `verification_assist` cases 渲染专用 prompt、调用 configured subprocess backend、规范化 assist artifact，并在 `verification.json` 写入 `evidence_type=agent_assisted_case`、`status`、`agent_assisted_judgement`、`risk_annotations`、`structured_evidence_refs`、`human_review_required` 和 `assist_artifact_path`。
+- Final Acceptance Evidence Matrix 现在将 deterministic rows、Agent-Assisted Descriptive Evidence 和 Agent-Assisted Verification Evidence 分开展示；辅助验证 evidence 仍不是 approval。
+- 已完成 focused 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_flexible_evidence.py -q` -> initially failed on missing validator import.
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_flexible_evidence.py -q -k golden_path_allows_verification_assist` -> initially failed on golden path command requirement.
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_v061_flexible_evidence.py -q` -> `5 passed`
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `33 passed`
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q` -> `4 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'verification_assist or annotation or final_acceptance'` -> `17 passed, 188 deselected`
+  - `WAYGATE_PREVIEW_PORT=0 python3 -m pytest workflow_controller/tests -q` -> `615 passed in 77.11s`
+  - `git diff --check` -> passed
+
+### Annotation Agent Approval Markdown Review Block
+- **状态：** implementation verified; full regression passed.
+- Fresh `human_language=zh-CN` annotation artifact 现在会在人工 gate 展示前写入同一个 approval Markdown 文件，块边界为 `<!-- WAYGATE_ANNOTATION_REVIEW_BEGIN -->` / `<!-- WAYGATE_ANNOTATION_REVIEW_END -->`，标题为 `## Annotation Agent 风险批注`。
+- 批注块位于 `## Human Confirmation` 之后，展示 artifact 路径、`generated_at`、gate hash、summary、issue count 和逐条 issue 的 severity/category/location/AC/AO/Journey/message/evidence refs；`gate_body()` 和 approval content hash 保持不变。
+- 重复进入 gate 会替换旧块；stale artifact 或非 `zh-CN` artifact 不写入审批 Markdown，并会移除旧块，避免 Plannotator 展示过期批注。
+- 已完成 RED/GREEN 定向验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'review_block'` -> `4 failed`
+  - GREEN: 同一命令 -> `4 passed`
+- 已完成回归验证：
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `33 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'annotation or requirements or plannotator'` -> `40 passed, 165 deselected`
+  - `WAYGATE_PREVIEW_PORT=0 python3 -m pytest workflow_controller/tests -q` -> `612 passed in 77.52s`
+  - `git diff --check` -> passed
+
+### Annotation Agent Visibility and Freshness Fix
+- **状态：** implementation verified; full regression passed.
+- Annotation pass 现在在 controller pane 输出紧凑生命周期行：`[annotation] started ...`、`[annotation] completed ...` 或 `[annotation] failed ...`；模型 stdout/stderr 仍通过 `capture_output=True` 捕获，不直接刷终端。
+- Annotation prompt、event 和 artifact 现在记录当前 gate body 的 `gate_content_hash`；人工 gate 检查会在 artifact 缺失或 hash 不匹配时重新运行对应 annotation role，避免复用旧 gate 的风险标注。
+- Annotation artifact 现在必须声明 `human_language=zh-CN`，且 `summary`、`issues[].message`、`non_approval_statement` 等人类可见批注字段必须是简体中文；英文-only artifact 会被拒绝，旧 artifact 因缺少语言标记会重新运行。
+- 人工 gate 菜单显示当前 fresh annotation artifact 路径、风险数量和中文摘要；Plannotator review metadata / event 也记录同一 annotation artifact 引用。后续 Approval Markdown Review Block 修复已改为把批注块写入 `## Human Confirmation` 之后，仍不改变 gate hash。
+- Requirements 人工 `r` 修订路径在新 gate 生成、preflight 通过后重新运行 `requirements_annotation`；annotation 失败会进入 `annotation_runtime` blocked，并保留 `pendingAnnotationBeforeHumanGate` 供 `unblock` 后恢复。
+- 正式 workflow 文档和 CLI 使用说明已补充：annotation agent 是 controller-side subprocess，不会显示在 tmux builder pane；人工 gate 前只显示 compact status；Requirements revision 必须生成 fresh annotation artifact。
+- 已完成 RED/GREEN 定向验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'compact_lifecycle or stale_gate_reruns or revised_gate_hash or annotation_failure_blocks_annotation_runtime'` -> `4 failed`
+  - GREEN: 同一命令 -> `4 passed`
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `26 passed`
+  - RED/GREEN: `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q -k visibility_and_revision_freshness` -> RED `1 failed`，GREEN `1 passed`
+- 已完成回归验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'annotation or requirements'` -> `31 passed, 174 deselected`
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q` -> `4 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `605 passed in 76.61s`
+  - `git diff --check` -> passed
+- 用户要求打包后，已生成 `dist/waygate_0.6.1_all.deb`；打包验证：
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`
+  - `git diff --check` -> passed
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.1_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.1_all.deb Package Version Architecture Depends` -> `waygate / 0.6.1 / all / python3`
+  - 解包后 `waygate --version` -> `waygate 0.6.1`
+  - 包内容包含 `workflow_controller/annotation_agents.py`、`docs/workflow/external-spec-intake-and-annotation-policy.md` 和 `docs/architecture/external-spec-intake-and-annotation-architecture.md`
+
+### Annotation Agent CLI Compatibility Formal Fix
+- **状态：** implementation verified; full regression passed; live V0.2 recovery verified.
+- 内置 `--annotation-agent codex` 模板已改为当前 Codex CLI 支持的 `codex exec --sandbox workspace-write -o {artifact_path} ...`，不再生成 `--ask-for-approval never`。
+- 旧 session 中精确匹配 Waygate 旧内置 Codex annotation args 的配置会在 runtime/config normalize 路径自动归一化；用户通过 `--annotation-agent-cmd` 自定义的命令保持原样。
+- Annotation runner 失败现在归类为 `annotation_runtime` blocker，并通过 `unblock` 恢复 pending annotation 后再进入人工 gate，不再误导为 Requirements contract revise。
+- 正式文档 `docs/workflow/external-spec-intake-and-annotation-policy.md`、`USAGE.md`、`USAGE.zh-CN.md` 已同步；`findings.md` 记录“CLI annotation 后端兼容性不是 gate 合同失败”的决策。
+- CLI 兼容性检查：
+  - `claude --version` -> `2.1.150 (Claude Code)`；`claude --help` 包含 `-p` 和 `--permission-mode bypassPermissions`。
+  - `codex --version` -> `codex-cli 0.133.0`；`codex exec --help` 包含 `--sandbox` 和 `-o, --output-last-message`，未包含旧 `--ask-for-approval`。
+  - `opencode --version` -> `1.15.10`；`opencode run --help` 可用。
+- 真实 smoke：
+  - Codex：临时目录 `/tmp/waygate-codex-smoke.TzSkRR` 写出合法 JSON artifact；命令兼容，过程中本机 Codex auth refresh 有 401/expired token 日志但命令 returncode 为 0。
+  - OpenCode：临时目录 `/tmp/waygate-opencode-smoke.pvBHSK` 写出合法 JSON artifact。
+  - Claude Code：临时目录 `/tmp/waygate-claude-smoke.jqtY4W` 的 artifact 写入 smoke 在 180s 超时，未生成 artifact；记录为本机 Claude backend/runtime smoke blocker，CLI help 本身可用。
+- Live 验收：`/home/lichangkun/code/classroom/.rrc-controller-v0.2` 旧 state 已归一化三类 annotation args，`unblock` 后重新执行 Requirements annotation；最新 events 记录 `annotation_pass_completed`，未再出现 `unexpected argument '--ask-for-approval'`，当前停在真实 Requirements 人工 gate：`currentStep=WAITING_REQUIREMENTS_ACCEPTANCE`、`status=active`、`nextAction=check_requirements_acceptance`。
+- 已完成验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'codex_enables_all_roles_with_safe_defaults or builtin_annotation_backend_templates or legacy_builtin_codex_annotation_args_normalize or custom_annotation_agent_cmd_with_legacy_like_args_is_preserved or unblock_reruns_pending_requirements_annotation'` -> `4 failed, 1 passed`
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'annotation_runtime_blocker_guidance'` -> `1 failed`
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q -k 'annotation_policy_docs_use_current_codex_cli_contract'` -> `1 failed`
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py workflow_controller/tests/test_v061_docs.py -q` -> `25 passed`
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'annotation or unblock or stop_guidance'` -> `7 passed, 198 deselected`
+  - `python3 -m pytest workflow_controller/tests -q` -> `600 passed in 76.83s`
+  - `git diff --check` -> passed
+  - `python -m pytest workflow_controller/tests -q` -> failed because this shell has no `python` executable (`zsh:1: command not found: python`); `python3` is the verified interpreter.
+
+### Agent 提供终验走查包与人工观察记录强制校验
+- **状态：** implementation verified; full regression passed.
+- Unit Plan `final_acceptance_walkthrough` 现在区分 `inspection` 和 `launch`：closure/Web/UI unit 必须声明人工可见系统入口，包含 `surface_kind`、`entrypoint`、`manual_steps` 和 `expected_observations`；`manual_steps` 不能只写 pytest、Playwright、golden path 或其他测试命令。
+- Builder 可在 DONE payload 中通过 `final_acceptance_walkthrough.inspection` 覆盖 Unit Plan 入口；Final Acceptance gate 优先展示 Builder 确认过的最终入口和原因。
+- Final Acceptance gate 新增 `## Agent 提供的人工走查入口` 与 `## 人工系统观察记录（Required）`；人工记录包含 observed entrypoint、actual observation、data/account/fixture 和 issues/evidence path。
+- `waygate approve --gate final-acceptance` 与 Plannotator Approve 共享同一校验路径；缺人工观察记录时不会推进 DONE，会保持 `WAITING_FINAL_ACCEPTANCE` 并提示先打开 Agent 提供入口填写观察记录。
+- 正式 workflow 文档 `docs/workflow/final-acceptance-guided-walkthrough-policy.md` 已同步；`findings.md` 记录“Plannotator 文档审批不等于系统终验”的决策。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_final_walkthrough.py -q` -> `21 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_rrc_controller.py -q -k 'final_acceptance or final_walkthrough or plannotator'` -> `39 passed, 237 deselected`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `72 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `204 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `593 passed in 75.67s`
+  - `git diff --check` -> passed
+
+## 会话：2026-05-23
+
+### Builder blocked artifact 复阻塞修复
+- **状态：** implementation verified; packaged.
+- 现场 2 号窗口 V0.1 workflow 已确认 Unit Plan 中 `PRODUCTION_WEB_BASE_URL` / `PRODUCTION_API_BASE_URL` 已改为 localhost 默认值，但 `artifacts/target-v0-1/builder-summary.json` 仍保留旧 run `target-v0-1-20260523T111412138716Z` 的 `status=blocked`。
+- 根因是 controller 在 `get_status()` / `run_once()` 中会把同一个旧 Builder blocked artifact 反复 reconciliation 回官方 blocked state；`waygate unblock` 或重新批准 Unit Plan 后，还没进入新 Builder run 就被旧 run_id 复阻塞。
+- 修复：`unblock` 和 Unit Plan approval 会记录已处理的 builder blocked context key；同一个旧 artifact 不再复阻塞，新 Builder run 若再次 blocked 会用新的 run_id 正常进入 blocked。
+- 已完成 RED/GREEN 定向验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'unblock_ignores_same_builder_blocked_artifact or unit_plan_approval_ignores_previous_builder_blocked_artifact'` -> `2 failed`
+  - GREEN: 同一命令 -> `2 passed`
+- 已完成回归与打包验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'blocked_guidance or stop_guidance or drive or unblock or builder_agent_blocked or unit_plan_approval_ignores_previous_builder_blocked_artifact'` -> `46 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `585 passed in 74.84s`
+  - `git diff --check` -> passed
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.1_all.deb`
+  - 解包后 `waygate --version` -> `waygate 0.6.1`
+
+### Waygate 停止状态原因化引导
+- **状态：** implementation verified; full regression passed.
+- `status`、`run`、`drive/start/go` 现在在 recoverable wait、human gate、blocked、max steps、no progress 和 no next action 停止点追加原因、下一步和可复制命令；`status` 第一行仍保持 `currentStep/status/nextAction/projectTargetVersion` 兼容输出。
+- `retry` 边界收紧为只处理 `recoverableAgentWait` 的 timeout/idle；显式 `blocked` 会提示运行 `waygate status --state-dir <dir>` 查看 route guidance。
+- 新增 `waygate unblock --state-dir <dir> --reason "<fixed condition>"`，只允许环境/外部依赖类 blocked 在人工修复后继续同一阶段；保留 approvals/gates/artifacts，记录 `blocked_state_unblocked` event。
+- Builder 显式 `blocked` 现在会持久化为官方 controller blocked state：`status=blocked`、`currentStep=EXECUTE_UNIT`、`blockedReason=<DONE summary>`、`blockedContext.source=builder_agent`，并记录 `builder_agent_blocked` event；旧 active state 若已有 `builder-summary.json` blocked，会在 `status/get_status()` reconciliation 中恢复。
+- 正式 workflow 文档新增 `docs/workflow/stop-guidance-and-unblock-policy.md`，并更新 `docs/workflow/recoverable-agent-timeout-policy.md` 与 `docs/README.md` 登记。
+- 已完成 RED/GREEN 定向验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'status_prints_recoverable_wait_guidance or retry_refuses_explicit_blocked_state or unblock_requires_reason or unblock_allows_environment_blocked_state or unblock_rejects_unit_plan_contract_blocked_state or builder_agent_blocked_persists_official_controller_blocked_state or status_reconciles_legacy_builder_summary_blocked'` -> `7 failed`
+  - GREEN: 同一范围 + drive timestamp/gate regression -> `9 passed`
+- 已完成回归验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_builder.py workflow_controller/tests/test_packaging.py -q` -> `208 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_v061_docs.py -q` -> `74 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `579 passed in 74.63s`
+  - `git diff --check` -> passed
+
+### Annotation Agent 环境可用性风险标注
+- **状态：** implementation verified; full regression passed.
+- Requirements / Unit Plan annotation prompt 现在明确要求在人工 gate 前标注外部运行环境可用性风险，但仍保持 risk-only、non-approval 语义。
+- 新增风险 taxonomy：Requirements 支持 `production_readonly_gap` / `runtime_dependency_gap`；Unit Plan 支持 `production_readonly_gap` / `runtime_dependency_gap` / `verification_env_gap`。
+- 标注 prompt 会提醒 agent 检查 `production_readonly` 是否缺真实外部入口，例如 `PRODUCTION_WEB_BASE_URL` / `PRODUCTION_API_BASE_URL`，并检查 Docker、Docker Compose、Playwright/browser、端口、服务依赖、数据库、缓存和外部 API 是否只是被假设存在。
+- `verification_env` 被明确为 key-name declaration；仅声明 env key 不证明存在可执行 value、已部署服务、可达生产环境或端口可用。
+- 正式 workflow 文档 `docs/workflow/external-spec-intake-and-annotation-policy.md` 与架构文档 `docs/architecture/external-spec-intake-and-annotation-architecture.md` 已同步。
+- 已完成 RED/GREEN 定向验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py::test_requirements_and_unit_plan_annotation_prompts_flag_environment_availability_risks -q` -> failed on missing `production_readonly`.
+  - GREEN: 同一命令 -> `1 passed`。
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_docs.py::test_v061_required_formal_docs_and_registry_exist -q` -> failed on missing `production_readonly_gap` docs.
+  - GREEN: 同一命令 -> `1 passed`。
+- 已完成 focused regression：
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py workflow_controller/tests/test_v061_docs.py -q` -> `19 passed`
+- 标准验证命令环境差异：
+  - `python -m pytest workflow_controller/tests -q` -> failed because this shell has no `python` executable (`zsh:1: command not found: python`).
+  - `python3 -m pytest workflow_controller/tests -q` -> `572 passed in 75.01s`
+- 用户要求打包后，已生成 `dist/waygate_0.6.1_all.deb`；打包验证：
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`
+  - `git diff --check` -> passed
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.1_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.1_all.deb Package Version Architecture Depends` -> `waygate / 0.6.1 / all / python3`
+  - 解包后 `waygate --version` -> `waygate 0.6.1`
+  - 包内容包含 `workflow_controller/annotation_agents.py`、`docs/workflow/external-spec-intake-and-annotation-policy.md` 和 `docs/architecture/external-spec-intake-and-annotation-architecture.md`
+
+### Final Acceptance Guided Launch Walkthrough
+- **状态：** implementation verified; full regression passed.
+- Final Acceptance 前新增 `FINAL_WALKTHROUGH_PREPARE` 阶段：Verifier / bug-fix verifier 通过后先写 `final-walkthrough-launch.json`，再生成 Final Acceptance gate。
+- Unit Plan Controller State Patch 支持 `final_acceptance_walkthrough.launch`，可声明 `agent_start`、`manual_only` 或 `not_required`；validator 会阻断缺 command、缺 readiness hint、非法 cwd、保存 env/secret 值和缺 manual instructions。
+- `agent_start` 会按声明命令启动并检查 `ready_url`、`ready_command` 或 `ready_output_contains`；启动失败只写入 gate 供人工选择返工路由，不自动批准或绕过终验。
+- Final Acceptance gate 新增 `## Golden Path 人工走查`，展示启动状态、入口、ready check、日志、stop command、fixture/test data、user steps、expected、人工确认和观察记录。
+- 正式 workflow 文档新增 `docs/workflow/final-acceptance-guided-walkthrough-policy.md` 并登记到 `docs/README.md`。
+- 已完成定向验证：
+  - `python3 -m pytest workflow_controller/tests/test_final_walkthrough.py -q` -> `13 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q` -> `72 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q` -> `191 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `23 passed`
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py::test_gate_order_runs_annotation_before_human_gate_events_for_requirements_unit_plan_and_final -q` -> `1 passed`
+  - `git diff --check` -> passed
+  - `python3 -m pytest workflow_controller/tests -q` -> `571 passed in 74.80s`
+- 用户要求打包后，已生成 `dist/waygate_0.6.1_all.deb`；打包验证：
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`
+  - `git diff --check` -> passed
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.1_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.1_all.deb Package Version Architecture Depends` -> `waygate / 0.6.1 / all / python3`
+  - 解包后 `waygate --version` -> `waygate 0.6.1`
+  - 包内容包含 `workflow_controller/steps/final_walkthrough.py` 和 `docs/workflow/final-acceptance-guided-walkthrough-policy.md`
+
+### V0.6.1 Annotation Agent CLI 启用补充
+- **状态：** implementation verified; full regression passed.
+- `init`、`start`、`go`、`drive`、`run` 现在支持 `--annotation-agent` 系列参数，操作者可以通过 `waygate go V0.6.1 --annotation-agent codex` 启用非批准型风险标注 Agent，无需手改 `session.json`。
+- 支持 `requirements`、`unit-plan`、`final-acceptance`、`all` role alias，支持 `codex`、`claude-code` / `claude`、`opencode` backend；支持 command、env key allowlist、timeout、failure policy 和禁用覆盖。
+- CLI override 会写入或更新 `annotationAgents`，只保存环境变量名，不保存 secret 值；annotation artifact 仍只能作为风险提示，不能批准、跳过、修改或绕过 gate。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py workflow_controller/tests/test_v061_docs.py -q` -> `18 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_init_with_test_strategist_flag_enables_it_in_session workflow_controller/tests/test_rrc_controller.py::test_init_with_code_simplifier_flag_configures_refiner_runner_only workflow_controller/tests/test_rrc_controller.py::test_rrc_go_dry_run_creates_and_resumes_inferred_state_dir -q` -> `3 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `558 passed in 74.49s`
+  - `git diff --check` -> passed
+
+### V0.6.1 External Spec Intake 终验同步
+- **状态：** Final Acceptance approved; human-readable status synced.
+- Controller Final Acceptance 已批准：`finalAcceptanceAccepted=true`，确认人为 human，hash 为 `sha256:43189e15a45c23582e73f28ff3fc8d1cabfc30026ba17acf22bbba92c7c0d85a`。
+- 当前目标 `Complete V0.6.1 development acceptance using current planning progress` 已标记为 `covered`；四个单元 `v0-6-1-u1-external-spec-intake`、`v0-6-1-u2-annotation-config-prompts`、`v0-6-1-u3-flexible-evidence`、`v0-6-1-u4-docs-regression` 均已 `passes=true`。
+- Final Acceptance evidence matrix 中 AC-17 / AC-18 均 passed；Final Scope Audit 显示 AC coverage `18/18`、Journey coverage `7/7`、AO coverage `1/1`、unexplained changed files `0`。
+- 必需文档 deliverables 均为 present：`ROADMAP.md`、`ROADMAP.zh-CN.md`、`docs/workflow/external-spec-intake-and-annotation-policy.md`、`docs/architecture/external-spec-intake-and-annotation-architecture.md` 和 `docs/README.md` registry。
+- 验证命令均已通过：`git diff --check && python3 -m pytest workflow_controller/tests/test_v061_docs.py -q`、`git diff --check`、`python3 -m pytest workflow_controller/tests -q`。
+- 本次状态同步更新了 `ROADMAP.md`、`ROADMAP.zh-CN.md`、`task_plan.md` 和 `progress.md`；未发现新的 workflow decision、defect 或 risk，因此 `findings.md` 未新增终验记录。
+- 用户明确要求打包后，已将 package version 同步到 `0.6.1`，把新增 `docs/architecture/` 正式文档纳入 Debian 包，并生成 `dist/waygate_0.6.1_all.deb`。
+- 打包验证通过：`python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`；`bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.1_all.deb`；`dpkg-deb --field dist/waygate_0.6.1_all.deb Package Version Architecture Depends` -> `waygate / 0.6.1 / all / python3`；解包后 `waygate --version` -> `waygate 0.6.1`。
+
 ## 会话：2026-05-22
 
 ### V0.6.0m Golden Path E2E 前置校验

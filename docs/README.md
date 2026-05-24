@@ -24,8 +24,14 @@
 | --- | --- | --- |
 | 正式维护文档 | `docs/architecture.md`、`docs/architecture.zh-CN.md` | 当前技术架构入口；后续可按主题迁入 `docs/architecture/`。 |
 | 正式维护文档 | `docs/workflow.md`、`docs/workflow.zh-CN.md` | 当前工作流入口；流程规则变更优先登记并沉淀到 `docs/workflow/`。 |
+| 正式维护文档 | `docs/workflow/controller-agent-interaction-audit.md` | Controller-Agent 主流程、返工路线、关键 prompt 来源和 Requirements 到 Final Acceptance 贯穿性审计。 |
+| 正式维护文档 | `docs/workflow/controller-agent-interaction-audit.html` | 上述审计的自包含 Plannotator 风格可视化版本，便于浏览流程图、提示语卡片和贯穿性矩阵。 |
+| 正式维护文档 | `docs/workflow/external-spec-intake-and-annotation-policy.md` | V0.6.1 外部 spec intake、gate ordering、role-based annotation、prompt contract、non-approval semantics、`descriptive_command` 与 `agent_assisted_case` evidence 流程规则。 |
+| 正式维护文档 | `docs/architecture/external-spec-intake-and-annotation-architecture.md` | V0.6.1 OpenSpec / Spec Kit import contract、annotation_agents.py、prompt template registry、runner adapter、verification-assist case runner 和 verification.json schema 模块边界。 |
 | 正式维护文档 | `docs/workflow/requirements-e2e-review-policy.md` | V0.6.2 Requirements 阶段真实 E2E / 浏览器/API/service 验收前置审阅矩阵；V0.6.0m Unit Plan golden path 必须是真实 `layer=e2e`。 |
 | 正式维护文档 | `docs/workflow/recoverable-agent-timeout-policy.md` | Agent 超时、idle-without-DONE 和 `waygate retry` 的可恢复等待策略；说明 transient runner silence 不走 `waygate revise`。 |
+| 正式维护文档 | `docs/workflow/stop-guidance-and-unblock-policy.md` | Waygate 停止状态原因化 guidance、`retry` 与显式 `blocked` 的边界、环境类 `unblock` 和 Builder blocked reconciliation 规则。 |
+| 正式维护文档 | `docs/workflow/final-acceptance-guided-walkthrough-policy.md` | Final Acceptance 前的启动准备阶段、Agent 提供的 `final_acceptance_walkthrough.inspection` / `launch` 合同、人工观察记录必填和 Golden Path 人工走查 gate 规则。 |
 | 正式维护文档 | `docs/workflow/prototype-fidelity-policy.md` | UI/Web 原型一致性 fidelity、视觉证据、Verifier marker 和终验阻断规则。 |
 | 正式维护文档 | `docs/workflow/ui-ux-skill-policy.md` | V0.6.0k UI/Web/prototype 工作必须使用 `ui-ux-pro-max`，`frontend-design` 只能作为辅助视觉探索或润色。 |
 | 正式维护文档 | `docs/product/waygate-introduction-and-best-practices.md`、`docs/product/waygate-introduction-and-best-practices.zh-CN.md` | Waygate 介绍和最佳实践。 |

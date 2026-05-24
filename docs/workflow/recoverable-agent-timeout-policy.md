@@ -6,6 +6,8 @@ Recoverable waits are not Requirements or Unit Plan contract failures. The contr
 
 Use `waygate retry --state-dir <state-dir>` to clear `recoverableAgentWait` when the same stage should be attempted again. `retry` does not edit approvals, requirements, unit plans, or artifacts. For Requirements Draft, the next run may resume the existing pending run if its `done.json` and body arrive later; otherwise it dispatches according to the normal stage behavior.
 
+If no `recoverableAgentWait` exists, `retry` must refuse. Explicit `blocked` states are handled by the stop guidance policy: fix environment/external dependencies and run `waygate unblock --state-dir <state-dir> --reason "<fixed condition>"`, or use the formal Requirements / Unit Plan / Final Acceptance rework route when the approved contract must change.
+
 Do not use `waygate revise` for transient runner silence. `waygate revise` remains limited to Requirements and Unit Plan contract rework:
 
 - Requirements revision changes approved requirements or acceptance criteria and invalidates downstream approval as needed.

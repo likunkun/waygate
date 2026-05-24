@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controller-Agent Interaction Audit</title>
+  <style>
+    :root {
+      --background: oklch(0.97 0.005 260);
+      --foreground: oklch(0.18 0.02 260);
+      --card: oklch(1 0 0);
+      --card-foreground: oklch(0.18 0.02 260);
+      --muted: oklch(0.92 0.01 260);
+      --muted-foreground: oklch(0.40 0.02 260);
+      --primary: oklch(0.50 0.25 280);
+      --primary-foreground: oklch(1 0 0);
+      --secondary: oklch(0.50 0.18 180);
+      --accent: oklch(0.60 0.22 50);
+      --accent-foreground: oklch(0.18 0.02 260);
+      --destructive: oklch(0.50 0.25 25);
+      --success: oklch(0.45 0.20 150);
+      --warning: oklch(0.55 0.18 85);
+      --border: oklch(0.88 0.01 260);
+      --code-bg: oklch(0.92 0.01 260);
+      --ring: oklch(0.50 0.25 280);
+      --radius: 8px;
+      --font-sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --font-display: ui-serif, Georgia, "Times New Roman", serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 40px 0 72px;
+    }
+
+    .hero {
+      border-bottom: 1.5px solid var(--border);
+      padding: 32px 0 28px;
+      display: grid;
+      gap: 22px;
+    }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      color: var(--primary);
+      font-weight: 700;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      letter-spacing: 0;
+      line-height: 1.08;
+    }
+
+    h1 {
+      font-family: var(--font-display);
+      font-size: clamp(38px, 7vw, 76px);
+      max-width: 980px;
+    }
+
+    h2 {
+      font-family: var(--font-display);
+      font-size: clamp(28px, 4vw, 44px);
+      margin-bottom: 18px;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted-foreground);
+      max-width: 920px;
+    }
+
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .ve-card,
+    .metric,
+    .node,
+    .prompt-card,
+    .route-card,
+    .finding {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .metric {
+      padding: 18px;
+      min-height: 116px;
+    }
+
+    .metric strong {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 34px;
+      line-height: 1;
+      color: var(--foreground);
+      margin-bottom: 8px;
+    }
+
+    .metric span {
+      color: var(--muted-foreground);
+      font-size: 14px;
+    }
+
+    section {
+      padding: 48px 0 0;
+    }
+
+    .source-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border: 1.5px solid var(--border);
+      background: color-mix(in oklab, var(--muted) 60%, var(--card));
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--foreground);
+      white-space: nowrap;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(11, minmax(160px, 1fr));
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+
+    .node {
+      position: relative;
+      padding: 14px;
+      min-height: 148px;
+      border-top: 5px solid var(--primary);
+    }
+
+    .node:nth-child(3n + 2) {
+      border-top-color: var(--secondary);
+    }
+
+    .node:nth-child(3n) {
+      border-top-color: var(--accent);
+    }
+
+    .node::after {
+      content: "→";
+      position: absolute;
+      right: -12px;
+      top: 54px;
+      color: var(--muted-foreground);
+      font-family: var(--font-mono);
+      font-weight: 700;
+    }
+
+    .node:last-child::after {
+      content: "";
+    }
+
+    .node .num {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted-foreground);
+      margin-bottom: 10px;
+    }
+
+    .node p,
+    .prompt-card p,
+    .route-card p,
+    .finding p {
+      font-size: 13px;
+      color: var(--muted-foreground);
+    }
+
+    .route-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .route-card {
+      padding: 16px;
+      border-left: 5px solid var(--warning);
+    }
+
+    .route-card.requirements {
+      border-left-color: var(--primary);
+    }
+
+    .route-card.defect {
+      border-left-color: var(--destructive);
+    }
+
+    .route-card.unit {
+      border-left-color: var(--secondary);
+    }
+
+    .route-card.impl {
+      border-left-color: var(--accent);
+    }
+
+    .route-card.blocked {
+      border-left-color: var(--muted-foreground);
+    }
+
+    .prompt-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .prompt-card {
+      padding: 16px;
+      min-height: 170px;
+    }
+
+    .prompt-card code,
+    table code,
+    .finding code {
+      font-family: var(--font-mono);
+      font-size: 0.92em;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 1px 5px;
+    }
+
+    .matrix-wrap {
+      overflow-x: auto;
+      border: 1.5px solid var(--border);
+      background: var(--card);
+      border-radius: var(--radius);
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 980px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: color-mix(in oklab, var(--muted) 72%, var(--card));
+      color: var(--foreground);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .strong {
+      color: var(--success);
+      background: color-mix(in oklab, var(--success) 12%, transparent);
+      border: 1px solid color-mix(in oklab, var(--success) 40%, var(--border));
+    }
+
+    .partial {
+      color: var(--warning);
+      background: color-mix(in oklab, var(--warning) 14%, transparent);
+      border: 1px solid color-mix(in oklab, var(--warning) 42%, var(--border));
+    }
+
+    .missing {
+      color: var(--destructive);
+      background: color-mix(in oklab, var(--destructive) 10%, transparent);
+      border: 1px solid color-mix(in oklab, var(--destructive) 40%, var(--border));
+    }
+
+    .na {
+      color: var(--muted-foreground);
+      background: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    .findings {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .finding {
+      padding: 18px;
+      border-left: 5px solid var(--warning);
+    }
+
+    .finding.p1 {
+      border-left-color: var(--primary);
+    }
+
+    .finding.p2 {
+      border-left-color: var(--secondary);
+    }
+
+    .legend {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 12px 0 16px;
+    }
+
+    .footer-note {
+      margin-top: 28px;
+      padding: 18px;
+      background: var(--muted);
+      border-radius: var(--radius);
+      border: 1.5px solid transparent;
+      color: var(--muted-foreground);
+      font-size: 14px;
+    }
+
+    @media (max-width: 900px) {
+      main {
+        width: min(100vw - 24px, 1180px);
+        padding-top: 20px;
+      }
+
+      .summary-strip,
+      .route-grid,
+      .prompt-grid,
+      .findings {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline {
+        grid-template-columns: 1fr;
+        overflow-x: visible;
+      }
+
+      .node::after {
+        content: "↓";
+        right: 16px;
+        top: auto;
+        bottom: -20px;
+      }
+
+      .node {
+        min-height: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div class="eyebrow">Waygate Workflow Audit</div>
+      <h1>Controller-Agent 交互与 Requirements 贯穿性审计</h1>
+      <p>本可视化版本对应 <code>controller-agent-interaction-audit.md</code>：展示主流程、返工路线、关键 prompt 卡片，以及从 Requirements 到 Final Acceptance 的贯穿性热力矩阵。</p>
+      <div class="summary-strip" aria-label="Audit summary">
+        <div class="metric"><strong>11</strong><span>主流程节点，从 Requirements Drafter 到 Done。</span></div>
+        <div class="metric"><strong>5</strong><span>Final Acceptance rejection route：requirements、unit_plan、implementation、defect_fix、blocked。</span></div>
+        <div class="metric"><strong>4</strong><span>强贯穿类别：AO、AC、测试策略、文档交付；prototype 在 UI/Web 场景强贯穿。</span></div>
+        <div class="metric"><strong>3</strong><span>主要弱贯穿面：设计/架构引用、4.8 风险、4.9 基础设施事实。</span></div>
+      </div>
+      <div class="source-row" aria-label="Fact sources">
+        <span class="chip">workflow_controller/rrc_controller.py</span>
+        <span class="chip">prompts/*.py</span>
+        <span class="chip">steps/*.py</span>
+        <span class="chip">gates/validators</span>
+        <span class="chip">scope_audit.py</span>
+        <span class="chip">.rrc-controller-v0.6.0e</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>主流程</h2>
+      <div class="pipeline" role="list" aria-label="Controller Agent pipeline">
+        <article class="node" role="listitem"><div class="num">01</div><h3>Requirements Drafter</h3><p>生成 Requirements body、summary 和 approval gate；输入 AO ledger、spec、dialogue brief 与 context files。</p></article>
+        <article class="node" role="listitem"><div class="num">02</div><h3>Requirements Gate</h3><p>人工或 Plannotator 审批；controller preflight 校验 AC layer、AO、4.5、4.9、prototype。</p></article>
+        <article class="node" role="listitem"><div class="num">03</div><h3>Unit Plan Drafter</h3><p>把 approved Requirements 转成 Test Case Matrix、Document Deliverables Matrix 和 Controller State Patch。</p></article>
+        <article class="node" role="listitem"><div class="num">04</div><h3>Test Strategist</h3><p>可选独立审查测试策略，生成 strategy、gap report 和 review package；static-only coverage 是 Critical gap。</p></article>
+        <article class="node" role="listitem"><div class="num">05</div><h3>Unit Plan Gate</h3><p>应用 state patch 并运行 test strategy、AO、Journey、prototype、docs、E2E、env、golden path validators。</p></article>
+        <article class="node" role="listitem"><div class="num">06</div><h3>Builder</h3><p>读取 approved gates，只执行当前 unit；先补 AC-mapped tests，并完成 required docs deliverables。</p></article>
+        <article class="node" role="listitem"><div class="num">07</div><h3>Refiner</h3><p>CodeSimplifier 做行为保持型精修；只允许 ok、skipped、changes_requested 或 failed 路由。</p></article>
+        <article class="node" role="listitem"><div class="num">08</div><h3>Reviewer</h3><p>controller-side review 检查 builder/refiner artifacts、changed files 和失败信号，失败回 Builder。</p></article>
+        <article class="node" role="listitem"><div class="num">09</div><h3>Verifier</h3><p>执行 Unit Plan commands，写 verification.json、evidence_rows、journey evidence 与 visual evidence refs。</p></article>
+        <article class="node" role="listitem"><div class="num">10</div><h3>Final Acceptance</h3><p>汇总 Evidence Matrix、Document Status、Prototype Matrix、Scope Audit、Journey Matrix 和 rejection routing。</p></article>
+        <article class="node" role="listitem"><div class="num">11</div><h3>Final Sync / Done</h3><p>终验通过后同步 task_plan、progress、findings 等状态文档；这不是实现任务。</p></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>返工路线</h2>
+      <div class="route-grid">
+        <article class="route-card requirements"><h3>Requirements</h3><p>已批准需求错误或不完整。失效 Requirements 与 Unit Plan，重新进入 Requirements 人工确认。</p></article>
+        <article class="route-card defect"><h3>Defect Fix</h3><p>需求正确，但终验发现已完成工作有缺陷。进入 Bug Fix Gate、Bug Fix Agent 和 regression verifier。</p></article>
+        <article class="route-card unit"><h3>Unit Plan</h3><p>单元范围、测试用例、证据计划或架构选择有缺口。重新生成 Unit Plan。</p></article>
+        <article class="route-card impl"><h3>Implementation</h3><p>计划正确但实现不完整或错误。当前 unit 标记 incomplete，回到 Builder。</p></article>
+        <article class="route-card blocked"><h3>Blocked</h3><p>环境、数据、权限或证据不足，controller 停在 Final Acceptance 等待人工处理。</p></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>关键 Prompt 卡片</h2>
+      <div class="prompt-grid">
+        <article class="prompt-card"><h3>Requirements</h3><p>强制 AC verification layer、AO mapping、4.5 设计/架构、4.8 风险、4.9 基础设施，以及 UI/Web 的 <code>ui-ux-pro-max</code> 与 prototype manifest。</p></article>
+        <article class="prompt-card"><h3>Unit Plan</h3><p>生成 Test Case Matrix、Document Deliverables Matrix、Controller State Patch；要求真实 E2E entrypoint、golden path 和 prototype conformance 证据计划。</p></article>
+        <article class="prompt-card"><h3>Test Strategist</h3><p>输出 <code>test-strategy.json</code>、gap report 和 review package；静态检查不能单独覆盖行为验收。</p></article>
+        <article class="prompt-card"><h3>Builder</h3><p>approved gates 是 source of truth；先读 Test Case Matrix，补测试，再实现当前 unit；Verifier 失败时先复现 exact command。</p></article>
+        <article class="prompt-card"><h3>Refiner / Reviewer</h3><p>Refiner 只做行为保持型清理；Reviewer 读取 builder/refiner artifacts 和 changed files，不用自然语言总结代替证据。</p></article>
+        <article class="prompt-card"><h3>Verifier / Final</h3><p>Verifier 产出 evidence rows；Final Acceptance 展示 AO、AC、test case、environment、artifact、scope audit 和 rejection route。</p></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>贯穿性热力矩阵</h2>
+      <p>热力状态按 Markdown 主文档定义：Strong 有结构化字段、validator 和最终可见证据；Partial 表示已进入 prompt 或局部 validator，但最终证据闭环不完整。</p>
+      <div class="legend">
+        <span class="status strong">Strong</span>
+        <span class="status partial">Partial</span>
+        <span class="status missing">Missing</span>
+        <span class="status na">Not Applicable</span>
+      </div>
+      <div class="matrix-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Requirements 内容</th>
+              <th>Unit Plan</th>
+              <th>执行 Prompt</th>
+              <th>Verifier Evidence</th>
+              <th>Final Acceptance</th>
+              <th>结论</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Acceptance Obligation (AO)</td>
+              <td>covers_obligations + AO validator</td>
+              <td>approved gates 全文传入 Builder</td>
+              <td>evidence_rows.acceptance_obligations</td>
+              <td>Evidence Matrix + Scope Audit</td>
+              <td><span class="status strong">Strong</span></td>
+            </tr>
+            <tr>
+              <td>Acceptance Criteria (AC)</td>
+              <td>Test Case Matrix + acceptance_criterion</td>
+              <td>AC-mapped tests 是 Builder 主目标</td>
+              <td>evidence_rows.acceptance_criterion</td>
+              <td>Evidence Matrix + AC coverage</td>
+              <td><span class="status strong">Strong</span></td>
+            </tr>
+            <tr>
+              <td>Journey</td>
+              <td>covers_journeys / journey_ids</td>
+              <td>Builder 收到 Journey/Test Case 映射</td>
+              <td>journey_evidence_rows</td>
+              <td>Journey Matrix + scope audit</td>
+              <td><span class="status strong">Strong</span> / <span class="status na">N/A</span></td>
+            </tr>
+            <tr>
+              <td>Product Design Ref</td>
+              <td>product_design_refs</td>
+              <td>approved Requirements + Unit Plan 全文</td>
+              <td>当前 evidence rows 不含该字段</td>
+              <td>当前 Final Matrix 不展示</td>
+              <td><span class="status partial">Partial</span></td>
+            </tr>
+            <tr>
+              <td>Technical Architecture Ref</td>
+              <td>technical_architecture_refs</td>
+              <td>approved Requirements + Unit Plan 全文</td>
+              <td>当前 evidence rows 不含该字段</td>
+              <td>当前 Final Matrix 不展示</td>
+              <td><span class="status partial">Partial</span></td>
+            </tr>
+            <tr>
+              <td>4.8 澄清、假设与风险</td>
+              <td>可被 Unit Plan prose 消费</td>
+              <td>Builder 收到 Requirements 全文</td>
+              <td>仅当转成 test case 时结构化</td>
+              <td>无独立 closure matrix</td>
+              <td><span class="status partial">Partial</span></td>
+            </tr>
+            <tr>
+              <td>4.9 基础设施信息</td>
+              <td>转成 env/setup/docs deliverables</td>
+              <td>Builder 用于运行与排障</td>
+              <td>通过 command/env 间接证明</td>
+              <td>无独立 infra coverage matrix</td>
+              <td><span class="status partial">Partial</span></td>
+            </tr>
+            <tr>
+              <td>Prototype / UI contract</td>
+              <td>prototype_conformance + surfaces + targets</td>
+              <td>真实 production entrypoint 和 click path</td>
+              <td>visual_evidence_refs + screenshot markers</td>
+              <td>Prototype Conformance Matrix</td>
+              <td><span class="status strong">Strong</span> / <span class="status na">N/A</span></td>
+            </tr>
+            <tr>
+              <td>Test Strategy</td>
+              <td>Test Case Matrix + Test Strategist</td>
+              <td>先创建或更新测试文件</td>
+              <td>command results + evidence rows</td>
+              <td>Evidence Matrix + Golden Path</td>
+              <td><span class="status strong">Strong</span></td>
+            </tr>
+            <tr>
+              <td>Document Deliverables</td>
+              <td>Document Deliverables Matrix</td>
+              <td>Required docs 必须落到 docs/* 或登记</td>
+              <td>tests/manual evidence 间接证明</td>
+              <td>Document Deliverables Status</td>
+              <td><span class="status strong">Strong</span></td>
+            </tr>
+            <tr>
+              <td>Requirements-stage independent Test Strategist</td>
+              <td>当前独立 runner 在 Unit Plan 阶段</td>
+              <td>不适用</td>
+              <td>不适用</td>
+              <td>不适用</td>
+              <td><span class="status missing">Missing</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>缺口与建议</h2>
+      <div class="findings">
+        <article class="finding p1"><h3>P1 · 设计/架构进入证据行</h3><p>给 <code>verification.json</code> evidence rows 增加 <code>product_design_refs</code> 和 <code>technical_architecture_refs</code>，Final Acceptance 同步展示。</p></article>
+        <article class="finding p1"><h3>P1 · 4.8 风险关闭矩阵</h3><p>从 Requirements <code>## 4.8</code> 提取需要关闭的 assumptions/risks，Unit Plan 和 Final Acceptance 逐项显示 closure 状态。</p></article>
+        <article class="finding p2"><h3>P2 · 4.9 基础设施覆盖矩阵</h3><p>展示七类基础设施事实如何落到 test setup、verification_env、docs deliverable 或 manual evidence。</p></article>
+        <article class="finding p2"><h3>P2 · Prompt Registry</h3><p>把 prompt source 和交互节点登记为正式 workflow 文档，流程变更时同步更新。</p></article>
+        <article class="finding"><h3>P3 · Requirements-stage Test Strategist</h3><p>按 ROADMAP V0.6.2，把独立 Test Strategist 前移到 Requirements approval 前。</p></article>
+        <article class="finding"><h3>审计注意</h3><p>历史 <code>.rrc-controller-*</code> artifact 可能落后于当前 generator；审计时同时读取源码、ROADMAP、session 和具体 artifact。</p></article>
+      </div>
+      <div class="footer-note">
+        本 HTML 是自包含可视化交付物；正式审计正文与 prompt 来源附录见 <code>docs/workflow/controller-agent-interaction-audit.md</code>。
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -2,6 +2,15 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.1
+
+- Added supported OpenSpec/OpenAPI and Spec Kit intake paths with normalized requirements, source maps, validation reports, and clear unsupported/deferred errors.
+- Added non-approving role-based annotation and verification-assist configuration for Requirements, Unit Plan, and Final Acceptance gates.
+- Added `--annotation-agent` CLI options on `init`, `start`, `go`, `drive`, and `run` so operators can enable risk-only annotation agents without editing `session.json`.
+- Added prompt contracts and prompt-template registry coverage for risk-only annotation artifacts.
+- Added flexible verifier evidence rows so descriptive command evidence can record structured refs and `human_review_required` without overriding deterministic command status.
+- Added formal V0.6.1 workflow and architecture docs, and packaged the new `docs/architecture/` subdirectory.
+
 ## 0.6.0m
 
 - Added Unit Plan preflight for `golden_path: true`: golden-path test cases must be `layer=e2e`, use `local_real` or `production_readonly`, declare a real entrypoint, provide fixture/setup, run a concrete command listed in `verification_commands`, use strong expected assertions, and avoid core business API mocks/stubs.

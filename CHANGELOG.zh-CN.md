@@ -2,6 +2,15 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.1
+
+- 新增受支持的 OpenSpec/OpenAPI 和 Spec Kit intake 路径，生成 normalized requirements、source maps、validation reports，并对 unsupported/deferred 格式给出清晰错误。
+- 新增 Requirements、Unit Plan、Final Acceptance gate 前的非批准型、按 role 配置的 annotation 和 verification-assist 能力。
+- `init`、`start`、`go`、`drive`、`run` 新增 `--annotation-agent` 系列 CLI 参数，允许操作者启用风险标注 Agent，无需手改 `session.json`。
+- 新增风险标注 artifact 的提示词合同与 prompt template registry 覆盖。
+- 新增灵活 verifier evidence rows，让描述型命令证据记录结构化引用和 `human_review_required`，但不覆盖确定性命令状态。
+- 新增 V0.6.1 正式 workflow / architecture 文档，并将新的 `docs/architecture/` 子目录纳入 Debian 包。
+
 ## 0.6.0m
 
 - Unit Plan 新增 `golden_path: true` 前置校验：golden path test case 必须是 `layer=e2e`，使用 `local_real` 或 `production_readonly`，声明真实入口，提供 fixture/setup，使用出现在 `verification_commands` 中的具体命令，包含强 expected 断言，并且不得 mock/stub 核心业务 API。

@@ -1,5 +1,72 @@
 # 发现与决策
 
+## 2026-05-24 Annotation Agent 人工 Gate 顺序
+
+- Annotation / verification-assist 批注的边界是“人工确认前的风险上下文”，不是人工确认后的补充步骤。用户已批准的 gate 应先按 approval file 和 deterministic validator 推进状态，不应再启动 annotation Agent。
+- Unit Plan 修订路径必须与正常 Unit Plan drafter 路径保持同一 gate ordering：controller preflight 通过后先运行 `unit_plan_annotation`，再暴露给人工 gate；否则人工看到的 approval Markdown 可能缺少风险批注。
+- `check_requirements_acceptance`、`check_unit_plan_approval`、`check_final_acceptance` 只在 gate pending/stale 时做 annotation freshness 检查。已 approved gate 缺少 fresh annotation artifact 是历史审计缺口，不应阻塞或延迟已提交的人工作业。
+
+## 2026-05-24 Verification-Assist Agent 语义修正
+
+- `verification-assist Agent` 不是终验批注 Agent 的同义词。批注角色继续只提供 risk-only context；`verification_assist` 是 Unit Plan test case 显式选择的一种验证执行方式。
+- `descriptive_command` 与 `agent_assisted_case` 必须分开：前者仍执行命令，Agent 判断不能覆盖命令 exit code 或 deterministic evidence policy；后者不执行命令，Verifier 依赖 assist artifact 的 structured judgement 形成该 test case 的 evidence row。
+- `agent_assisted_case` 可以作为 controller evidence，但不能批准 gate。默认 `human_review_required=true`，Final Acceptance 仍必须通过 human confirmation、manual observation 记录和 controller transition。
+- 默认复用 `final_acceptance_verification_assist` 作为 backend 是兼容配置选择，不表示该 Agent 只在终验阶段做 annotation；文档和 prompt 必须说明它也可作为显式 verification-assist test case backend。
+- Golden path E2E 可以使用 `verification_assist` 替代命令，但仍必须保留 `layer=e2e`、真实环境、真实入口、fixture/setup、强 expected assertion，且不得使用核心 API mock/stub。
+
+## 2026-05-24 Annotation Agent 可见性与新鲜度
+
+- Annotation agent 是 controller-side subprocess，不是 tmux builder/reviewer/drafter pane 内的可见任务；因此运行状态必须由 controller pane 输出紧凑生命周期行，而不是期待用户在目标 agent pane 看到活动。
+- Annotation stdout/stderr 可能包含模型诊断、环境噪音或敏感上下文，只能继续 capture 到 artifact/event 的受控字段；终端只显示 role、backend、artifact、returncode、elapsed 和错误摘要。
+- Annotation artifact 必须绑定当前 gate body 的 `gate_content_hash`。Requirements gate 内容变化后，旧 artifact 只能作为历史审计证据，不能当作当前人工 gate 的有效标注。
+- Annotation artifact 的人类可见批注必须是简体中文。`summary`、`issues[].message` 和 `non_approval_statement` 这类字段面向人工审批，不能依赖英文模型输出；taxonomy key、AC/AO/Journey id、文件路径和命令可保留原文。
+- `human_language=zh-CN` 是当前 annotation artifact 的有效性标记之一。旧 artifact 即使 gate hash 匹配，但没有语言标记，也不能作为当前人工 gate 的有效标注，需要重新运行 annotation。
+- 当前 fresh annotation artifact 会以固定边界块写回同一个 approval Markdown，位置在 `## Human Confirmation` 之后，因此不改变 `gate_body()` 或 approval content hash；重复进入 gate 时替换旧块，stale artifact 或非 `zh-CN` artifact 会移除旧块且不展示为当前批注。
+- Requirements 人工修订和 unblock/check 恢复路径都必须在进入人工确认前重新确保 annotation fresh；annotation runtime 失败仍是 `annotation_runtime` blocker，不应引导用户修改 Requirements 合同。
+
+## 2026-05-24 Annotation Agent CLI 后端兼容性
+
+- Annotation agent 后端命令兼容性属于 runner/runtime blocker，不是 Requirements、Unit Plan 或 Final Acceptance 合同失败。`requirements_annotation annotation pass failed before human gate` 这类错误不能引导用户修改 Requirements 文档。
+- Codex CLI `0.133.0` 的 `codex exec` 已不接受旧参数 `--ask-for-approval never`。Waygate 内置 `--annotation-agent codex` 模板改为 `codex exec --sandbox workspace-write -o {artifact_path} ...`，继续保持非批准型 risk-only artifact 语义。
+- 已写入旧 session 的 Waygate 内置 Codex annotation args 需要在 runtime/config normalize 路径自动归一化；但用户通过 `--annotation-agent-cmd` 自定义的命令属于操作者显式配置，不能被 Waygate 猜测或改写。
+- Annotation runtime blocker 修复后应通过 `waygate unblock --state-dir <state-dir> --reason "<fixed annotation runtime condition>"` 重新执行 pending annotation，再进入真实人工 gate；不应要求用户做 Requirements revise。
+
+## 2026-05-24 Final Acceptance 人工系统观察记录
+
+- Final Acceptance 的人工批准对象不能只是 Markdown gate 或 Plannotator 文档审批；必须包含对真实系统表面的人工观察。Plannotator Approve 只能表示“审批动作已提交”，不能替代打开 Agent 提供入口后的系统终验。
+- Controller 不负责猜测真实入口。Unit Planner 必须在 `final_acceptance_walkthrough.inspection` 中声明 `surface_kind`、`entrypoint`、`manual_steps` 和 `expected_observations`；Builder 如果实现后入口变化，必须在 DONE payload 中确认最终入口和原因。
+- 自动化 verifier、golden path 和 launch artifact 是终验前置证据，但不能替代人工观察记录。Final Acceptance gate 需要展示 `## Agent 提供的人工走查入口`，并在 `## 人工系统观察记录（Required）` 中要求填写 observed entrypoint、actual observation、data/account/fixture 和 issues/evidence path。
+- `waygate approve --gate final-acceptance` 与 Plannotator Approve 走同一条 controller 校验路径；缺观察记录时保持 `WAITING_FINAL_ACCEPTANCE`，提示先打开 Agent 提供入口并记录实际观察。
+
+## 2026-05-23 Builder blocked artifact 复阻塞
+
+- Builder `status=blocked` artifact 是有效阻塞事实源，但只对对应 Builder run 有效。人工 `unblock` 表示该外部条件已处理，Unit Plan 重新批准表示上游执行合同已更新；之后不能再用同一个旧 `builder-summary.json` / run_id 把 workflow 复原到 blocked。
+- 正确边界是记录已处理的 Builder blocked context key（unit + run_id，缺 run_id 时退回 artifact path/summary），让同一个旧 artifact 不再参与 reconciliation；新的 Builder run 会产生新的 run_id，仍可正常进入官方 blocked state。
+- 现场 V0.1 证明，仅修改 Unit Plan 为 localhost 默认值不足以推进：旧 artifact `target-v0-1-20260523T111412138716Z` 仍被 `get_status()` 反复读取，导致 controller 还没重新派发 Builder 就再次 blocked。
+
+## 2026-05-23 Waygate 停止状态原因化引导
+
+- `retry` 的语义必须保持窄边界：只清除 timeout / idle / pending agent silence 形成的 `recoverableAgentWait`。显式 `blocked` 代表 agent 或 controller 已给出阻塞判断，不能被普通 retry 清掉。
+- 环境/外部依赖类 blocked 与合同类 blocked 需要不同路由。缺生产只读 URL、Docker/Compose/Playwright、端口、服务、凭据、权限、DB/API 等应先人工修环境，再用 `unblock` 表示外部条件已修好；Unit Plan 或 Requirements 合同不可执行时必须走对应 `revise` gate。
+- `unblock` 不是审批，也不是需求/计划变更。它只清除 blocked 状态并重新计算当前阶段 next action；Requirements、Unit Plan、Final Acceptance gate、approval hash 和 artifacts 必须保留。
+- Builder DONE payload 的 `status=blocked` 是 controller state 的事实源，不应只停留在 `builder-summary.json`。Controller 必须把它 reconciliation 成官方 `status=blocked/currentStep=EXECUTE_UNIT/blockedReason=<summary>`，这样 `status`、`unblock` 和 `revise --gate unit-plan` 都有一致入口。
+- 停止输出需要把“原因、下一步、命令”放在用户当下可执行的位置；自然语言总结不能替代可复制命令，也不能把 timeout retry 与 blocked revise/unblock 混为一谈。
+
+## 2026-05-23 Annotation Agent 环境可用性风险标注
+
+- Annotation agent 的职责是把人工批准前容易忽略的外部环境假设显式标注出来，不是把这些风险升级为新的审批者或自动阻断器；Requirements / Unit Plan / Final Acceptance 的批准语义仍只来自原 gate、controller transition 和必要的 verifier evidence。
+- `production_readonly` 不能由本地 `127.0.0.1`、localhost preview 或只声明 env key 代替。若当前验收真的需要远端只读环境，Unit Plan / verifier evidence 需要真实外部入口，例如 `PRODUCTION_WEB_BASE_URL` 或 `PRODUCTION_API_BASE_URL`；没有部署环境时应走正式 Requirements / Unit Plan 变更、延期或 manual blocked 路由。
+- Docker、Docker Compose、Playwright/browser、端口、数据库、缓存、外部 API 和服务依赖属于运行环境可用性事实。Controller deterministic preflight 能检查一部分结构字段，但 annotation prompt 应在人工 review 前提醒 agent 标注“计划假设存在但未证明可执行”的剩余风险。
+- `verification_env` 只保存 key 名称，不能证明 value 存在、服务可达、生产环境已部署或端口可用；标注 Agent 只能提示 `verification_env_gap` / `runtime_dependency_gap`，不能把 env key declaration 当作验收证据。
+
+## 2026-05-23 Final Acceptance Guided Launch Walkthrough
+
+- Final Acceptance 的事实边界应是“自动化验证已通过后的人工真实入口走查”，而不是让人工只看泛化检查清单。启动状态、ready check、真实入口、fixture/test data、user steps、expected 和人工观察必须在 gate 中可见。
+- Unit Plan 是声明最终走查启动方式的正确位置：它已经确定 closure unit、golden path、verification commands 和真实入口，controller 不应从 README、package scripts 或其他项目文件猜启动命令。
+- `agent_start` 启动失败不代表可以跳过 Final Acceptance，也不代表实现一定失败；它应形成可审计 launch artifact，由人工在 Final Acceptance gate 中选择 blocked、implementation、unit_plan 或其他既有返工路由。
+- `env_keys` 只能保存环境变量名。把 token、DATABASE_URL、password 或 API key 值写入 Unit Plan state、artifact 或日志会扩大 secret 泄露面，因此 validator 应在人工批准 Unit Plan 前阻断。
+- `manual_only` 和 `not_required` 仍需要形成明确 gate 说明；否则人工会回到临时口头说明，无法审计 Final Acceptance 入口和观察记录。
+
 ## 2026-05-22 V0.6.0m Golden Path E2E 前置校验
 
 - `golden_path: true` 表示最终验收主路径，不应由 `unit`、`integration`、`manual` 或 mock/contract 测试承担；否则 Final Acceptance 才暴露 evidence row 非 E2E，会把可在 Unit Plan 阶段发现的问题推迟到验收末端。

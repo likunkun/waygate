@@ -232,13 +232,22 @@ Delivered work:
 
 ### V0.6.1 - External Spec Intake
 
-Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable.
+Goal: add explicit import paths for external spec ecosystems after Waygate Markdown intake is stable, while closing the approval-ordering, annotation, prompt contract, and flexible evidence gaps required for controller acceptance.
 
-Planned work:
+Status: final acceptance approved on 2026-05-23.
+
+Delivered work:
 
 - Design import contracts for OpenSpec and Spec Kit.
 - Add parsers, validation, and conversion artifacts for supported external formats.
 - Preserve clear unsupported/deferred errors for formats that are detected but not enabled.
+- Enforce gate ordering so human approval is the last step in each current phase; controller preflight, schema validation, evidence checks, and annotation passes must finish before a human review file is presented.
+- Add role-based annotation and verification-assist configuration for `requirements_annotation`, `unit_plan_annotation`, and `final_acceptance_verification_assist`.
+- Support `claude-code`, `opencode`, and `codex` backend families through configurable command, args, env key allowlist, timeout, artifact path, prompt template, and failure policy fields.
+- Define a shared non-approval prompt contract plus stage-specific Requirements, Unit Plan, and Final Acceptance templates for risk-only annotation artifacts.
+- Allow verification JSON to include strict command-only checks, `descriptive_command` rows where a command still runs and Agent judgement only adds review context, and opt-in `agent_assisted_case` rows where a test case declares `verification_assist` instead of `command`; assisted rows must record structured evidence, `human_review_required`, and an assist artifact path.
+- Preserve approval semantics: annotation agents and agent-assisted verification may focus human review on risks, but they cannot approve, skip, or bypass controller gates.
+- Document the long-lived workflow rules in `docs/workflow/external-spec-intake-and-annotation-policy.md` and the module boundaries in `docs/architecture/external-spec-intake-and-annotation-architecture.md`.
 
 ### V0.6.2 - Strict Test Presence
 

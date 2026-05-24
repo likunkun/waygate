@@ -232,13 +232,22 @@
 
 ### V0.6.1 - External Spec Intake
 
-目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径。
+目标：在 Waygate Markdown intake 稳定后，再增加外部 spec 生态的显式导入路径，并补齐 controller 验收要求的 gate 顺序、标注、提示词合同和灵活验收证据能力。
 
-计划：
+状态：Final Acceptance 已于 2026-05-23 批准。
+
+已交付：
 
 - 设计 OpenSpec 和 Spec Kit 的导入契约。
 - 为受支持外部格式增加 parser、validation 和 conversion artifacts。
 - 对已识别但未启用的格式继续给出清晰 unsupported/deferred 错误。
+- 强化 gate 顺序：每个 gate 的人工审批必须是当前阶段最后一步；controller preflight、schema validation、evidence checks 和 annotation pass 都必须在人工审核文件呈现前完成。
+- 为 `requirements_annotation`、`unit_plan_annotation` 和 `final_acceptance_verification_assist` 增加按 role 可配置的 annotation / verification-assist 配置。
+- 通过 command、args、env key allowlist、timeout、artifact path、prompt template 和 failure policy 支持 `claude-code`、`opencode`、`codex` 三类 backend family。
+- 定义共享 non-approval 提示词合同，以及 Requirements、Unit Plan、Final Acceptance 三个阶段的风险标注 prompt template。
+- 允许 verification JSON 同时包含严格命令项、仍执行命令但补充 Agent 判断的 `descriptive_command` 行，以及显式声明 `verification_assist` 且不执行命令的 `agent_assisted_case` 行；辅助验证行必须记录结构化 evidence、`human_review_required` 和 assist artifact 路径。
+- 保持人工审批语义不变：标注 Agent 和 agent-assisted verification 只能帮助人聚焦风险，不能批准、跳过或绕过 controller gate。
+- 将长期流程规则沉淀到 `docs/workflow/external-spec-intake-and-annotation-policy.md`，将模块边界沉淀到 `docs/architecture/external-spec-intake-and-annotation-architecture.md`。
 
 ### V0.6.2 - Strict Test Presence
 
