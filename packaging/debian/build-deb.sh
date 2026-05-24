@@ -22,6 +22,7 @@ mkdir -p \
   "${PACKAGE_DIR}/usr/lib/${PACKAGE_NAME}" \
   "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}" \
   "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs" \
+  "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture" \
   "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/workflow" \
   "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/operations" \
   "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/product" \
@@ -46,6 +47,9 @@ install -m 0644 "${ROOT_DIR}/LICENSE" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NA
 install -m 0644 "${ROOT_DIR}/docs/README.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/README.md"
 install -m 0644 "${ROOT_DIR}/docs/architecture.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture.md"
 install -m 0644 "${ROOT_DIR}/docs/architecture.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture.zh-CN.md"
+if compgen -G "${ROOT_DIR}/docs/architecture/*.md" > /dev/null; then
+  install -m 0644 "${ROOT_DIR}"/docs/architecture/*.md "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/architecture/"
+fi
 install -m 0644 "${ROOT_DIR}/docs/workflow.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/workflow.md"
 install -m 0644 "${ROOT_DIR}/docs/workflow.zh-CN.md" "${PACKAGE_DIR}/usr/share/doc/${PACKAGE_NAME}/docs/workflow.zh-CN.md"
 if compgen -G "${ROOT_DIR}/docs/workflow/*.md" > /dev/null; then
