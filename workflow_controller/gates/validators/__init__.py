@@ -663,7 +663,9 @@ def validate_unit_plan_final_acceptance_walkthrough(state: dict[str, Any]) -> No
 
 def validate_final_acceptance_manual_observation_record(gate_path: Path) -> None:
     content = gate_body(gate_path.read_text(encoding='utf-8'))
-    section = _markdown_section(content, '人工系统观察记录（Required）')
+    section = _markdown_section(content, '人工系统观察记录（Review Notes）')
+    if not section.strip():
+        section = _markdown_section(content, '人工系统观察记录（Required）')
     if not section.strip():
         return
     missing = [
@@ -678,7 +680,7 @@ def validate_final_acceptance_manual_observation_record(gate_path: Path) -> None
     ]
     if missing:
         raise ValueError(
-            '人工系统观察记录（Required） is incomplete: '
+            '人工系统观察记录 is incomplete: '
             + ', '.join(missing)
             + ' must be filled after opening the Agent-provided entrypoint'
         )

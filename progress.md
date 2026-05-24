@@ -2,6 +2,20 @@
 
 ## 会话：2026-05-24
 
+### Final Acceptance 人工批准不再被观察记录阻断
+- **状态：** implementation verified; full regression passed.
+- 现场 2 号窗口 V0.2 复现：Plannotator 已返回 `{"decision":"approved"}`，但 controller 在人工批准后因为 `人工系统观察记录（Required）` 的 `Issues or evidence path` 为空阻断最终验收。
+- 根因：Final Acceptance gate 展示前已完成 deterministic evidence / scope / journey / prototype / real E2E / document deliverable / walkthrough entrypoint 预检，但批准路径仍额外调用 `validate_final_acceptance_manual_observation_record()`，把审阅记录字段当成硬门槛。
+- 修复方向：最终验收人工批准优先；观察记录保留为审阅上下文和风险提示，不再限制人工批准。终验 gate 校验默认也不要求人工观察记录，避免未来新增调用遗漏显式 `False` 又重新限制人工。现场 V0.2 已用修复后的 controller 写回 Final Acceptance approval，并完成批准后的 agent sync，当前进入 `RELEASE_GATE`。
+- 已完成 RED/GREEN focused 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_final_walkthrough.py::test_final_acceptance_approval_allows_empty_manual_observation_record -q` -> failed on `人工系统观察记录（Required） is incomplete`
+  - GREEN: 同一命令 -> `1 passed`
+  - `python3 -m pytest workflow_controller/tests/test_final_walkthrough.py -q` -> `21 passed`
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_rrc_controller.py -q -k 'final_acceptance or final_walkthrough or plannotator'` -> `39 passed, 238 deselected`
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q` -> `4 passed`
+  - `git diff --check` -> passed
+  - `WAYGATE_PREVIEW_PORT=0 python3 -m pytest workflow_controller/tests -q` -> `621 passed in 77.53s`
+
 ### Annotation Agent 人工 Gate 顺序修复
 - **状态：** implementation verified; full regression passed.
 - 修复 Unit Plan 修订路径：新 gate 通过 controller preflight 后会先记录 `unit_plan_gate_preflight_completed` 并执行 fresh `unit_plan_annotation`，再返回人工确认；无效 Unit Plan 不运行 annotation。
@@ -95,12 +109,12 @@
   - `git diff --check` -> passed
   - `python -m pytest workflow_controller/tests -q` -> failed because this shell has no `python` executable (`zsh:1: command not found: python`); `python3` is the verified interpreter.
 
-### Agent 提供终验走查包与人工观察记录强制校验
+### Agent 提供终验走查包与人工观察记录审阅上下文
 - **状态：** implementation verified; full regression passed.
 - Unit Plan `final_acceptance_walkthrough` 现在区分 `inspection` 和 `launch`：closure/Web/UI unit 必须声明人工可见系统入口，包含 `surface_kind`、`entrypoint`、`manual_steps` 和 `expected_observations`；`manual_steps` 不能只写 pytest、Playwright、golden path 或其他测试命令。
 - Builder 可在 DONE payload 中通过 `final_acceptance_walkthrough.inspection` 覆盖 Unit Plan 入口；Final Acceptance gate 优先展示 Builder 确认过的最终入口和原因。
-- Final Acceptance gate 新增 `## Agent 提供的人工走查入口` 与 `## 人工系统观察记录（Required）`；人工记录包含 observed entrypoint、actual observation、data/account/fixture 和 issues/evidence path。
-- `waygate approve --gate final-acceptance` 与 Plannotator Approve 共享同一校验路径；缺人工观察记录时不会推进 DONE，会保持 `WAITING_FINAL_ACCEPTANCE` 并提示先打开 Agent 提供入口填写观察记录。
+- Final Acceptance gate 新增 `## Agent 提供的人工走查入口` 与 `## 人工系统观察记录（Review Notes）`；人工记录包含 observed entrypoint、actual observation、data/account/fixture 和 issues/evidence path，作为审阅上下文和审计补充。
+- `waygate approve --gate final-acceptance` 与 Plannotator Approve 共享同一校验路径；当前语义下人工批准优先，空观察记录不再阻断 Final Acceptance。
 - 正式 workflow 文档 `docs/workflow/final-acceptance-guided-walkthrough-policy.md` 已同步；`findings.md` 记录“Plannotator 文档审批不等于系统终验”的决策。
 - 已完成验证：
   - `python3 -m pytest workflow_controller/tests/test_final_walkthrough.py -q` -> `21 passed`

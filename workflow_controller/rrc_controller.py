@@ -523,7 +523,11 @@ class RalphRefinerController:
         elif gate == 'unit-plan':
             reason = self._unit_plan_gate_invalid_reason(state, gate_path)
         elif gate == 'final-acceptance':
-            reason = self._final_acceptance_gate_invalid_reason(state, gate_path=gate_path)
+            reason = self._final_acceptance_gate_invalid_reason(
+                state,
+                gate_path=gate_path,
+                require_manual_observation=False,
+            )
         else:
             return
         if reason:
@@ -677,7 +681,7 @@ class RalphRefinerController:
         state: dict[str, Any],
         *,
         gate_path: Path | None = None,
-        require_manual_observation: bool = True,
+        require_manual_observation: bool = False,
     ) -> str | None:
         try:
             audit = self._write_final_scope_audit(state)
@@ -2487,7 +2491,11 @@ class RalphRefinerController:
             gate = check_gate_file(gate_path)
             state['finalAcceptanceAccepted'] = gate.approved
             if gate.approved:
-                reason = self._final_acceptance_gate_invalid_reason(state, gate_path=gate_path)
+                reason = self._final_acceptance_gate_invalid_reason(
+                    state,
+                    gate_path=gate_path,
+                    require_manual_observation=False,
+                )
                 if reason:
                     state['finalAcceptanceAccepted'] = False
                     state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
@@ -2510,7 +2518,7 @@ class RalphRefinerController:
                     state,
                     role='final_acceptance_verification_assist',
                     gate_path=gate_path,
-                    validator_summary='Final Acceptance deterministic evidence, scope audit, document deliverables, manual walkthrough entrypoints, and manual observation checks passed before human review.',
+                    validator_summary='Final Acceptance deterministic evidence, scope audit, document deliverables, and manual walkthrough entrypoints passed before human review.',
                 ):
                     self._save_state(state)
                     return state

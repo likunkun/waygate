@@ -419,7 +419,7 @@ def test_final_acceptance_gate_uses_builder_confirmed_inspection_entrypoint(tmp_
     assert 'http://127.0.0.1:4173/orders' not in content.split('## Agent 提供的人工走查入口', 1)[1].split('##', 1)[0]
 
 
-def test_final_acceptance_approval_requires_manual_observation_record(tmp_path: Path) -> None:
+def test_final_acceptance_approval_allows_empty_manual_observation_record(tmp_path: Path) -> None:
     state_dir = tmp_path / '.rrc'
     controller = RalphRefinerController(
         state_dir=state_dir,
@@ -450,37 +450,9 @@ def test_final_acceptance_approval_requires_manual_observation_record(tmp_path: 
     _write_final_artifacts(controller.artifacts_dir)
     gate_path = ensure_final_acceptance_gate(controller.store.load_state(), controller.approvals_dir, controller.artifacts_dir, force=True)
 
-    from workflow_controller.gates.parsers import approve_gate_file
+    assert controller._final_acceptance_gate_invalid_reason(controller.store.load_state(), gate_path=gate_path) is None
 
-    with pytest.raises(ValueError, match='人工系统观察记录'):
-        controller.approve_human_gate('final-acceptance', actor='tester')
-
-    approve_gate_file(gate_path, actor='tester')
-    blocked = controller.run_once()
-
-    assert blocked['currentStep'] == 'WAITING_FINAL_ACCEPTANCE'
-    assert blocked['finalAcceptanceAccepted'] is False
-    assert '人工系统观察记录' in blocked['blockedReason']
-
-    content = gate_path.read_text(encoding='utf-8')
-    content = content.replace(
-        '- Observed entrypoint: \n',
-        '- Observed entrypoint: http://127.0.0.1:4173/orders\n',
-    )
-    content = content.replace(
-        '- Actual observation: \n',
-        '- Actual observation: Order ORD-100 appeared with status submitted.\n',
-    )
-    content = content.replace(
-        '- Data/account/fixture: \n',
-        '- Data/account/fixture: reviewer@example.test / ORD-100 seed data\n',
-    )
-    content = content.replace(
-        '- Issues or evidence path: \n',
-        '- Issues or evidence path: artifacts/unit-01/final-acceptance-screenshot.png\n',
-    )
-    gate_path.write_text(content, encoding='utf-8')
-    approve_gate_file(gate_path, actor='tester')
+    controller.approve_human_gate('final-acceptance', actor='tester')
     accepted = controller.run_once()
 
     assert accepted['finalAcceptanceAccepted'] is True

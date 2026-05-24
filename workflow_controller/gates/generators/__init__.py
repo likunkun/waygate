@@ -1197,9 +1197,9 @@ def _manual_system_observation_record_lines(state: dict[str, Any], artifacts_dir
         return []
     return [
         '',
-        '## 人工系统观察记录（Required）',
+        '## 人工系统观察记录（Review Notes）',
         '',
-        '批准前必须先打开上方 Agent 提供的入口，并填写下面四项；只看 Markdown 或自动化测试结果不算人工系统终验。',
+        '建议人工审阅时打开上方 Agent 提供的入口，并记录实际观察；该记录用于审计和风险复核，不会阻止人工最终批准。',
         '',
         '- Observed entrypoint: ',
         '- Actual observation: ',

@@ -1,8 +1,8 @@
 # Final Acceptance Guided Walkthrough Policy
 
-Final Acceptance is a human gate after automated verifier evidence has already passed. Waygate prepares a guided walkthrough before generating the Final Acceptance gate so the reviewer sees the Agent-provided entrypoint, launch state, real system steps, expected observations, and a required place to record human findings.
+Final Acceptance is a human gate after automated verifier evidence has already passed. Waygate prepares a guided walkthrough before generating the Final Acceptance gate so the reviewer sees the Agent-provided entrypoint, launch state, real system steps, expected observations, and an optional place to record human findings.
 
-Waygate does not infer the true product entrypoint from package scripts, README files, or repository shape. The Unit Planner and Builder must provide the human-visible system walkthrough package; Waygate validates that package, renders it in Final Acceptance, and blocks approval until the human observation record is filled.
+Waygate does not infer the true product entrypoint from package scripts, README files, or repository shape. The Unit Planner and Builder must provide the human-visible system walkthrough package; Waygate validates that package and renders it in Final Acceptance. Human approval is authoritative at the Final Acceptance gate once deterministic evidence checks have passed; an empty observation record is treated as review context risk, not an approval blocker.
 
 ## Unit Plan Contract
 
@@ -67,11 +67,11 @@ For `manual_only` and `not_required`, Waygate writes an audit artifact without d
 The gate includes:
 
 - `## Agent 提供的人工走查入口`: surface kind, final entrypoint, manual steps, expected observations, and the reason for any Builder override.
-- `## 人工系统观察记录（Required）`: observed entrypoint, actual observation, data/account/fixture, and issues or evidence path. This section is blank by default and must be filled by the human reviewer.
+- `## 人工系统观察记录（Review Notes）`: observed entrypoint, actual observation, data/account/fixture, and issues or evidence path. This section is blank by default and can be filled by the human reviewer for audit context.
 - `## Golden Path 人工走查`: launch status, ready check, access URL or entrypoint, log artifact, stop command, fixture or test data, user steps, expected results, and reviewer checklist.
 
-`waygate approve --gate final-acceptance` and Plannotator Approve both run the same observation-record validation. If the gate is approved without a filled observation record, Waygate remains at `WAITING_FINAL_ACCEPTANCE` and asks the reviewer to open the Agent-provided entrypoint and record the actual observation.
+`waygate approve --gate final-acceptance` and Plannotator Approve both preserve the human decision. If the gate is approved without a filled observation record, Waygate still accepts the Final Acceptance gate after deterministic evidence, scope audit, journey, prototype, real E2E, document deliverable, and walkthrough-entrypoint checks have passed.
 
-Automated verifier and golden path evidence are required prerequisites. They cannot replace the human system observation record.
+Automated verifier and golden path evidence remain required prerequisites before the gate is presented. They do not restrict a human reviewer from approving the final gate after reviewing the available evidence and risks.
 
 The existing `## 修改清单` and Rejection Routing semantics remain unchanged.

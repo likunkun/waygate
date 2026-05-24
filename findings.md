@@ -1,5 +1,11 @@
 # 发现与决策
 
+## 2026-05-24 Final Acceptance 人工批准优先
+
+- Final Acceptance gate 已经位于 verifier、scope audit、journey/prototype/real E2E/document deliverable 和 walkthrough entrypoint 预检之后；到人工 gate 时，人工批准应是最终验收决策本身。
+- 人工系统观察记录可以继续作为审阅上下文和审计记录，但不能在人工点击 Approve 后再作为硬门槛阻止验收。否则 Plannotator / CLI 的批准语义会被一个空字段覆盖，等同于限制人工最终判断。
+- Controller 仍保留最终验收前置 deterministic evidence 检查；本次只取消“人工观察记录必填”对最终批准的阻断，不允许跳过 verifier 或 pre-human gate checks。
+
 ## 2026-05-24 Annotation Agent 人工 Gate 顺序
 
 - Annotation / verification-assist 批注的边界是“人工确认前的风险上下文”，不是人工确认后的补充步骤。用户已批准的 gate 应先按 approval file 和 deterministic validator 推进状态，不应再启动 annotation Agent。
@@ -33,10 +39,10 @@
 
 ## 2026-05-24 Final Acceptance 人工系统观察记录
 
-- Final Acceptance 的人工批准对象不能只是 Markdown gate 或 Plannotator 文档审批；必须包含对真实系统表面的人工观察。Plannotator Approve 只能表示“审批动作已提交”，不能替代打开 Agent 提供入口后的系统终验。
+- Final Acceptance 的人工批准对象不应只是 Markdown gate 或 Plannotator 文档审批；gate 必须展示真实系统入口、自动化证据和人工可参考的观察记录位置，方便人工做最终判断。
 - Controller 不负责猜测真实入口。Unit Planner 必须在 `final_acceptance_walkthrough.inspection` 中声明 `surface_kind`、`entrypoint`、`manual_steps` 和 `expected_observations`；Builder 如果实现后入口变化，必须在 DONE payload 中确认最终入口和原因。
-- 自动化 verifier、golden path 和 launch artifact 是终验前置证据，但不能替代人工观察记录。Final Acceptance gate 需要展示 `## Agent 提供的人工走查入口`，并在 `## 人工系统观察记录（Required）` 中要求填写 observed entrypoint、actual observation、data/account/fixture 和 issues/evidence path。
-- `waygate approve --gate final-acceptance` 与 Plannotator Approve 走同一条 controller 校验路径；缺观察记录时保持 `WAITING_FINAL_ACCEPTANCE`，提示先打开 Agent 提供入口并记录实际观察。
+- 自动化 verifier、golden path 和 launch artifact 是终验前置证据。Final Acceptance gate 需要展示 `## Agent 提供的人工走查入口`，并在 `## 人工系统观察记录（Review Notes）` 中提供 observed entrypoint、actual observation、data/account/fixture 和 issues/evidence path，作为审阅上下文和审计补充。
+- `waygate approve --gate final-acceptance` 与 Plannotator Approve 走同一条 controller 校验路径；人工一旦批准，空观察记录不再阻断 Final Acceptance。
 
 ## 2026-05-23 Builder blocked artifact 复阻塞
 
