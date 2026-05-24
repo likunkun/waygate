@@ -255,13 +255,28 @@ def _requirements_spec_summary(state: dict[str, Any]) -> str:
     spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
     if not spec:
         return 'No requirements spec metadata recorded.'
-    return '\n'.join([
+    lines = [
         f"- Path: `{spec.get('path')}`",
         f"- Hash: `{spec.get('hash')}`",
         f"- Source type: `{spec.get('sourceType')}`",
         f"- Imported at: `{spec.get('importedAt')}`",
-        '- Read the Waygate Markdown spec file during Requirements Draft; do not store spec full text in session.json.',
-    ])
+    ]
+    source_metadata = spec.get('sourceMetadata') if isinstance(spec.get('sourceMetadata'), dict) else None
+    if source_metadata:
+        lines.append('- Source metadata:')
+        for key, value in sorted(source_metadata.items()):
+            lines.append(f"  - {key}: `{value}`")
+    conversion_artifacts = spec.get('conversionArtifacts') if isinstance(spec.get('conversionArtifacts'), dict) else None
+    if conversion_artifacts:
+        lines.append('- Conversion artifacts:')
+        for key, value in sorted(conversion_artifacts.items()):
+            lines.append(f"  - {key}: `{value}`")
+        lines.append('- Read the conversion artifacts during Requirements Draft; do not re-parse or guess the external source from the original path.')
+    elif spec.get('sourceType') == 'waygate-markdown':
+        lines.append('- Read the Waygate Markdown spec file during Requirements Draft; do not store spec full text in session.json.')
+    else:
+        lines.append('- Read the supported requirements spec file during Requirements Draft; do not store spec full text in session.json.')
+    return '\n'.join(lines)
 
 
 def _revision_feedback_summary(state: dict[str, Any]) -> str:

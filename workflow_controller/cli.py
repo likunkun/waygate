@@ -6,12 +6,17 @@ from pathlib import Path
 from typing import Any
 
 from workflow_controller import __version__
+from workflow_controller.annotation_agents import (
+    add_annotation_agent_cli_arguments,
+    build_annotation_agent_cli_overrides,
+)
 from workflow_controller.diagnostics import render_doctor_report
 from workflow_controller.rrc_controller import (
     COLOR_MODES,
     DEFAULT_MAX_AUTOMATIC_STEPS,
     RalphRefinerController,
     add_go_parser,
+    format_stop_guidance,
     _format_recoverable_wait_message,
     normalize_go_args,
 )
@@ -69,12 +74,16 @@ def _build_code_simplifier_overrides(args: argparse.Namespace) -> dict[str, Any]
 
 def _build_role_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
     merged: dict[str, Any] = {}
-    for overrides in (_build_strategist_overrides(args), _build_code_simplifier_overrides(args)):
+    for overrides in (
+        _build_strategist_overrides(args),
+        _build_code_simplifier_overrides(args),
+        build_annotation_agent_cli_overrides(args),
+    ):
         if not overrides:
             continue
         for key, value in overrides.items():
-            if key == 'roleRunners' and isinstance(value, dict):
-                merged.setdefault('roleRunners', {}).update(value)
+            if key in {'roleRunners', 'annotationAgents'} and isinstance(value, dict):
+                merged.setdefault(key, {}).update(value)
             else:
                 merged[key] = value
     return merged or None
@@ -131,6 +140,7 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
     init_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
     init_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
+    add_annotation_agent_cli_arguments(init_parser)
 
     status_parser = subparsers.add_parser(
         'status',
@@ -146,6 +156,14 @@ def parse_args() -> argparse.Namespace:
         allow_abbrev=False,
     )
     retry_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
+
+    unblock_parser = subparsers.add_parser(
+        'unblock',
+        help='Clear an environment/external dependency blocked state after the condition is fixed',
+        allow_abbrev=False,
+    )
+    unblock_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
+    unblock_parser.add_argument('--reason', required=True, help='What external condition was fixed')
 
     approve_parser = subparsers.add_parser(
         'approve',
@@ -224,6 +242,7 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
     start_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
     start_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
+    add_annotation_agent_cli_arguments(start_parser)
 
     add_go_parser(subparsers)
 
@@ -247,6 +266,7 @@ def parse_args() -> argparse.Namespace:
     drive_parser.add_argument('--plannotator-port', type=int, default=20000, help='Port exported to Plannotator as PLANNOTATOR_PORT')
     drive_parser.add_argument('--verbose', action='store_true', help='Show raw per-step progress and execution lines')
     drive_parser.add_argument('--color', choices=COLOR_MODES, default='auto', help='Color compact output: auto, always, or never')
+    add_annotation_agent_cli_arguments(drive_parser)
 
     run_parser = subparsers.add_parser(
         'run',
@@ -264,8 +284,14 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for tmux-codex or tmux-claude')
     run_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     run_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
+    add_annotation_agent_cli_arguments(run_parser)
 
-    return normalize_go_args(parser.parse_args(), parser)
+    args = normalize_go_args(parser.parse_args(), parser)
+    try:
+        build_annotation_agent_cli_overrides(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
 def main() -> None:
@@ -293,16 +319,19 @@ def main() -> None:
         state_dir_explicit=getattr(args, 'state_dir_explicit', True),
         spec_path=getattr(args, 'spec', None),
     )
+    role_overrides = _build_role_overrides(args)
 
     if args.command == 'init':
-        strategist_overrides = _build_role_overrides(args)
-        state = controller.init_state(force=args.force, strategist_overrides=strategist_overrides)
+        state = controller.init_state(force=args.force, strategist_overrides=role_overrides)
         print(render_status_line(state))
         return
 
     if args.command == 'status':
         state = controller.get_status()
         print(render_status_line(state))
+        guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
+        if guidance:
+            print(guidance)
         return
 
     if args.command == 'retry':
@@ -313,6 +342,19 @@ def main() -> None:
             raise SystemExit(1) from None
         next_action = state.get('nextAction') or compute_next_allowed_action(state)
         print(f'status=retry-ready currentStep={state.get("currentStep")} nextAction={next_action}')
+        return
+
+    if args.command == 'unblock':
+        try:
+            state = controller.unblock_blocked_workflow(reason=args.reason)
+        except Exception as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            raise SystemExit(1) from None
+        next_action = state.get('nextAction') or compute_next_allowed_action(state)
+        print(f'status=unblocked currentStep={state.get("currentStep")} nextAction={next_action}')
+        guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
+        if guidance:
+            print(guidance)
         return
 
     if args.command == 'approve':
@@ -360,16 +402,25 @@ def main() -> None:
                 verbose=args.verbose,
                 color_mode=args.color,
                 actor=args.actor,
-                strategist_overrides=_build_role_overrides(args),
+                strategist_overrides=role_overrides,
                 print_startup_version=True,
             )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
+            try:
+                state = controller.get_status()
+                guidance = format_stop_guidance(state, state_dir=Path(args.state_dir), stop_kind='run_error', detail=str(exc))
+                if guidance:
+                    print(guidance, file=sys.stderr)
+            except Exception:
+                pass
             raise SystemExit(1) from None
         return
 
     if args.command == 'drive':
         try:
+            if role_overrides:
+                controller.apply_runtime_overrides(role_overrides)
             controller.drive(
                 max_steps=args.max_steps,
                 verbose=args.verbose,
@@ -379,18 +430,40 @@ def main() -> None:
             )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
+            try:
+                state = controller.get_status()
+                guidance = format_stop_guidance(state, state_dir=Path(args.state_dir), stop_kind='run_error', detail=str(exc))
+                if guidance:
+                    print(guidance, file=sys.stderr)
+            except Exception:
+                pass
             raise SystemExit(1) from None
         return
 
     if args.command == 'run':
         try:
+            if role_overrides:
+                controller.apply_runtime_overrides(role_overrides)
             state = controller.run_until_done(max_steps=args.max_steps) if args.until_done else controller.run_once()
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
+            try:
+                state = controller.get_status()
+                guidance = format_stop_guidance(state, state_dir=Path(args.state_dir), stop_kind='run_error', detail=str(exc))
+                if guidance:
+                    print(guidance, file=sys.stderr)
+            except Exception:
+                pass
             raise SystemExit(1) from None
         if state.get('recoverableAgentWait'):
             print(_format_recoverable_wait_message(state))
+            guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
+            if guidance:
+                print(guidance)
         print(render_status_line(state))
+        guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
+        if guidance and not state.get('recoverableAgentWait'):
+            print(guidance)
         return
 
     raise ValueError(f'Unknown command: {args.command}')

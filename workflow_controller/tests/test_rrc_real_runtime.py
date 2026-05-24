@@ -531,14 +531,25 @@ if sys.argv[1:2] == ["paste-buffer"]:
                 {"objective": "Delivery objective", "units": ["1.1-delivery"], "status": "partial"}
             ],
             "units": [
-                {
-                    "id": "1.1-delivery",
-                    "name": "Delivery",
-                    "passes": False,
-                    "workflow_validation_level": "closure",
-                    "scope": ["Delivery."],
-                    "verification_commands": ["python -c \\"print('verified')\\""],
-                    "test_cases": [
+                    {
+                        "id": "1.1-delivery",
+                        "name": "Delivery",
+                        "passes": False,
+                        "workflow_validation_level": "closure",
+                        "scope": ["Delivery."],
+                        "final_acceptance_walkthrough": {
+                            "inspection": {
+                                "surface_kind": "cli",
+                                "entrypoint": "python print verified CLI check",
+                                "manual_steps": [
+                                    "Run python -c print verified from the workspace shell",
+                                    "Confirm stdout contains verified",
+                                ],
+                                "expected_observations": ["stdout prints verified"],
+                            }
+                        },
+                        "verification_commands": ["python -c \\"print('verified')\\""],
+                        "test_cases": [
                         {
                             "id": "TC-delivery-golden-path",
                             "acceptance_criterion": "Delivery objective",

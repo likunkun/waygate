@@ -15,6 +15,16 @@ from pathlib import Path
 from typing import Any, Callable
 
 from workflow_controller import __version__
+from workflow_controller.annotation_agents import (
+    ANNOTATION_ROLES,
+    AnnotationAgentError,
+    add_annotation_agent_cli_arguments,
+    annotation_artifact_matches_gate,
+    build_annotation_agent_cli_overrides,
+    migrate_legacy_annotation_agent_configs,
+    normalize_annotation_config,
+    run_annotation_pass,
+)
 from workflow_controller.agent_guides import ensure_agent_operating_guides
 from workflow_controller.gates.generators import (
     ensure_bug_fix_gate,
@@ -24,6 +34,7 @@ from workflow_controller.gates.generators import (
     normalize_final_acceptance_rejection_routing,
 )
 from workflow_controller.gates.parsers import (
+    CONFIRMATION_HEADING,
     FINAL_ACCEPTANCE_REJECTION_ROUTE_ALIASES,
     approve_gate_file,
     check_gate_file,
@@ -41,6 +52,7 @@ from workflow_controller.gates.validators import (
     apply_unit_plan_state_patch_from_gate,
     migrate_unit_plan_gate_to_state_patch,
     validate_final_document_deliverables,
+    validate_final_acceptance_manual_observation_record,
     validate_requirements_acceptance_quality,
     validate_required_artifacts,
     validate_final_real_e2e_evidence,
@@ -49,11 +61,13 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_acceptance_obligation_coverage,
     validate_unit_plan_design_architecture_traceability,
     validate_unit_plan_document_deliverables,
+    validate_unit_plan_final_acceptance_walkthrough,
     validate_unit_plan_golden_path,
     validate_unit_plan_prototype_conformance,
     validate_unit_plan_real_e2e_evidence_policy,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
+    validate_unit_plan_verification_assist_contract,
     validate_unit_plan_verification_environment,
     validate_verification_evidence_schema,
     validate_verification_verdict,
@@ -117,6 +131,7 @@ from workflow_controller.steps.final_sync import (
     final_acceptance_agent_sync_required,
     run_final_acceptance_agent_sync,
 )
+from workflow_controller.steps.final_walkthrough import run_final_walkthrough_prepare
 from workflow_controller.steps.requirements import run_requirements_drafter
 from workflow_controller.steps.unit_plan import run_unit_plan_drafter
 
@@ -152,6 +167,29 @@ DEFAULT_INITIAL_STATE: dict[str, Any] = {
     'blockedReason': None,
     'updatedAt': '2026-04-26T00:00:00+00:00',
 }
+
+
+def _merge_state_overrides(state: dict[str, Any], overrides: dict[str, Any] | None) -> dict[str, Any]:
+    if not overrides:
+        return state
+    for key, value in overrides.items():
+        if key in {'roleRunners', 'annotationAgents'} and isinstance(value, dict):
+            target = state.setdefault(key, {})
+            if not isinstance(target, dict):
+                target = {}
+                state[key] = target
+            for role, role_value in value.items():
+                if isinstance(role_value, dict):
+                    existing = target.get(role)
+                    merged = dict(existing) if isinstance(existing, dict) else {}
+                    merged.update(role_value)
+                    target[role] = merged
+                else:
+                    target[role] = role_value
+        else:
+            state[key] = value
+    migrate_legacy_annotation_agent_configs(state)
+    return state
 
 WAITING_HUMAN_GATE_STEPS = {
     'WAITING_REQUIREMENTS_ACCEPTANCE',
@@ -189,6 +227,7 @@ ACTION_LABELS = {
     'check_unit_plan_approval': '检查 Unit Plan 确认',
     'check_final_acceptance': '检查最终验收确认',
     'sync_final_acceptance_agent': '同步终验状态给 Agent',
+    'prepare_final_walkthrough': '准备最终验收走查启动',
     'check_bug_fix_gate': '检查 Bug Fix Gate',
     'run_bug_fix': '运行 Bug Fix Agent',
     'run_bug_fix_verifier': '运行 Bug Fix 回归验证',
@@ -375,12 +414,13 @@ class RalphRefinerController:
         else:
             state = dict(initial_state or DEFAULT_INITIAL_STATE)
         if self.spec_path:
-            state['requirementsSpec'] = requirements_spec_metadata(self.spec_path)
+            state['requirementsSpec'] = self._requirements_spec_metadata_for_session(state, create_artifacts=True)
         state['autoApprove'] = self.auto_approve
         state.setdefault('testStrategistEnabled', False)
         state.setdefault('codeSimplifierEnabled', True)
         if strategist_overrides:
-            state.update(strategist_overrides)
+            state = _merge_state_overrides(state, strategist_overrides)
+        migrate_legacy_annotation_agent_configs(state)
         state['agentGuideArtifacts'] = ensure_agent_operating_guides(
             _agent_guide_workspace_dir(
                 explicit_workspace=self.workspace_dir,
@@ -393,6 +433,22 @@ class RalphRefinerController:
         self._save_state(state)
         return state
 
+    def apply_runtime_overrides(self, overrides: dict[str, Any] | None) -> dict[str, Any]:
+        if not overrides:
+            return self.store.load_state()
+        state = self.store.load_state()
+        before = json.dumps(state, ensure_ascii=False, sort_keys=True)
+        state = _merge_state_overrides(state, overrides)
+        migrate_legacy_annotation_agent_configs(state)
+        after = json.dumps(state, ensure_ascii=False, sort_keys=True)
+        if after != before:
+            self.store.append_event('runtime_overrides_applied', {
+                'task_id': state.get('task_id'),
+                'keys': sorted(overrides),
+            })
+            self._save_state(state)
+        return state
+
     def get_status(self) -> dict[str, Any]:
         state = self.store.load_state()
         state['autoApprove'] = self.auto_approve or state.get('autoApprove', False)
@@ -402,12 +458,18 @@ class RalphRefinerController:
         state = self._apply_agent_target_overrides(state, allow_auto_create=False)
         agent_target_changed = before_agent_target != (state.get('agentRunner'), state.get('tmuxTarget'))
         state = reconcile_state(state, self.artifacts_dir)
+        annotation_config_migrated = migrate_legacy_annotation_agent_configs(state)
+        annotation_blocker_reconciled = self._reconcile_annotation_runtime_blocker_state(state)
+        builder_blocked_reconciled = self._reconcile_builder_agent_blocked_state(state)
         before_requirements_validation = _requirements_validation_state_key(state)
         before_validation = _unit_plan_validation_state_key(state)
         state = self._refresh_requirements_gate_validation(state)
         state = self._refresh_unit_plan_gate_validation(state)
         if (
             agent_target_changed
+            or annotation_config_migrated
+            or annotation_blocker_reconciled
+            or builder_blocked_reconciled
             or _requirements_validation_state_key(state) != before_requirements_validation
             or _unit_plan_validation_state_key(state) != before_validation
         ):
@@ -461,7 +523,7 @@ class RalphRefinerController:
         elif gate == 'unit-plan':
             reason = self._unit_plan_gate_invalid_reason(state, gate_path)
         elif gate == 'final-acceptance':
-            reason = self._final_acceptance_gate_invalid_reason(state)
+            reason = self._final_acceptance_gate_invalid_reason(state, gate_path=gate_path)
         else:
             return
         if reason:
@@ -534,6 +596,7 @@ class RalphRefinerController:
             )
             validate_unit_plan_document_deliverables(gate_path, candidate_state)
             validate_unit_plan_verification_environment(candidate_state)
+            validate_unit_plan_verification_assist_contract(candidate_state, artifacts_dir=self.artifacts_dir)
             validate_unit_plan_golden_path(candidate_state)
             validate_unit_plan_real_e2e_evidence_policy(
                 self.approvals_dir / 'requirements-and-acceptance.md',
@@ -544,6 +607,7 @@ class RalphRefinerController:
                 artifacts_dir=self.artifacts_dir,
                 state=candidate_state,
             )
+            validate_unit_plan_final_acceptance_walkthrough(candidate_state)
         except ValueError as exc:
             return f'unit plan gate invalid: {exc}'
         return None
@@ -608,7 +672,13 @@ class RalphRefinerController:
             workspace_dir=self.workspace_dir,
         )
 
-    def _final_acceptance_gate_invalid_reason(self, state: dict[str, Any]) -> str | None:
+    def _final_acceptance_gate_invalid_reason(
+        self,
+        state: dict[str, Any],
+        *,
+        gate_path: Path | None = None,
+        require_manual_observation: bool = True,
+    ) -> str | None:
         try:
             audit = self._write_final_scope_audit(state)
             validate_final_scope_audit(audit)
@@ -620,9 +690,242 @@ class RalphRefinerController:
             )
             validate_final_real_e2e_evidence(state=state, artifacts_dir=self.artifacts_dir)
             validate_final_document_deliverables(self.approvals_dir / 'unit-plan.md', state)
+            if require_manual_observation and gate_path is not None:
+                validate_final_acceptance_manual_observation_record(gate_path)
         except ValueError as exc:
             return f'final acceptance gate invalid: {exc}'
         return None
+
+    def _run_annotation_before_human_gate(
+        self,
+        state: dict[str, Any],
+        *,
+        role: str,
+        gate_path: Path,
+        validator_summary: str,
+    ) -> bool:
+        workspace_dir = Path(
+            state.get('executionWorkspacePath')
+            or state.get('workspacePath')
+            or self.workspace_dir
+            or Path.cwd()
+        )
+        config = None
+        started_at = time.monotonic()
+        try:
+            config = normalize_annotation_config(state, role, artifacts_dir=self.artifacts_dir)
+            if config.enabled:
+                self._print_annotation_status(
+                    'started',
+                    role=role,
+                    backend=config.backend,
+                    artifact_path=config.artifact_path,
+                )
+            result = run_annotation_pass(
+                state,
+                role,
+                state_dir=self.state_dir,
+                artifacts_dir=self.artifacts_dir,
+                workspace_dir=workspace_dir,
+                gate_path=gate_path,
+                validator_summary=validator_summary,
+                event_sink=self.store.append_event,
+            )
+        except (AnnotationAgentError, ValueError) as exc:
+            elapsed = time.monotonic() - started_at
+            self._print_annotation_status(
+                'failed',
+                role=role,
+                backend=config.backend if config is not None else None,
+                artifact_path=config.artifact_path if config is not None else None,
+                elapsed_seconds=elapsed,
+                error=str(exc),
+            )
+            state['status'] = 'blocked'
+            state['blockedReason'] = f'{role} annotation pass failed before human gate: {exc}'
+            state['blockedContext'] = {
+                'category': 'annotation_runtime',
+                'source': 'annotation_agent',
+                'role': role,
+                'gate_path': str(gate_path),
+            }
+            state['pendingAnnotationBeforeHumanGate'] = {
+                'role': role,
+                'gate_path': str(gate_path),
+                'validator_summary': validator_summary,
+            }
+            self.store.append_event('annotation_pass_blocked_human_gate', {
+                'task_id': state.get('task_id'),
+                'unit_id': state.get('currentUnitId'),
+                'role': role,
+                'gate_path': str(gate_path),
+                'reason': str(exc),
+            })
+            return False
+        elapsed = time.monotonic() - started_at
+        if result.status == 'completed':
+            self._print_annotation_status(
+                'completed',
+                role=role,
+                backend=result.backend,
+                artifact_path=result.artifact_path,
+                elapsed_seconds=elapsed,
+                returncode=result.returncode,
+            )
+        elif result.status == 'warning':
+            self._print_annotation_status(
+                'failed',
+                role=role,
+                backend=result.backend,
+                artifact_path=result.artifact_path,
+                elapsed_seconds=elapsed,
+                error='annotation warning artifact written; failure policy is warn',
+            )
+        pending = state.get('pendingAnnotationBeforeHumanGate')
+        if isinstance(pending, dict) and pending.get('role') == role:
+            state.pop('pendingAnnotationBeforeHumanGate', None)
+        return True
+
+    def _print_annotation_status(
+        self,
+        status: str,
+        *,
+        role: str,
+        backend: str | None,
+        artifact_path: Path | None,
+        elapsed_seconds: float | None = None,
+        returncode: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        output_func = getattr(self, '_drive_progress_callback', None) or print
+        color_enabled = bool(getattr(self, '_drive_color_enabled', False))
+        label = _paint('标注 Agent', 'cyan', color_enabled)
+        backend_label = backend or 'unknown'
+        artifact_label = str(artifact_path) if artifact_path is not None else '-'
+        if status == 'started':
+            status_label = _paint('开始', 'yellow', color_enabled)
+            output_func(
+                f'{label} {status_label}：角色={role} 后端={backend_label} 产物={artifact_label}'
+            )
+            return
+        elapsed = _format_duration(elapsed_seconds or 0)
+        if status == 'completed':
+            status_label = _paint('完成', 'green', color_enabled)
+            output_func(
+                f'{label} {status_label}：角色={role} 返回码={returncode} 用时={elapsed}'
+            )
+            return
+        status_label = _paint('失败', 'red', color_enabled)
+        summary = _compact_controller_reason(str(error or 'annotation failed'), max_chars=180)
+        output_func(
+            f'{label} {status_label}：角色={role} 错误={summary} 产物={artifact_label} 用时={elapsed}'
+        )
+
+    def _rerun_pending_annotation_before_human_gate(
+        self,
+        state: dict[str, Any],
+        *,
+        role: str,
+        gate_path: Path,
+        validator_summary: str,
+    ) -> bool:
+        pending = state.get('pendingAnnotationBeforeHumanGate')
+        if not isinstance(pending, dict) or pending.get('role') != role:
+            try:
+                config = normalize_annotation_config(state, role, artifacts_dir=self.artifacts_dir)
+            except ValueError:
+                config = None
+            if config is None:
+                return self._run_annotation_before_human_gate(
+                    state,
+                    role=role,
+                    gate_path=gate_path,
+                    validator_summary=validator_summary,
+                )
+            if not config.enabled:
+                return True
+            if annotation_artifact_matches_gate(config.artifact_path, gate_path):
+                return True
+            return self._run_annotation_before_human_gate(
+                state,
+                role=role,
+                gate_path=gate_path,
+                validator_summary=validator_summary,
+            )
+        summary = str(pending.get('validator_summary') or validator_summary)
+        pending_gate_path = Path(str(pending.get('gate_path') or gate_path))
+        return self._run_annotation_before_human_gate(
+            state,
+            role=role,
+            gate_path=pending_gate_path,
+            validator_summary=summary,
+        )
+
+    def _reconcile_annotation_runtime_blocker_state(self, state: dict[str, Any]) -> bool:
+        if state.get('status') != 'blocked':
+            return False
+        if _blocked_category(state) != 'annotation_runtime':
+            return False
+        role = _annotation_role_from_blocker_state(state)
+        changed = False
+        context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
+        if context.get('category') != 'annotation_runtime':
+            context = dict(context)
+            context['category'] = 'annotation_runtime'
+            context.setdefault('source', 'annotation_agent')
+            if role:
+                context.setdefault('role', role)
+            state['blockedContext'] = context
+            changed = True
+        elif role and not context.get('role'):
+            context['role'] = role
+            changed = True
+        pending = state.get('pendingAnnotationBeforeHumanGate')
+        if role and (not isinstance(pending, dict) or pending.get('role') != role):
+            state['pendingAnnotationBeforeHumanGate'] = {'role': role}
+            changed = True
+        return changed
+
+    def _prepare_final_acceptance_gate_before_human_review(
+        self,
+        state: dict[str, Any],
+        *,
+        force: bool,
+    ) -> bool:
+        if self.dry_run:
+            self._write_final_scope_audit(state)
+            gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir, force=force)
+            self.store.append_event('final_acceptance_gate_generated', {
+                'task_id': state.get('task_id'),
+                'unit_id': state.get('currentUnitId'),
+                'path': str(gate_path),
+                'dry_run': True,
+            })
+            return True
+        reason = self._final_acceptance_gate_invalid_reason(state, require_manual_observation=False)
+        if reason:
+            state['finalAcceptanceAccepted'] = False
+            state['status'] = 'blocked'
+            state['blockedReason'] = reason
+            return False
+        self.store.append_event('final_acceptance_gate_preflight_completed', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+        })
+        gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir, force=force)
+        if not self._run_annotation_before_human_gate(
+            state,
+            role='final_acceptance_verification_assist',
+            gate_path=gate_path,
+            validator_summary='Final Acceptance scope audit, evidence checks, journey checks, prototype checks, real E2E checks, and document deliverables passed before human review.',
+        ):
+            return False
+        self.store.append_event('final_acceptance_gate_generated', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'path': str(gate_path),
+        })
+        return True
 
     def revise_human_gate(self, gate: str, *, reason: str | None = None) -> Path:
         if gate == 'requirements':
@@ -789,6 +1092,80 @@ class RalphRefinerController:
             f'{blocker_summary}\n\n'
             f'Builder artifact: {summary_path}\n'
         )
+
+    def _builder_agent_blocked_context(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        current_unit_id = str(state.get('currentUnitId') or '').strip()
+        if not current_unit_id:
+            return None
+        summary_path = self.artifacts_dir / current_unit_id / 'builder-summary.json'
+        if not summary_path.exists():
+            return None
+        try:
+            builder_summary = json.loads(summary_path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(builder_summary, dict):
+            return None
+        done_payload = builder_summary.get('done_payload')
+        if not isinstance(done_payload, dict):
+            done_payload = {}
+        runner_status = str(builder_summary.get('runner_status') or '').strip().lower()
+        done_status = str(done_payload.get('status') or '').strip().lower()
+        if runner_status != 'blocked' and done_status != 'blocked':
+            return None
+        blocked_reason = str(done_payload.get('summary') or '').strip()
+        if not blocked_reason:
+            blocked_reason = 'Builder reported blocked but did not provide done_payload.summary.'
+        category = classify_blocked_reason(blocked_reason, state)
+        context = {
+            'source': 'builder_agent',
+            'category': category,
+            'unit_id': current_unit_id,
+            'summary': blocked_reason,
+            'summary_path': str(summary_path),
+            'runner_status': runner_status or None,
+            'done_status': done_status or None,
+            'run_id': done_payload.get('run_id'),
+        }
+        if _builder_blocked_context_is_ignored(state, context):
+            return None
+        return context
+
+    def _apply_builder_agent_blocked_state(
+        self,
+        state: dict[str, Any],
+        context: dict[str, Any],
+    ) -> None:
+        blocked_reason = str(context.get('summary') or '').strip()
+        if not blocked_reason:
+            blocked_reason = 'Builder reported blocked but did not provide done_payload.summary.'
+        state['status'] = 'blocked'
+        state['currentStep'] = 'EXECUTE_UNIT'
+        state['blockedReason'] = blocked_reason
+        state['blockedContext'] = dict(context)
+        self.store.append_event('builder_agent_blocked', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'stage': 'EXECUTE_UNIT',
+            'reason': blocked_reason,
+            'context': context,
+        })
+
+    def _reconcile_builder_agent_blocked_state(self, state: dict[str, Any]) -> bool:
+        if state.get('status') != 'active':
+            return False
+        if state.get('currentStep') not in {'PLAN_APPROVED', 'UI_DESIGN_DONE', 'EXECUTE_UNIT'}:
+            return False
+        context = self._builder_agent_blocked_context(state)
+        if not context:
+            return False
+        self._apply_builder_agent_blocked_state(state, context)
+        return True
+
+    def _ignore_current_builder_blocked_context(self, state: dict[str, Any], *, reason: str) -> None:
+        context = self._builder_agent_blocked_context(state)
+        if context:
+            _remember_ignored_builder_blocked_context(state, context, reason=reason)
 
     def _requirements_change_revision_feedback(
         self,
@@ -1297,6 +1674,26 @@ class RalphRefinerController:
             'requirements',
             revision_count,
         )
+        reason = self._requirements_gate_invalid_reason(state, gate_path)
+        if reason:
+            state['requirementsAccepted'] = False
+            state['blockedReason'] = reason
+            self._save_state(state)
+            return gate_path
+        state['blockedReason'] = None
+        self.store.append_event('requirements_gate_preflight_completed', {
+            'task_id': state.get('task_id'),
+            'path': str(gate_path),
+            'revision_count': revision_count,
+        })
+        if not self._run_annotation_before_human_gate(
+            state,
+            role='requirements_annotation',
+            gate_path=gate_path,
+            validator_summary='Requirements revision preflight, schema validation, journey contract checks, and prototype review checks passed before human review.',
+        ):
+            self._save_state(state)
+            return gate_path
         self.store.append_event('requirements_draft_revised', {
             'task_id': state.get('task_id'),
             'path': str(gate_path),
@@ -1374,10 +1771,29 @@ class RalphRefinerController:
         state['unitPlanAccepted'] = False
         state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
         state = self._refresh_unit_plan_gate_validation(state)
+        unit_plan_reason = str(state.get('blockedReason') or '')
+        if unit_plan_reason.startswith('unit plan gate invalid:'):
+            state['unitPlanAccepted'] = False
+            self._save_state(state)
+            return gate_path
         self._consume_plannotator_feedback(
             'unit-plan',
             int(state.get('unitPlanRevisionCount') or 0),
         )
+        state['blockedReason'] = None
+        self.store.append_event('unit_plan_gate_preflight_completed', {
+            'task_id': state.get('task_id'),
+            'path': str(gate_path),
+            'revision_count': state.get('unitPlanRevisionCount'),
+        })
+        if not self._run_annotation_before_human_gate(
+            state,
+            role='unit_plan_annotation',
+            gate_path=gate_path,
+            validator_summary='Unit Plan revision preflight, Controller State Patch, test cases, verification commands, AO/AC/Journey mapping, document deliverables, and evidence policy checks passed before human review.',
+        ):
+            self._save_state(state)
+            return gate_path
         self.store.append_event('unit_plan_draft_revised', {
             'task_id': state.get('task_id'),
             'path': str(gate_path),
@@ -1431,6 +1847,7 @@ class RalphRefinerController:
             else:
                 existing_state = self.store.load_state()
                 existing_state = self._apply_agent_target_overrides(existing_state, allow_auto_create=True)
+                existing_state = _merge_state_overrides(existing_state, strategist_overrides)
                 self._validate_start_compatible(existing_state)
                 self._save_state(existing_state)
                 output_func(f'[继续] 使用已有状态：{self.store.session_path}')
@@ -1479,7 +1896,7 @@ class RalphRefinerController:
                     f"--workspace-dir={requested_workspace} but session workspacePath={session_workspace}"
                 )
         if self.spec_path:
-            incoming_spec = requirements_spec_metadata(self.spec_path)
+            incoming_spec = self._requirements_spec_metadata_for_session(state, create_artifacts=False)
             existing_spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
             if existing_spec and not same_requirements_spec(existing_spec, incoming_spec):
                 mismatches.append(
@@ -1496,6 +1913,21 @@ class RalphRefinerController:
                 + '; '.join(mismatches)
                 + '. Use --force to reinitialize.'
             )
+
+    def _requirements_spec_metadata_for_session(
+        self,
+        state: dict[str, Any],
+        *,
+        create_artifacts: bool,
+    ) -> dict[str, Any]:
+        if self.spec_path is None:
+            raise ValueError('requirements spec path is not configured')
+        target = str(state.get('requestedOutcome') or state.get('feasibleOutcome') or self.target or '').strip() or None
+        return requirements_spec_metadata(
+            self.spec_path,
+            artifacts_dir=(self.artifacts_dir / 'requirements-spec-intake') if create_artifacts else None,
+            target=target,
+        )
 
     def _target_workspace_dir(self) -> Path:
         if self.workspace_dir is not None:
@@ -1736,7 +2168,10 @@ class RalphRefinerController:
         state = self.store.load_state()
         wait = state.pop('recoverableAgentWait', None)
         if not wait:
-            raise ValueError('No recoverable agent wait is recorded for this workflow')
+            raise ValueError(
+                'retry only handles timeout/idle recoverableAgentWait. '
+                f'Run `waygate status --state-dir {_quote_for_shell(str(self.state_dir))}` for blocked guidance.'
+            )
         state['status'] = 'active'
         state['blockedReason'] = None
         self.store.append_event('agent_wait_retry_requested', {
@@ -1745,6 +2180,42 @@ class RalphRefinerController:
             'stage': wait.get('stage') if isinstance(wait, dict) else None,
             'action': wait.get('action') if isinstance(wait, dict) else None,
             'runner_status': wait.get('runner_status') if isinstance(wait, dict) else None,
+        })
+        self._save_state(state)
+        return state
+
+    def unblock_blocked_workflow(self, *, reason: str) -> dict[str, Any]:
+        reason = reason.strip()
+        if not reason:
+            raise ValueError('unblock requires --reason describing the external condition that was fixed')
+        state = self.get_status()
+        if state.get('recoverableAgentWait'):
+            raise ValueError(
+                'This workflow is in timeout/idle recoverable wait, not blocked. '
+                f'Use `waygate retry --state-dir {_quote_for_shell(str(self.state_dir))}`.'
+            )
+        if state.get('status') != 'blocked':
+            raise ValueError('Workflow is not blocked; there is nothing to unblock')
+        blocked_reason = str(state.get('blockedReason') or '').strip()
+        category = _blocked_category(state)
+        if not _blocked_category_allows_unblock(category):
+            raise ValueError(
+                'blocked reason is not an environment/external dependency blocker. '
+                + _blocked_rework_hint(state, self.state_dir)
+            )
+        previous_context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
+        state['status'] = 'active'
+        state['blockedReason'] = None
+        _remember_ignored_builder_blocked_context(state, previous_context, reason='unblock')
+        state.pop('blockedContext', None)
+        self.store.append_event('blocked_state_unblocked', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'stage': state.get('currentStep'),
+            'reason': reason,
+            'previous_blocked_reason': blocked_reason,
+            'previous_category': category,
+            'previous_context': previous_context,
         })
         self._save_state(state)
         return state
@@ -1786,6 +2257,9 @@ class RalphRefinerController:
         state = self.store.load_state()
         state['autoApprove'] = self.auto_approve or state.get('autoApprove', False)
         state = reconcile_state(state, self.artifacts_dir)
+        migrate_legacy_annotation_agent_configs(state)
+        self._reconcile_annotation_runtime_blocker_state(state)
+        self._reconcile_builder_agent_blocked_state(state)
 
         if state.get('status') == 'blocked':
             self._save_state(state)
@@ -1809,11 +2283,34 @@ class RalphRefinerController:
             self._prepare_requirements_prototype_review_bundle(state)
             state['requirementsDraftGenerated'] = True
             state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+            state = self._auto_revise_invalid_requirements_draft(state)
+            if state.get('status') == 'blocked':
+                self._save_state(state)
+                return state
+            gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
+            reason = self._requirements_gate_invalid_reason(state, gate_path)
+            if reason:
+                state['requirementsAccepted'] = False
+                state['blockedReason'] = reason
+                self._save_state(state)
+                return state
+            state['blockedReason'] = None
+            self.store.append_event('requirements_gate_preflight_completed', {
+                'task_id': state.get('task_id'),
+                'path': str(gate_path),
+            })
+            if not self._run_annotation_before_human_gate(
+                state,
+                role='requirements_annotation',
+                gate_path=gate_path,
+                validator_summary='Requirements preflight, schema validation, journey contract checks, and prototype review checks passed before human review.',
+            ):
+                self._save_state(state)
+                return state
             self.store.append_event('requirements_draft_generated', {
                 'task_id': state.get('task_id'),
-                'path': str(self.approvals_dir / 'requirements-and-acceptance.md'),
+                'path': str(gate_path),
             })
-            state = self._auto_revise_invalid_requirements_draft(state)
             self._save_state(state)
             return state
 
@@ -1831,9 +2328,32 @@ class RalphRefinerController:
             state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
             state = self._refresh_unit_plan_gate_validation(state)
             state = self._auto_revise_invalid_unit_plan_draft(state)
+            if state.get('status') == 'blocked':
+                self._save_state(state)
+                return state
+            state = self._refresh_unit_plan_gate_validation(state)
+            unit_plan_reason = str(state.get('blockedReason') or '')
+            if unit_plan_reason.startswith('unit plan gate invalid:'):
+                state['unitPlanAccepted'] = False
+                self._save_state(state)
+                return state
+            gate_path = self.approvals_dir / 'unit-plan.md'
+            state['blockedReason'] = None
+            self.store.append_event('unit_plan_gate_preflight_completed', {
+                'task_id': state.get('task_id'),
+                'path': str(gate_path),
+            })
+            if not self._run_annotation_before_human_gate(
+                state,
+                role='unit_plan_annotation',
+                gate_path=gate_path,
+                validator_summary='Unit Plan Controller State Patch, test cases, verification commands, AO/AC/Journey mapping, document deliverables, and evidence policy checks passed before human review.',
+            ):
+                self._save_state(state)
+                return state
             self.store.append_event('unit_plan_draft_generated', {
                 'task_id': state.get('task_id'),
-                'path': str(self.approvals_dir / 'unit-plan.md'),
+                'path': str(gate_path),
             })
             self._save_state(state)
             return state
@@ -1868,6 +2388,14 @@ class RalphRefinerController:
                     'confirmed_by': gate.confirmed_by,
                 })
             else:
+                if not self._rerun_pending_annotation_before_human_gate(
+                    state,
+                    role='requirements_annotation',
+                    gate_path=gate_path,
+                    validator_summary='Requirements preflight, schema validation, journey contract checks, and prototype review checks passed before human review.',
+                ):
+                    self._save_state(state)
+                    return state
                 state['blockedReason'] = f'requirements acceptance gate not approved: {gate.reason}'
             self._save_state(state)
             return state
@@ -1878,6 +2406,7 @@ class RalphRefinerController:
                 state['unitPlanAccepted'] = True
                 state['lastVerifiedStep'] = 'PLAN_CREATED'
                 state['currentStep'] = 'PLAN_APPROVED' if state.get('scopeApproved') else 'PLAN_CREATED'
+                self._ignore_current_builder_blocked_context(state, reason='unit_plan_approved')
                 self._save_state(state)
                 return state
             gate = check_gate_file(gate_path)
@@ -1904,6 +2433,7 @@ class RalphRefinerController:
                     )
                     validate_unit_plan_document_deliverables(gate_path, state)
                     validate_unit_plan_verification_environment(state)
+                    validate_unit_plan_verification_assist_contract(state, artifacts_dir=self.artifacts_dir)
                     validate_unit_plan_golden_path(state)
                     validate_unit_plan_real_e2e_evidence_policy(
                         self.approvals_dir / 'requirements-and-acceptance.md',
@@ -1914,6 +2444,7 @@ class RalphRefinerController:
                         artifacts_dir=self.artifacts_dir,
                         state=state,
                     )
+                    validate_unit_plan_final_acceptance_walkthrough(state)
                 except ValueError as exc:
                     state['unitPlanAccepted'] = False
                     state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
@@ -1925,6 +2456,7 @@ class RalphRefinerController:
                 state['blockedReason'] = None
                 state['lastVerifiedStep'] = 'PLAN_CREATED'
                 state['currentStep'] = 'PLAN_APPROVED' if state.get('scopeApproved') else 'PLAN_CREATED'
+                self._ignore_current_builder_blocked_context(state, reason='unit_plan_approved')
                 self.store.append_event('unit_plan_approved', {
                     'task_id': state.get('task_id'),
                     'path': str(gate_path),
@@ -1932,6 +2464,14 @@ class RalphRefinerController:
                     'confirmed_by': gate.confirmed_by,
                 })
             else:
+                if not self._rerun_pending_annotation_before_human_gate(
+                    state,
+                    role='unit_plan_annotation',
+                    gate_path=gate_path,
+                    validator_summary='Unit Plan Controller State Patch, test cases, verification commands, AO/AC/Journey mapping, document deliverables, and evidence policy checks passed before human review.',
+                ):
+                    self._save_state(state)
+                    return state
                 state['blockedReason'] = f'unit plan gate not approved: {gate.reason}'
             self._save_state(state)
             return state
@@ -1947,7 +2487,7 @@ class RalphRefinerController:
             gate = check_gate_file(gate_path)
             state['finalAcceptanceAccepted'] = gate.approved
             if gate.approved:
-                reason = self._final_acceptance_gate_invalid_reason(state)
+                reason = self._final_acceptance_gate_invalid_reason(state, gate_path=gate_path)
                 if reason:
                     state['finalAcceptanceAccepted'] = False
                     state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
@@ -1966,6 +2506,14 @@ class RalphRefinerController:
                     'confirmed_by': gate.confirmed_by,
                 })
             else:
+                if not self._rerun_pending_annotation_before_human_gate(
+                    state,
+                    role='final_acceptance_verification_assist',
+                    gate_path=gate_path,
+                    validator_summary='Final Acceptance deterministic evidence, scope audit, document deliverables, manual walkthrough entrypoints, and manual observation checks passed before human review.',
+                ):
+                    self._save_state(state)
+                    return state
                 state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
                 state['blockedReason'] = f'final acceptance gate not approved: {gate.reason}'
             self._save_state(state)
@@ -2005,6 +2553,32 @@ class RalphRefinerController:
                 'status': state.get('finalAcceptanceAgentSyncStatus'),
                 'updated_files': summary.get('updated_files') or [],
             })
+            self._save_state(state)
+            return state
+
+        if action == 'prepare_final_walkthrough':
+            workspace_dir = Path(
+                state.get('executionWorkspacePath')
+                or state.get('workspacePath')
+                or self.workspace_dir
+                or Path.cwd()
+            )
+            result = run_final_walkthrough_prepare(
+                state,
+                artifacts_dir=self.artifacts_dir,
+                workspace_dir=workspace_dir,
+                dry_run=self.dry_run,
+            )
+            self.store.append_event('final_walkthrough_prepare_completed', {
+                'task_id': state.get('task_id'),
+                'unit_id': state.get('currentUnitId'),
+                'summary': result.summary,
+                'outputs': result.outputs or [],
+            })
+            if not self._prepare_final_acceptance_gate_before_human_review(state, force=True):
+                self._save_state(state)
+                return state
+            state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
             self._save_state(state)
             return state
 
@@ -2120,9 +2694,7 @@ class RalphRefinerController:
                 state['finalAcceptanceAccepted'] = False
                 state.pop('finalAcceptanceAcceptedHash', None)
                 state.pop('finalAcceptanceAcceptedBy', None)
-                state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
-                self._write_final_scope_audit(state)
-                ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir, force=True)
+                state['currentStep'] = 'FINAL_WALKTHROUGH_PREPARE'
                 self.store.append_event('bug_fix_regression_verified', {
                     'task_id': state.get('task_id'),
                     'bug_fix_id': state.get('activeBugFixId'),
@@ -2140,7 +2712,20 @@ class RalphRefinerController:
 
         if action == 'run_builder':
             prepare_builder_prompt(state, self.approvals_dir, unit_dir)
-            run_builder(state, unit_dir, dry_run=self.dry_run)
+            try:
+                run_builder(state, unit_dir, dry_run=self.dry_run)
+            except RuntimeError:
+                builder_context = self._builder_agent_blocked_context(state)
+                if builder_context:
+                    self._apply_builder_agent_blocked_state(state, builder_context)
+                    self._save_state(state)
+                    return state
+                raise
+            builder_context = self._builder_agent_blocked_context(state)
+            if builder_context:
+                self._apply_builder_agent_blocked_state(state, builder_context)
+                self._save_state(state)
+                return state
             validate_required_artifacts(unit_dir, ['builder-summary.json', 'changed-files.txt'])
             resolution_issue = _builder_controller_failure_resolution_issue(state, unit_dir)
             if resolution_issue:
@@ -2248,18 +2833,14 @@ class RalphRefinerController:
             mark_current_unit_covered(state)
             if target_acceptance_covered(state) or validate_objective_coverage(state):
                 if state.get('humanGatesRequired') and not state.get('finalAcceptanceAccepted', False):
-                    state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
-                    self._write_final_scope_audit(state)
-                    ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir, force=True)
+                    state['currentStep'] = 'FINAL_WALKTHROUGH_PREPARE'
                 else:
                     state['currentStep'] = 'RELEASE_GATE'
             else:
                 next_unit = select_next_unit(state)
                 if next_unit == 'RELEASE_GATE':
                     if state.get('humanGatesRequired') and not state.get('finalAcceptanceAccepted', False):
-                        state['currentStep'] = 'WAITING_FINAL_ACCEPTANCE'
-                        self._write_final_scope_audit(state)
-                        ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir, force=True)
+                        state['currentStep'] = 'FINAL_WALKTHROUGH_PREPARE'
                     else:
                         state['currentStep'] = 'RELEASE_GATE'
                 else:
@@ -2393,6 +2974,9 @@ class RalphRefinerController:
             self._print_agent_target_resolution(state, output_func)
         if state.get('recoverableAgentWait'):
             output_func(_format_recoverable_wait_message(state))
+            guidance = format_stop_guidance(state, state_dir=self.state_dir, color_enabled=color_enabled)
+            if guidance:
+                output_func(guidance)
             return state
         while state.get('status') not in {'done', 'blocked', 'failed'}:
             if verbose:
@@ -2407,17 +2991,38 @@ class RalphRefinerController:
                 handled = self._handle_drive_gate(gate_info, actor, input_func, output_func)
                 state = self.get_status()
                 if not handled:
+                    guidance = format_stop_guidance(state, state_dir=self.state_dir, color_enabled=color_enabled)
+                    if guidance:
+                        output_func(guidance)
                     return state
                 no_progress_steps = 0
                 continue
 
             if steps >= max_steps:
                 output_func(f'[停止] 已达到最大自动步数：{max_steps}。')
+                guidance = format_stop_guidance(
+                    state,
+                    state_dir=self.state_dir,
+                    color_enabled=color_enabled,
+                    stop_kind='max_steps',
+                    detail=f'已达到最大自动步数：{max_steps}',
+                )
+                if guidance:
+                    output_func(guidance)
                 return state
 
             action = compute_next_allowed_action(state)
             if not action:
                 output_func('[停止] 当前没有可执行的下一步。')
+                guidance = format_stop_guidance(
+                    state,
+                    state_dir=self.state_dir,
+                    color_enabled=color_enabled,
+                    stop_kind='no_next_action',
+                    detail='当前没有可执行的下一步',
+                )
+                if guidance:
+                    output_func(guidance)
                 return state
 
             before_key = _automatic_progress_key(state, action)
@@ -2440,6 +3045,9 @@ class RalphRefinerController:
                 compact_reporter.record_transition(before_state, action, state, elapsed_seconds)
             if state.get('recoverableAgentWait'):
                 output_func(_format_recoverable_wait_message(state))
+                guidance = format_stop_guidance(state, state_dir=self.state_dir, color_enabled=color_enabled)
+                if guidance:
+                    output_func(guidance)
                 return state
             after_action = compute_next_allowed_action(state)
             after_key = _automatic_progress_key(state, after_action)
@@ -2450,6 +3058,15 @@ class RalphRefinerController:
                         f'[停止] 连续 {max_no_progress_steps} 次执行未推进'
                         f'（阶段：{state.get("currentStep")}，下一步：{ACTION_LABELS.get(after_action, after_action)}）。'
                     )
+                    guidance = format_stop_guidance(
+                        state,
+                        state_dir=self.state_dir,
+                        color_enabled=color_enabled,
+                        stop_kind='no_progress',
+                        detail=f'连续 {max_no_progress_steps} 次执行未推进',
+                    )
+                    if guidance:
+                        output_func(guidance)
                     return state
             else:
                 no_progress_steps = 0
@@ -2460,8 +3077,14 @@ class RalphRefinerController:
         elif state.get('status') == 'blocked':
             reason = _gate_reason_label(str(state.get('blockedReason') or '工作流已阻塞'))
             output_func(_format_blocked_message(reason, color_enabled=color_enabled))
+            guidance = format_stop_guidance(state, state_dir=self.state_dir, color_enabled=color_enabled)
+            if guidance:
+                output_func(guidance)
         else:
             output_func(f"[停止] 工作流状态：{state.get('status')}。")
+            guidance = format_stop_guidance(state, state_dir=self.state_dir, color_enabled=color_enabled)
+            if guidance:
+                output_func(guidance)
         self._drive_color_enabled = False
         return state
 
@@ -2515,6 +3138,15 @@ class RalphRefinerController:
             'can_revise': can_revise,
             'can_rework': can_rework,
         }
+        annotation_info = _annotation_review_info_for_gate(
+            state,
+            artifacts_dir=self.artifacts_dir,
+            waiting_step=str(step or ''),
+            gate_path=path,
+        )
+        _sync_annotation_review_block_for_gate(path, annotation_info)
+        if annotation_info is not None:
+            gate_info['annotation'] = annotation_info
         if gate == 'requirements':
             _, prototype_review_manifest_path, prototypes_dir = prototype_review_paths(self.artifacts_dir)
             prototype_review_path = prototype_review_html_path(self.artifacts_dir)
@@ -2541,12 +3173,18 @@ class RalphRefinerController:
             if gate_info.get('prototype_review_path')
             else None
         )
+        annotation_info = gate_info.get('annotation') if isinstance(gate_info.get('annotation'), dict) else None
         if review_path != approval_gate_path:
             output_func(f'  审阅文件：{review_path}')
             output_func(f'  确认文件：{approval_gate_path}')
         if prototype_review_path is not None:
             output_func(f'  审批文件：{approval_gate_path}')
             output_func(f'  辅助预览文件：{prototype_review_path}')
+        if annotation_info is not None:
+            output_func(_format_annotation_review_line(annotation_info))
+            annotation_summary = str(annotation_info.get('summary') or '').strip()
+            if annotation_summary:
+                output_func(f'  标注摘要：{annotation_summary}')
         if gate_info.get('reason'):
             output_func(f"  状态：{_gate_reason_label(str(gate_info['reason']))}")
         output_func('  操作：')
@@ -2608,6 +3246,7 @@ class RalphRefinerController:
                         prototype_review_path=active_prototype_review_path,
                         prototype_review_manifest_path=prototype_review_manifest_path,
                         prototype_review_preview_url=prototype_review_preview_url,
+                        annotation_info=annotation_info,
                     )
                     event_payload = {
                         'gate': gate_info['gate'],
@@ -2624,11 +3263,15 @@ class RalphRefinerController:
                         event_payload['prototype_review_path'] = str(active_prototype_review_path)
                     if prototype_review_preview_url:
                         event_payload['prototype_review_preview_url'] = prototype_review_preview_url
+                    if annotation_info is not None:
+                        event_payload.update(_annotation_review_event_payload(annotation_info))
                     self.store.append_event('plannotator_review_requested', event_payload)
                     output_func('[Plannotator] 已打开辅助审阅。')
                     if active_prototype_review_path is not None:
                         output_func(f'  审批文件：{approval_gate_path}')
                         output_func(f'  辅助预览文件：{active_prototype_review_path}')
+                    if annotation_info is not None:
+                        output_func(_format_annotation_review_line(annotation_info))
                     color_enabled = bool(getattr(self, '_drive_color_enabled', False))
                     if self.plannotator_port is not None:
                         output_func(_format_plannotator_access_line(
@@ -2767,6 +3410,8 @@ class RalphRefinerController:
                 return True
             if choice in {'p', 'path'}:
                 output_func(f"  文件：{gate_info['path']}")
+                if annotation_info is not None:
+                    output_func(_format_annotation_review_line(annotation_info))
                 continue
             if choice in {'q', 'quit', 'exit'}:
                 output_func('[退出] 已停止在人工确认点。')
@@ -3184,6 +3829,606 @@ def _format_recoverable_wait_message(state: dict[str, Any]) -> str:
         f'[等待] Agent 暂未完成（阶段：{stage}，下一步：{ACTION_LABELS.get(action, action)}，'
         f'runner={status}）。下次运行会停在同一阶段；如需重新派发，执行 `waygate retry`。{suffix}'
     )
+
+
+ENVIRONMENT_BLOCKED_TOKENS = (
+    'production_web_base_url',
+    'production_api_base_url',
+    'production_',
+    'production readonly',
+    'production_readonly',
+    'docker',
+    'compose',
+    'playwright',
+    'browser',
+    'port',
+    'service',
+    'credential',
+    'permission',
+    'access',
+    'database',
+    'db',
+    'api key',
+    'token',
+    'env var',
+    'environment',
+    'external dependency',
+    'uat',
+)
+UNIT_PLAN_BLOCKED_TOKENS = (
+    'unit plan',
+    'approved plan',
+    'test strategy',
+    'verification command',
+    'fixture',
+    'golden_path',
+    'prototype conformance',
+    'controller state patch',
+    'scope',
+    'sequencing',
+    'plan constraint',
+)
+REQUIREMENTS_BLOCKED_TOKENS = (
+    'requirements',
+    'acceptance criteria',
+    'acceptance criterion',
+    'journey contract',
+    'out of scope',
+    'requirements gate invalid',
+)
+UNBLOCK_ALLOWED_CATEGORIES = {'environment', 'external_dependency', 'final_acceptance_blocked'}
+UNBLOCK_ALLOWED_CATEGORIES.add('annotation_runtime')
+
+ANNOTATION_ROLE_BY_WAITING_STEP = {
+    'WAITING_REQUIREMENTS_ACCEPTANCE': 'requirements_annotation',
+    'WAITING_UNIT_PLAN_APPROVAL': 'unit_plan_annotation',
+    'WAITING_FINAL_ACCEPTANCE': 'final_acceptance_verification_assist',
+}
+ANNOTATION_REVIEW_BEGIN = '<!-- WAYGATE_ANNOTATION_REVIEW_BEGIN -->'
+ANNOTATION_REVIEW_END = '<!-- WAYGATE_ANNOTATION_REVIEW_END -->'
+ANNOTATION_REVIEW_BLOCK_RE = re.compile(
+    rf'\n*{re.escape(ANNOTATION_REVIEW_BEGIN)}.*?{re.escape(ANNOTATION_REVIEW_END)}\n*',
+    flags=re.DOTALL,
+)
+
+
+def _annotation_review_info_for_gate(
+    state: dict[str, Any],
+    *,
+    artifacts_dir: Path,
+    waiting_step: str,
+    gate_path: Path,
+) -> dict[str, Any] | None:
+    role = ANNOTATION_ROLE_BY_WAITING_STEP.get(waiting_step)
+    if not role:
+        return None
+    try:
+        config = normalize_annotation_config(state, role, artifacts_dir=artifacts_dir)
+    except ValueError:
+        return None
+    if not config.enabled or not annotation_artifact_matches_gate(config.artifact_path, gate_path):
+        return None
+    try:
+        payload = json.loads(config.artifact_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    issues = payload.get('issues')
+    issue_count = len(issues) if isinstance(issues, list) else 0
+    full_summary = str(payload.get('summary') or '').strip()
+    summary = _compact_controller_reason(full_summary, max_chars=220)
+    generated_at = str(payload.get('generated_at') or '').strip()
+    gate_content_hash = str(payload.get('gate_content_hash') or '').strip()
+    return {
+        'role': role,
+        'artifact_path': str(config.artifact_path),
+        'issue_count': issue_count,
+        'summary': summary,
+        'full_summary': full_summary,
+        'issues': issues if isinstance(issues, list) else [],
+        'generated_at': generated_at,
+        'gate_content_hash': gate_content_hash,
+    }
+
+
+def _sync_annotation_review_block_for_gate(
+    gate_path: Path,
+    annotation_info: dict[str, Any] | None,
+) -> None:
+    try:
+        content = gate_path.read_text(encoding='utf-8')
+    except OSError:
+        return
+    without_old_block = ANNOTATION_REVIEW_BLOCK_RE.sub('\n', content).rstrip() + '\n'
+    if annotation_info is None:
+        next_content = without_old_block
+    else:
+        if CONFIRMATION_HEADING not in without_old_block:
+            return
+        next_content = (
+            without_old_block.rstrip()
+            + '\n\n'
+            + _render_annotation_review_block(annotation_info).rstrip()
+            + '\n'
+        )
+    if next_content != content:
+        gate_path.write_text(next_content, encoding='utf-8')
+
+
+def _render_annotation_review_block(annotation_info: dict[str, Any]) -> str:
+    artifact_path = _annotation_review_text(annotation_info.get('artifact_path'))
+    generated_at = _annotation_review_text(annotation_info.get('generated_at')) or '-'
+    gate_content_hash = _annotation_review_text(annotation_info.get('gate_content_hash')) or '-'
+    summary = _annotation_review_text(
+        annotation_info.get('full_summary') or annotation_info.get('summary')
+    ) or '未提供批注摘要。'
+    issue_count = annotation_info.get('issue_count')
+    if not isinstance(issue_count, int):
+        issue_count = 0
+    lines = [
+        ANNOTATION_REVIEW_BEGIN,
+        '## Annotation Agent 风险批注',
+        '',
+        f'- Artifact 路径：`{artifact_path or "-"}`',
+        f'- generated_at：`{generated_at}`',
+        f'- gate hash：`{gate_content_hash}`',
+        f'- summary：{summary}',
+        f'- issue count：{issue_count}',
+        '',
+    ]
+    issues = annotation_info.get('issues')
+    if not isinstance(issues, list) or not issues:
+        lines.append('- 未列出逐条风险。')
+    else:
+        for index, issue in enumerate(issues, start=1):
+            if not isinstance(issue, dict):
+                continue
+            severity = _annotation_review_text(issue.get('severity')) or '-'
+            category = _annotation_review_text(issue.get('category')) or '-'
+            location = _annotation_review_text(issue.get('location')) or '-'
+            linked_ac = _annotation_review_text(issue.get('linked_ac')) or '-'
+            linked_ao = _annotation_review_text(issue.get('linked_ao')) or '-'
+            linked_journey = _annotation_review_text(issue.get('linked_journey')) or '-'
+            message = _annotation_review_text(issue.get('message')) or '未提供具体风险批注。'
+            evidence_refs = issue.get('evidence_refs')
+            lines.extend([
+                f'### 风险 {index}',
+                f'- severity：{severity}',
+                f'- category：{category}',
+                f'- location：{location}',
+                f'- AC/AO/Journey：{linked_ac} / {linked_ao} / {linked_journey}',
+                f'- message：{message}',
+            ])
+            if isinstance(evidence_refs, list) and evidence_refs:
+                lines.append('- evidence refs：')
+                lines.extend(
+                    f'  - `{_annotation_review_text(ref)}`'
+                    for ref in evidence_refs
+                    if _annotation_review_text(ref)
+                )
+            else:
+                lines.append('- evidence refs：无')
+            lines.append('')
+    lines.append(ANNOTATION_REVIEW_END)
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _annotation_review_text(value: Any) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    text = re.sub(r'\s*\n\s*', '<br>', text)
+    for forbidden in ('Status:', 'Content hash:', 'Confirmed by:'):
+        text = text.replace(forbidden, forbidden[:-1] + '：')
+    return text
+
+
+def _format_annotation_review_line(annotation_info: dict[str, Any]) -> str:
+    artifact_path = str(annotation_info.get('artifact_path') or '-')
+    issue_count = annotation_info.get('issue_count')
+    if not isinstance(issue_count, int):
+        issue_count = 0
+    return f'  风险标注：{artifact_path}（{issue_count} 条风险，当前 gate）'
+
+
+def _annotation_review_event_payload(annotation_info: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        'annotation_artifact_path': str(annotation_info.get('artifact_path') or ''),
+        'annotation_issue_count': annotation_info.get('issue_count') if isinstance(annotation_info.get('issue_count'), int) else 0,
+        'annotation_role': str(annotation_info.get('role') or ''),
+    }
+    for source_key, target_key in (
+        ('summary', 'annotation_summary'),
+        ('generated_at', 'annotation_generated_at'),
+        ('gate_content_hash', 'annotation_gate_content_hash'),
+    ):
+        value = str(annotation_info.get(source_key) or '').strip()
+        if value:
+            payload[target_key] = value
+    return payload
+
+
+def _quote_for_shell(value: str) -> str:
+    return shlex.quote(value)
+
+
+def classify_blocked_reason(reason: str, state: dict[str, Any] | None = None) -> str:
+    state = state or {}
+    context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
+    explicit_category = str(context.get('category') or '').strip()
+    if explicit_category:
+        return explicit_category
+    text = reason.lower()
+    current_step = str(state.get('currentStep') or '')
+    final_route = str(state.get('finalAcceptanceRejectionRoute') or '')
+    if final_route == 'blocked' or 'final acceptance rejected as blocked' in text:
+        return 'final_acceptance_blocked'
+    if (
+        'annotation pass failed before human gate' in text
+        or 'annotation runtime' in text
+        or 'annotation runner' in text
+    ):
+        return 'annotation_runtime'
+    if any(token in text for token in REQUIREMENTS_BLOCKED_TOKENS):
+        return 'requirements_contract'
+    if any(token in text for token in UNIT_PLAN_BLOCKED_TOKENS):
+        return 'unit_plan_contract'
+    if any(token in text for token in ENVIRONMENT_BLOCKED_TOKENS):
+        return 'environment'
+    if current_step == 'WAITING_FINAL_ACCEPTANCE':
+        return 'final_acceptance_contract'
+    return 'blocked'
+
+
+def _blocked_category(state: dict[str, Any]) -> str:
+    return classify_blocked_reason(str(state.get('blockedReason') or ''), state)
+
+
+def _blocked_category_allows_unblock(category: str) -> bool:
+    return category in UNBLOCK_ALLOWED_CATEGORIES
+
+
+def _annotation_role_from_blocker_state(state: dict[str, Any]) -> str | None:
+    pending = state.get('pendingAnnotationBeforeHumanGate')
+    if isinstance(pending, dict):
+        role = str(pending.get('role') or '').strip()
+        if role in ANNOTATION_ROLES:
+            return role
+    context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
+    role = str(context.get('role') or '').strip()
+    if role in ANNOTATION_ROLES:
+        return role
+    reason = str(state.get('blockedReason') or '')
+    for candidate in ANNOTATION_ROLES:
+        if candidate in reason:
+            return candidate
+    return ANNOTATION_ROLE_BY_WAITING_STEP.get(str(state.get('currentStep') or ''))
+
+
+def _builder_blocked_context_key(context: dict[str, Any]) -> str:
+    unit_id = str(context.get('unit_id') or '').strip()
+    run_id = str(context.get('run_id') or '').strip()
+    if run_id:
+        return f'{unit_id}:run:{run_id}'
+    summary_path = str(context.get('summary_path') or '').strip()
+    if summary_path:
+        return f'{unit_id}:path:{summary_path}'
+    summary = str(context.get('summary') or '').strip()
+    return f'{unit_id}:summary:{summary}'
+
+
+def _ignored_builder_blocked_context_keys(state: dict[str, Any]) -> set[str]:
+    ignored = state.get('ignoredBuilderBlockedContexts')
+    if not isinstance(ignored, list):
+        return set()
+    keys: set[str] = set()
+    for item in ignored:
+        if isinstance(item, dict):
+            key = str(item.get('key') or '').strip()
+        else:
+            key = str(item or '').strip()
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _builder_blocked_context_is_ignored(state: dict[str, Any], context: dict[str, Any]) -> bool:
+    return _builder_blocked_context_key(context) in _ignored_builder_blocked_context_keys(state)
+
+
+def _remember_ignored_builder_blocked_context(
+    state: dict[str, Any],
+    context: dict[str, Any],
+    *,
+    reason: str,
+) -> None:
+    if str(context.get('source') or '') != 'builder_agent':
+        return
+    key = _builder_blocked_context_key(context)
+    if not key:
+        return
+    ignored = state.get('ignoredBuilderBlockedContexts')
+    entries = list(ignored) if isinstance(ignored, list) else []
+    if key in _ignored_builder_blocked_context_keys({'ignoredBuilderBlockedContexts': entries}):
+        return
+    entries.append(
+        {
+            'key': key,
+            'unit_id': context.get('unit_id'),
+            'run_id': context.get('run_id'),
+            'summary_path': context.get('summary_path'),
+            'reason': reason,
+        }
+    )
+    state['ignoredBuilderBlockedContexts'] = entries[-20:]
+
+
+def _state_dir_arg(state_dir: Path | str | None) -> str:
+    return _quote_for_shell(str(state_dir or '.plan-ralph'))
+
+
+def _command_with_state(command: str, state_dir: Path | str | None) -> str:
+    return f'waygate {command} --state-dir {_state_dir_arg(state_dir)}'
+
+
+def _guidance_line(label: str, body: str, *, label_style: str, color_enabled: bool) -> str:
+    return f'{_paint(label, label_style, color_enabled)}：{body}'
+
+
+def _guidance_command(command: str, *, color_enabled: bool) -> str:
+    return _paint(command, 'cyan', color_enabled)
+
+
+def _guidance_command_line(command: str, *, color_enabled: bool) -> str:
+    return _guidance_line(
+        '命令',
+        _guidance_command(command, color_enabled=color_enabled),
+        label_style='cyan',
+        color_enabled=color_enabled,
+    )
+
+
+def _highlight_inline_guidance_commands(text: str, *, color_enabled: bool) -> str:
+    if not color_enabled:
+        return text
+    return re.sub(
+        r'`([^`]+)`',
+        lambda match: f'`{_guidance_command(match.group(1), color_enabled=True)}`',
+        text,
+    )
+
+
+def _blocked_rework_hint(state: dict[str, Any], state_dir: Path | str | None) -> str:
+    category = _blocked_category(state)
+    unit_plan_cmd = (
+        f'Use `waygate revise --gate unit-plan --state-dir {_state_dir_arg(state_dir)} '
+        '--reason "explain the Unit Plan constraint change"`.'
+    )
+    requirements_cmd = (
+        f'Use `waygate revise --gate requirements --state-dir {_state_dir_arg(state_dir)} '
+        '--reason "explain the Requirements contract change"`.'
+    )
+    if category == 'requirements_contract':
+        return requirements_cmd
+    if category == 'unit_plan_contract':
+        return unit_plan_cmd
+    if category == 'final_acceptance_contract':
+        return (
+            'Use the Final Acceptance rejection route for implementation, defect_fix, '
+            'unit_plan, or requirements rework instead of unblock.'
+        )
+    return f'{unit_plan_cmd} Or {requirements_cmd}'
+
+
+def format_stop_guidance(
+    state: dict[str, Any],
+    *,
+    state_dir: Path | str | None = None,
+    color_enabled: bool = False,
+    stop_kind: str | None = None,
+    detail: str | None = None,
+) -> str:
+    if isinstance(state.get('recoverableAgentWait'), dict):
+        wait = state['recoverableAgentWait']
+        action = wait.get('action') or state.get('nextAction') or compute_next_allowed_action(state) or '-'
+        return '\n'.join(
+            [
+                _guidance_line('原因', 'Agent 等待超时或 idle，属于可恢复等待。', label_style='red', color_enabled=color_enabled),
+                _guidance_line(
+                    '下一步',
+                    f'确认是否重新派发同一阶段（阶段：{wait.get("stage") or state.get("currentStep") or "-"}，下一步：{ACTION_LABELS.get(action, action)}）。retry 只用于 timeout/idle。',
+                    label_style='yellow',
+                    color_enabled=color_enabled,
+                ),
+                _guidance_command_line(_command_with_state('retry', state_dir), color_enabled=color_enabled),
+            ]
+        )
+
+    if state.get('status') == 'blocked':
+        reason = str(state.get('blockedReason') or '工作流已阻塞').strip()
+        category = _blocked_category(state)
+        lines = [
+            _guidance_line(
+                '原因',
+                _highlight_validation_tokens(reason, color_enabled=color_enabled),
+                label_style='red',
+                color_enabled=color_enabled,
+            )
+        ]
+        if category == 'annotation_runtime':
+            lines.extend(
+                [
+                    _guidance_line(
+                        '下一步',
+                        '这是 annotation runtime blocker；先修复 annotation backend CLI、凭据、权限或命令兼容性，然后解除阻塞重跑同一 gate 前标注。不要修改 Requirements 文档。',
+                        label_style='yellow',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_command_line(
+                        f'{_command_with_state("unblock", state_dir)} --reason "describe the fixed annotation runtime condition"',
+                        color_enabled=color_enabled,
+                    ),
+                ]
+            )
+        elif _blocked_category_allows_unblock(category):
+            lines.extend(
+                [
+                    _guidance_line(
+                        '下一步',
+                        '先修复环境、凭据、端口、服务或外部依赖；修好后解除阻塞继续同一阶段。不要用 retry 处理显式 blocked。',
+                        label_style='yellow',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_command_line(
+                        f'{_command_with_state("unblock", state_dir)} --reason "describe the fixed external condition"',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_line(
+                        '可选返工',
+                        _highlight_inline_guidance_commands(
+                            f'若 Unit Plan 约束不可执行，运行 `waygate revise --gate unit-plan --state-dir {_state_dir_arg(state_dir)} --reason "explain the plan change"`。',
+                            color_enabled=color_enabled,
+                        ),
+                        label_style='dim',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_line(
+                        '可选返工',
+                        _highlight_inline_guidance_commands(
+                            f'若 Requirements/AC 合同需要变更，运行 `waygate revise --gate requirements --state-dir {_state_dir_arg(state_dir)} --reason "explain the requirements change"`。',
+                            color_enabled=color_enabled,
+                        ),
+                        label_style='dim',
+                        color_enabled=color_enabled,
+                    ),
+                ]
+            )
+        elif category == 'unit_plan_contract':
+            lines.extend(
+                [
+                    _guidance_line(
+                        '下一步',
+                        '这是 Unit Plan/执行计划约束问题，不能用 retry 或 unblock 清除。',
+                        label_style='yellow',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_command_line(
+                        f'waygate revise --gate unit-plan --state-dir {_state_dir_arg(state_dir)} --reason "explain the Unit Plan change"',
+                        color_enabled=color_enabled,
+                    ),
+                ]
+            )
+        elif category == 'requirements_contract':
+            lines.extend(
+                [
+                    _guidance_line(
+                        '下一步',
+                        '这是 Requirements/Acceptance Criteria 合同问题，不能用 retry 或 unblock 清除。',
+                        label_style='yellow',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_command_line(
+                        f'waygate revise --gate requirements --state-dir {_state_dir_arg(state_dir)} --reason "explain the Requirements change"',
+                        color_enabled=color_enabled,
+                    ),
+                ]
+            )
+        elif category == 'final_acceptance_contract':
+            lines.append(
+                _guidance_line(
+                    '下一步',
+                    '按 Final Acceptance rejection route 选择 implementation、defect_fix、unit_plan 或 requirements 返工。',
+                    label_style='yellow',
+                    color_enabled=color_enabled,
+                )
+            )
+        else:
+            lines.extend(
+                [
+                    _guidance_line(
+                        '下一步',
+                        '先判断阻塞属于环境修复还是正式合同返工；不要盲目 retry。',
+                        label_style='yellow',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_line(
+                        '查看',
+                        _guidance_command(_command_with_state('status', state_dir), color_enabled=color_enabled),
+                        label_style='cyan',
+                        color_enabled=color_enabled,
+                    ),
+                ]
+            )
+        return '\n'.join(lines)
+
+    step = str(state.get('currentStep') or '')
+    if step in WAITING_HUMAN_GATE_STEPS:
+        gate = {
+            'WAITING_REQUIREMENTS_ACCEPTANCE': 'requirements',
+            'WAITING_UNIT_PLAN_APPROVAL': 'unit-plan',
+            'WAITING_FINAL_ACCEPTANCE': 'final-acceptance',
+            'WAITING_BUG_FIX_GATE': 'bug-fix',
+        }.get(step)
+        lines = [
+            _guidance_line(
+                '原因',
+                f'当前停在人工确认 gate（{HUMAN_GATE_LABELS.get(gate or "", gate or step)}）。',
+                label_style='red',
+                color_enabled=color_enabled,
+            ),
+            _guidance_line('下一步', '人工审阅 gate 文件后选择批准或返工。', label_style='yellow', color_enabled=color_enabled),
+        ]
+        if gate in {'requirements', 'unit-plan'}:
+            lines.append(f'批准：waygate approve --gate {gate} --state-dir {_state_dir_arg(state_dir)}')
+            lines.append(f'返工：waygate revise --gate {gate} --state-dir {_state_dir_arg(state_dir)} --reason "explain the requested change"')
+        elif gate == 'final-acceptance':
+            lines.append(f'批准：waygate approve --gate final-acceptance --state-dir {_state_dir_arg(state_dir)}')
+            lines.append(f'返工：在 Final Acceptance gate 选择 rejection route 后运行 `waygate reject --state-dir {_state_dir_arg(state_dir)}`')
+        elif gate == 'bug-fix':
+            lines.append(f'批准：waygate approve --gate bug-fix --state-dir {_state_dir_arg(state_dir)}')
+        return '\n'.join(lines)
+
+    action = state.get('nextAction') or compute_next_allowed_action(state)
+    if action is None and state.get('status') not in {'done', 'failed'} and not stop_kind:
+        return '\n'.join(
+            [
+                _guidance_line('原因', '当前状态没有可执行的下一步。', label_style='red', color_enabled=color_enabled),
+                _guidance_line(
+                    '下一步',
+                    '检查 session.json 的 currentStep/status 是否为预期；必要时按对应 gate revise 或恢复 controller state。',
+                    label_style='yellow',
+                    color_enabled=color_enabled,
+                ),
+                _guidance_command_line(_command_with_state('status', state_dir), color_enabled=color_enabled),
+            ]
+        )
+
+    if stop_kind:
+        reason = detail or stop_kind
+        lines = [_guidance_line('原因', f'{reason}。', label_style='red', color_enabled=color_enabled)]
+        if stop_kind == 'no_next_action':
+            lines.append(
+                _guidance_line(
+                    '下一步',
+                    '检查 session.json 的 currentStep/status 是否为预期；必要时按对应 gate revise 或恢复 controller state。',
+                    label_style='yellow',
+                    color_enabled=color_enabled,
+                )
+            )
+        else:
+            lines.append(
+                _guidance_line(
+                    '下一步',
+                    '运行 status 查看当前阶段，再按 guidance 处理等待、blocked 或 gate。',
+                    label_style='yellow',
+                    color_enabled=color_enabled,
+                )
+            )
+        lines.append(_guidance_command_line(_command_with_state('status', state_dir), color_enabled=color_enabled))
+        return '\n'.join(lines)
+
+    return ''
 
 
 def _format_plannotator_access_line(label: str, url: str, *, color_enabled: bool) -> str:
@@ -4370,6 +5615,7 @@ def _record_plannotator_review_paths(
     prototype_review_path: Path | None = None,
     prototype_review_manifest_path: Path | None = None,
     prototype_review_preview_url: str | None = None,
+    annotation_info: dict[str, Any] | None = None,
 ) -> None:
     try:
         summary = json.loads(summary_path.read_text(encoding='utf-8'))
@@ -4386,6 +5632,8 @@ def _record_plannotator_review_paths(
         summary['prototype_review_manifest_path'] = str(prototype_review_manifest_path)
     if prototype_review_preview_url:
         summary['prototype_review_preview_url'] = prototype_review_preview_url
+    if annotation_info is not None:
+        summary.update(_annotation_review_event_payload(annotation_info))
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
@@ -5131,6 +6379,7 @@ def add_go_parser(subparsers: Any) -> argparse.ArgumentParser:
     go_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
     go_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
     go_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
+    add_annotation_agent_cli_arguments(go_parser)
     return go_parser
 
 
@@ -5211,6 +6460,7 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
     init_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
     init_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
+    add_annotation_agent_cli_arguments(init_parser)
 
     status_parser = subparsers.add_parser(
         'status',
@@ -5226,6 +6476,14 @@ def parse_args() -> argparse.Namespace:
         allow_abbrev=False,
     )
     retry_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
+
+    unblock_parser = subparsers.add_parser(
+        'unblock',
+        help='Clear an environment/external dependency blocked state after the condition is fixed',
+        allow_abbrev=False,
+    )
+    unblock_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
+    unblock_parser.add_argument('--reason', required=True, help='What external condition was fixed')
 
     approve_parser = subparsers.add_parser(
         'approve',
@@ -5300,6 +6558,7 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--no-code-simplifier', action='store_false', dest='code_simplifier', help='Disable CodeSimplifier for the Refiner stage')
     start_parser.add_argument('--code-simplifier-command', default=None, help='Override CodeSimplifier runner command')
     start_parser.add_argument('--code-simplifier-env', action='append', metavar='KEY=VALUE', dest='code_simplifier_env', help='Inject env var into CodeSimplifier subprocess only (repeatable)')
+    add_annotation_agent_cli_arguments(start_parser)
 
     add_go_parser(subparsers)
 
@@ -5323,6 +6582,7 @@ def parse_args() -> argparse.Namespace:
     drive_parser.add_argument('--plannotator-port', type=int, default=20000, help='Port exported to Plannotator as PLANNOTATOR_PORT')
     drive_parser.add_argument('--verbose', action='store_true', help='Show raw per-step progress and execution lines')
     drive_parser.add_argument('--color', choices=COLOR_MODES, default='auto', help='Color compact output: auto, always, or never')
+    add_annotation_agent_cli_arguments(drive_parser)
 
     run_parser = subparsers.add_parser(
         'run',
@@ -5340,8 +6600,14 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument('--tmux-target', default=None, help='Override tmux pane target for tmux-codex or tmux-claude')
     run_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
     run_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
+    add_annotation_agent_cli_arguments(run_parser)
 
-    return normalize_go_args(parser.parse_args(), parser)
+    args = normalize_go_args(parser.parse_args(), parser)
+    try:
+        build_annotation_agent_cli_overrides(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
 def _build_strategist_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
@@ -5388,12 +6654,16 @@ def _build_code_simplifier_overrides(args: argparse.Namespace) -> dict[str, Any]
 
 def _build_role_overrides(args: argparse.Namespace) -> dict[str, Any] | None:
     merged: dict[str, Any] = {}
-    for overrides in (_build_strategist_overrides(args), _build_code_simplifier_overrides(args)):
+    for overrides in (
+        _build_strategist_overrides(args),
+        _build_code_simplifier_overrides(args),
+        build_annotation_agent_cli_overrides(args),
+    ):
         if not overrides:
             continue
         for key, value in overrides.items():
-            if key == 'roleRunners' and isinstance(value, dict):
-                merged.setdefault('roleRunners', {}).update(value)
+            if key in {'roleRunners', 'annotationAgents'} and isinstance(value, dict):
+                merged.setdefault(key, {}).update(value)
             else:
                 merged[key] = value
     return merged or None
@@ -5430,16 +6700,19 @@ def main() -> None:
         state_dir_explicit=getattr(args, 'state_dir_explicit', True),
         spec_path=getattr(args, 'spec', None),
     )
+    role_overrides = _build_role_overrides(args)
 
     if args.command == 'init':
-        strategist_overrides = _build_role_overrides(args)
-        state = controller.init_state(force=args.force, strategist_overrides=strategist_overrides)
+        state = controller.init_state(force=args.force, strategist_overrides=role_overrides)
         print(render_status_line(state))
         return
 
     if args.command == 'status':
         state = controller.get_status()
         print(render_status_line(state))
+        guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
+        if guidance:
+            print(guidance)
         return
 
     if args.command == 'retry':
@@ -5450,6 +6723,19 @@ def main() -> None:
             raise SystemExit(1) from None
         next_action = state.get('nextAction') or compute_next_allowed_action(state)
         print(f'status=retry-ready currentStep={state.get("currentStep")} nextAction={next_action}')
+        return
+
+    if args.command == 'unblock':
+        try:
+            state = controller.unblock_blocked_workflow(reason=args.reason)
+        except Exception as exc:
+            print(f'error: {exc}', file=sys.stderr)
+            raise SystemExit(1) from None
+        next_action = state.get('nextAction') or compute_next_allowed_action(state)
+        print(f'status=unblocked currentStep={state.get("currentStep")} nextAction={next_action}')
+        guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
+        if guidance:
+            print(guidance)
         return
 
     if args.command == 'approve':
@@ -5488,7 +6774,7 @@ def main() -> None:
                 verbose=args.verbose,
                 color_mode=args.color,
                 actor=args.actor,
-                strategist_overrides=_build_role_overrides(args),
+                strategist_overrides=role_overrides,
                 print_startup_version=True,
             )
         except Exception as exc:
@@ -5498,6 +6784,8 @@ def main() -> None:
 
     if args.command == 'drive':
         try:
+            if role_overrides:
+                controller.apply_runtime_overrides(role_overrides)
             controller.drive(
                 max_steps=args.max_steps,
                 verbose=args.verbose,
@@ -5512,13 +6800,28 @@ def main() -> None:
 
     if args.command == 'run':
         try:
+            if role_overrides:
+                controller.apply_runtime_overrides(role_overrides)
             state = controller.run_until_done(max_steps=args.max_steps) if args.until_done else controller.run_once()
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
+            try:
+                state = controller.get_status()
+                guidance = format_stop_guidance(state, state_dir=Path(args.state_dir), stop_kind='run_error', detail=str(exc))
+                if guidance:
+                    print(guidance, file=sys.stderr)
+            except Exception:
+                pass
             raise SystemExit(1) from None
         if state.get('recoverableAgentWait'):
             print(_format_recoverable_wait_message(state))
+            guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
+            if guidance:
+                print(guidance)
         print(render_status_line(state))
+        guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
+        if guidance and not state.get('recoverableAgentWait'):
+            print(guidance)
         return
 
     raise ValueError(f'Unknown command: {args.command}')

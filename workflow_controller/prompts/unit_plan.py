@@ -93,6 +93,8 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - `golden_path: true` 必须同时声明 `layer: "e2e"`、`environment_kind: "local_real"` 或 `"production_readonly"`、`entrypoint` 或 `real_entrypoint`、真实 fixture/setup 或 test data、可执行 `command`、强 `expected` 断言，并且 `command` 必须出现在 `verification_commands`。
 - 真实 E2E 测试必须写 `entrypoint` 或 `real_entrypoint`（真实页面/route/URL/CLI/API/service 入口），并使用真实服务/API 与真实测试数据准备；截图只能作为补充 artifact，不能替代 DOM/API/行为断言。API-only 或 service-only 项目的 golden path 可以使用 pytest/API/service E2E，不要求浏览器。
 - 至少一个 E2E test case 必须标记 `golden_path: true`，表示人工最终验收前必须先跑通的核心正常流程。
+- closure/Web/UI unit 必须在 Controller State Patch 的对应 unit 中写 `final_acceptance_walkthrough.inspection`，由 Agent 提供人工可见系统走查入口；Controller 不猜入口。字段必须包含 `surface_kind: "browser" | "api" | "cli" | "artifact"`、`entrypoint`、`manual_steps[]` 和 `expected_observations[]`。`manual_steps` 必须是真实系统操作，不得只写 `pytest`、`playwright test`、golden path command 或其他测试命令。
+- closure unit 如需最终人工走查启动真实应用，必须同时写 `final_acceptance_walkthrough.launch`：`mode` 只能是 `agent_start` / `manual_only` / `not_required`；`agent_start` 必须写完整 `command`，并至少写一个 `ready_url` / `ready_command` / `ready_output_contains`；`manual_only` 必须写 `manual_launch_instructions`；`env_keys` 只能保存环境变量名，不能保存 secret 值。
 - `verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`），并包含实际执行这些 E2E 测试和 golden path 的命令；不接受"截图留证"或人工步骤作为完成条件。
 - `done_when` 必须是"测试命令退出码为 0 且断言覆盖 AC"，不接受"截图已上传"、"人工确认"或"浏览器路径已验证"。
 - 每个测试用例必须追溯到一条 AC，并在 `expected` 字段中描述可断言的具体值（如字段值、数组长度、排序关系），不接受"页面正常渲染"、"无报错"或"截图留存"作为唯一断言。

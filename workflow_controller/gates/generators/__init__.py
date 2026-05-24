@@ -730,7 +730,9 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
     lines.extend(_prototype_conformance_matrix_lines(state, artifacts_dir))
     lines.extend(final_scope_audit_gate_lines(artifacts_dir))
     lines.extend(_journey_matrix_lines(state, artifacts_dir))
-    lines.extend(_golden_path_result_lines(state, verification))
+    lines.extend(_agent_provided_walkthrough_entry_lines(state, artifacts_dir))
+    lines.extend(_manual_system_observation_record_lines(state, artifacts_dir))
+    lines.extend(_golden_path_walkthrough_lines(state, verification, artifacts_dir))
     lines.extend([
         '',
         '## 证据文件',
@@ -741,6 +743,8 @@ def _final_acceptance_body(state: dict[str, Any], artifacts_dir: Path) -> str:
         'refinement-summary.json',
         'review.json',
         'verification.json',
+        'final-walkthrough-launch.json',
+        'final-walkthrough-launch.log',
         'green-test.txt',
     ]:
         path = unit_dir / name
@@ -801,6 +805,10 @@ def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> lis
         row for row in verification.get('evidence_rows') or []
         if isinstance(row, dict)
     ]
+    deterministic_rows = [
+        row for row in rows
+        if not _is_descriptive_evidence_row(row) and not _is_agent_assisted_case_row(row)
+    ]
     lines = [
         '',
         '## 验收证据矩阵（Final Acceptance Evidence Matrix）',
@@ -810,11 +818,13 @@ def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> lis
         '| AO | AC | Test Case | Layer | Environment | Real Entry | Core API Mock | Runtime Errors | Status | Evidence | Expected | Artifacts | Golden Path |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ]
-    if not rows:
+    if not deterministic_rows:
         lines.append('| 未指定 | 未指定 | 未指定 | 未指定 | 未指定 | 未指定 | unknown | unknown | missing | verification.json 未包含 evidence_rows | 请检查 Verifier evidence schema | verification.json | no |')
+        lines.extend(_agent_assisted_descriptive_evidence_lines(rows))
+        lines.extend(_agent_assisted_case_evidence_lines(rows))
         return lines
 
-    for row in rows:
+    for row in deterministic_rows:
         runtime_errors = _runtime_error_cell(row)
         lines.append(
             '| '
@@ -832,6 +842,72 @@ def _final_acceptance_evidence_matrix_lines(verification: dict[str, Any]) -> lis
                 _markdown_cell(row.get('expected') or '未指定'),
                 _markdown_cell(_join_strings(row.get('artifact_refs')) or 'verification.json'),
                 'yes' if row.get('golden_path') is True else 'no',
+            ])
+            + ' |'
+        )
+    lines.extend(_agent_assisted_descriptive_evidence_lines(rows))
+    lines.extend(_agent_assisted_case_evidence_lines(rows))
+    return lines
+
+
+def _agent_assisted_descriptive_evidence_lines(rows: list[dict[str, Any]]) -> list[str]:
+    descriptive_rows = [row for row in rows if _is_descriptive_evidence_row(row)]
+    if not descriptive_rows:
+        return []
+    lines = [
+        '',
+        '## Agent-Assisted Descriptive Evidence',
+        '',
+        'Agent-assisted judgement is risk context only and never approval.',
+        '',
+        '| AC | Test Case | Command | Description | Deterministic Status | Agent-Assisted Judgement | Human Review Required | Risks | Structured Evidence |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ]
+    for row in descriptive_rows:
+        lines.append(
+            '| '
+            + ' | '.join([
+                _markdown_cell(row.get('acceptance_criterion') or '未指定'),
+                _markdown_cell(row.get('test_case_id') or '未指定'),
+                _markdown_cell(_evidence_cell(row)),
+                _markdown_cell(row.get('description') or '未指定'),
+                _markdown_cell(row.get('status') or 'missing'),
+                _markdown_cell(_agent_assisted_judgement_cell(row.get('agent_assisted_judgement'))),
+                'yes' if row.get('human_review_required') is True else 'no',
+                _markdown_cell(_risk_annotations_cell(row.get('risk_annotations'))),
+                _markdown_cell(_join_strings(row.get('structured_evidence_refs')) or 'verification.json'),
+            ])
+            + ' |'
+        )
+    return lines
+
+
+def _agent_assisted_case_evidence_lines(rows: list[dict[str, Any]]) -> list[str]:
+    case_rows = [row for row in rows if _is_agent_assisted_case_row(row)]
+    if not case_rows:
+        return []
+    lines = [
+        '',
+        '## Agent-Assisted Verification Evidence',
+        '',
+        'Agent-assisted verification evidence is controller evidence, not approval.',
+        '',
+        '| AC | Test Case | Description | Status | Agent-Assisted Judgement | Human Review Required | Risks | Structured Evidence | Assist Artifact |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ]
+    for row in case_rows:
+        lines.append(
+            '| '
+            + ' | '.join([
+                _markdown_cell(row.get('acceptance_criterion') or '未指定'),
+                _markdown_cell(row.get('test_case_id') or '未指定'),
+                _markdown_cell(row.get('description') or '未指定'),
+                _markdown_cell(row.get('status') or 'missing'),
+                _markdown_cell(_agent_assisted_judgement_cell(row.get('agent_assisted_judgement'))),
+                'yes' if row.get('human_review_required') is True else 'no',
+                _markdown_cell(_risk_annotations_cell(row.get('risk_annotations'))),
+                _markdown_cell(_join_strings(row.get('structured_evidence_refs')) or 'verification.json'),
+                _markdown_cell(row.get('assist_artifact_path') or '未指定'),
             ])
             + ' |'
         )
@@ -1010,6 +1086,53 @@ def _runtime_error_cell(row: dict[str, Any]) -> str:
     return ', '.join(details) if details else 'none'
 
 
+def _is_descriptive_evidence_row(row: dict[str, Any]) -> bool:
+    if row.get('evidence_type') == 'agent_assisted_case':
+        return False
+    if row.get('evidence_type') == 'descriptive_command':
+        return True
+    return any(
+        field in row
+        for field in (
+            'description',
+            'agent_assisted_judgement',
+            'risk_annotations',
+            'structured_evidence_refs',
+            'human_review_required',
+        )
+    )
+
+
+def _is_agent_assisted_case_row(row: dict[str, Any]) -> bool:
+    return row.get('evidence_type') == 'agent_assisted_case'
+
+
+def _agent_assisted_judgement_cell(value: Any) -> str:
+    if isinstance(value, dict):
+        status = str(value.get('status') or '').strip()
+        summary = str(value.get('summary') or value.get('judgement') or value.get('judgment') or '').strip()
+        if status and summary:
+            return f'{status}: {summary}'
+        return status or summary or json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value or 'not provided').strip()
+
+
+def _risk_annotations_cell(value: Any) -> str:
+    if not isinstance(value, list):
+        return str(value or 'none').strip()
+    cells: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            severity = str(item.get('severity') or '').strip()
+            category = str(item.get('category') or item.get('type') or '').strip()
+            note = str(item.get('note') or item.get('message') or item.get('summary') or '').strip()
+            prefix = '/'.join(part for part in [severity, category] if part)
+            cells.append(f'{prefix}: {note}' if prefix and note else prefix or note)
+        else:
+            cells.append(str(item).strip())
+    return '; '.join(cell for cell in cells if cell) or 'none'
+
+
 def _join_strings(value: Any) -> str:
     if isinstance(value, list):
         return ', '.join(str(item).strip() for item in value if str(item).strip())
@@ -1026,13 +1149,141 @@ def _markdown_cell(value: Any) -> str:
     return str(value).replace('|', '\\|').replace('\n', '<br>').strip()
 
 
-def _golden_path_result_lines(state: dict[str, Any], verification: dict[str, Any]) -> list[str]:
+def _agent_provided_walkthrough_entry_lines(state: dict[str, Any], artifacts_dir: Path) -> list[str]:
+    inspection, source = _final_acceptance_inspection_config(state, artifacts_dir)
+    lines = [
+        '',
+        '## Agent 提供的人工走查入口',
+        '',
+    ]
+    if not inspection:
+        lines.extend([
+            '- 未声明人工走查入口。历史 state 可继续审阅；新的 closure/Web/UI Unit Plan 必须声明 `final_acceptance_walkthrough.inspection`。',
+        ])
+        return lines
+
+    lines.extend([
+        f"- 来源：{source}",
+        f"- Surface：`{inspection.get('surface_kind') or inspection.get('surfaceKind') or '未指定'}`",
+        f"- Entry：{inspection.get('entrypoint') or '未指定'}",
+    ])
+    reason = inspection.get('reason') or inspection.get('entrypoint_reason') or inspection.get('entrypointReason')
+    if reason:
+        lines.append(f'- 入口确认原因：{reason}')
+    manual_steps = _listish_strings(inspection.get('manual_steps') or inspection.get('manualSteps'))
+    expected = _listish_strings(
+        inspection.get('expected_observations') or inspection.get('expectedObservations')
+    )
+    lines.extend([
+        '',
+        '### 人工操作步骤',
+    ])
+    lines.extend(f'{index}. {step}' for index, step in enumerate(manual_steps, start=1))
+    if not manual_steps:
+        lines.append('1. 未指定。')
+    lines.extend([
+        '',
+        '### 预期观察',
+    ])
+    lines.extend(f'- {item}' for item in expected)
+    if not expected:
+        lines.append('- 未指定。')
+    return lines
+
+
+def _manual_system_observation_record_lines(state: dict[str, Any], artifacts_dir: Path) -> list[str]:
+    inspection, _ = _final_acceptance_inspection_config(state, artifacts_dir)
+    if not inspection:
+        return []
+    return [
+        '',
+        '## 人工系统观察记录（Required）',
+        '',
+        '批准前必须先打开上方 Agent 提供的入口，并填写下面四项；只看 Markdown 或自动化测试结果不算人工系统终验。',
+        '',
+        '- Observed entrypoint: ',
+        '- Actual observation: ',
+        '- Data/account/fixture: ',
+        '- Issues or evidence path: ',
+    ]
+
+
+def _final_acceptance_inspection_config(
+    state: dict[str, Any],
+    artifacts_dir: Path,
+) -> tuple[dict[str, Any] | None, str]:
+    builder_inspection = _builder_confirmed_walkthrough_inspection(state, artifacts_dir)
+    if builder_inspection is not None:
+        return builder_inspection, 'Builder confirmed entrypoint'
+    unit = _current_unit(state)
+    walkthrough = unit.get('final_acceptance_walkthrough') or unit.get('finalAcceptanceWalkthrough')
+    if isinstance(walkthrough, dict):
+        inspection = walkthrough.get('inspection')
+        if isinstance(inspection, dict):
+            return inspection, 'Unit Plan declared entrypoint'
+    return None, ''
+
+
+def _builder_confirmed_walkthrough_inspection(
+    state: dict[str, Any],
+    artifacts_dir: Path,
+) -> dict[str, Any] | None:
+    unit_id = str(state.get('currentUnitId') or 'unknown')
+    builder = _load_json_file(artifacts_dir / unit_id / 'builder-summary.json')
+    candidates: list[Any] = []
+    done_payload = builder.get('done_payload')
+    if isinstance(done_payload, dict):
+        candidates.extend([
+            done_payload.get('final_acceptance_walkthrough'),
+            done_payload.get('finalAcceptanceWalkthrough'),
+            done_payload.get('final_acceptance_inspection'),
+            done_payload.get('finalAcceptanceInspection'),
+        ])
+    candidates.extend([
+        builder.get('final_acceptance_walkthrough'),
+        builder.get('finalAcceptanceWalkthrough'),
+        builder.get('final_acceptance_inspection'),
+        builder.get('finalAcceptanceInspection'),
+    ])
+    for candidate in candidates:
+        inspection = _inspection_from_candidate(candidate)
+        if inspection is not None and str(inspection.get('entrypoint') or '').strip():
+            return inspection
+    return None
+
+
+def _inspection_from_candidate(candidate: Any) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict):
+        return None
+    inspection = candidate.get('inspection')
+    if isinstance(inspection, dict):
+        return inspection
+    if 'entrypoint' in candidate:
+        return candidate
+    return None
+
+
+def _listish_strings(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [line.strip('- ').strip() for line in value.splitlines() if line.strip('- ').strip()]
+    return []
+
+
+def _golden_path_walkthrough_lines(
+    state: dict[str, Any],
+    verification: dict[str, Any],
+    artifacts_dir: Path,
+) -> list[str]:
     unit = _current_unit(state)
     golden_cases = [
         case for case in _unit_test_cases(unit)
         if isinstance(case, dict) and case.get('golden_path') is True
     ]
-    if not golden_cases:
+    launch_payload = _final_walkthrough_launch_payload(state, artifacts_dir)
+    launch = _final_walkthrough_launch_config(unit)
+    if not golden_cases and not launch and not launch_payload:
         return []
     results = [
         result for result in verification.get('results') or []
@@ -1040,8 +1291,25 @@ def _golden_path_result_lines(state: dict[str, Any], verification: dict[str, Any
     ]
     lines = [
         '',
-        '## Golden Path 正常流程',
+        '## Golden Path 人工走查',
+        '',
+        '### 启动状态',
+        *_final_walkthrough_launch_lines(launch, launch_payload),
     ]
+    if not golden_cases:
+        lines.extend([
+            '',
+            '### Golden Path 操作步骤',
+            '- 未声明 `golden_path: true` 测试用例；请回到 Unit Plan 补齐最终验收主路径。',
+        ])
+        return lines
+    lines.extend([
+        '',
+        '### Golden Path 操作步骤',
+        '',
+        '| AC | AO | Journey | Test Case | Entry | Fixture / Test Data | User Steps | Expected | Evidence Status |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ])
     for case in golden_cases:
         command = str(case.get('command') or '').strip()
         evidence = _find_matching_evidence_row(case, verification.get('evidence_rows') or [])
@@ -1060,13 +1328,113 @@ def _golden_path_result_lines(state: dict[str, Any], verification: dict[str, Any
             status = 'passed' if result.get('ok') else 'failed'
             returncode = result.get('returncode')
             suffix = f' (exit {returncode})' if returncode not in {None, 0} else ''
-        lines.extend([
-            f"- AC：{case.get('acceptance_criterion') or '未指定'}",
-            f"- 测试用例：`{case.get('id') or '未指定'}`",
-            f"- 命令：`{command or '未指定'}` -> {status}{suffix}",
-            f"- 期望：{case.get('expected') or '未指定'}",
-        ])
+        evidence_status = f'{status}{suffix}'
+        lines.append(
+            '| '
+            + ' | '.join([
+                _markdown_cell(case.get('acceptance_criterion') or '未指定'),
+                _markdown_cell(_join_strings(case.get('covers_obligations') or case.get('acceptance_obligations')) or '未指定'),
+                _markdown_cell(_join_strings(case.get('covers_journeys') or case.get('journey_ids') or case.get('journeys')) or '未指定'),
+                _markdown_cell(case.get('id') or '未指定'),
+                _markdown_cell(case.get('real_entrypoint') or case.get('entrypoint') or '未指定'),
+                _markdown_cell(case.get('fixture') or case.get('setup') or case.get('test_data') or '未指定'),
+                _markdown_cell(_join_action_path(case.get('user_steps') or case.get('steps')) or '未指定'),
+                _markdown_cell(case.get('expected') or '未指定'),
+                _markdown_cell(f'`{command or "未指定"}` -> {evidence_status}'),
+            ])
+            + ' |'
+        )
+    lines.extend([
+        '',
+        '### 人工走查确认',
+        '- [ ] 已打开上方真实入口或按人工启动说明完成启动。',
+        '- [ ] 已按 Golden Path 的 User Steps 使用指定 fixture / test data 完成走查。',
+        '- [ ] 实际观察结果与 Expected 一致，且自动化验证已全部通过。',
+        '- [ ] 若失败，已在 `## 修改清单` 写明复现步骤、实际结果、期望结果和建议返工路由。',
+        '',
+        '### 观察记录',
+        '- 启动入口 / URL：',
+        '- 使用账号 / fixture / test data：',
+        '- 实际观察结果：',
+        '- 截图、日志或其他证据路径：',
+    ])
     return lines
+
+
+def _final_walkthrough_launch_config(unit: dict[str, Any]) -> dict[str, Any] | None:
+    walkthrough = unit.get('final_acceptance_walkthrough') or unit.get('finalAcceptanceWalkthrough')
+    if not isinstance(walkthrough, dict):
+        return None
+    launch = walkthrough.get('launch')
+    return launch if isinstance(launch, dict) else None
+
+
+def _final_walkthrough_launch_payload(state: dict[str, Any], artifacts_dir: Path) -> dict[str, Any] | None:
+    unit_id = str(state.get('currentUnitId') or 'unknown')
+    path = artifacts_dir / unit_id / 'final-walkthrough-launch.json'
+    if not path.exists():
+        return None
+    payload = _load_json_file(path)
+    return payload or None
+
+
+def _final_walkthrough_launch_lines(
+    launch: dict[str, Any] | None,
+    payload: dict[str, Any] | None,
+) -> list[str]:
+    source = payload.get('launch') if isinstance(payload, dict) else None
+    if not isinstance(source, dict):
+        source = launch or {'mode': 'not_required'}
+    mode = str(source.get('mode') or 'not_required').strip()
+    status = str((payload or {}).get('status') or ('not_declared' if launch is None else 'pending')).strip()
+    lines = [
+        f'- 启动模式：`{mode}`',
+        f'- 启动结果：`{status}`',
+    ]
+    command = source.get('command')
+    if command:
+        lines.append(f'- 启动命令：`{command}`')
+    cwd = (payload or {}).get('cwd') or source.get('cwd')
+    if cwd:
+        lines.append(f'- 启动目录：`{cwd}`')
+    env_keys = source.get('env_keys')
+    if env_keys:
+        lines.append(f'- 环境变量名：`{_join_strings(env_keys)}`（仅记录名称，不记录值）')
+    ready_url = source.get('ready_url')
+    if ready_url:
+        lines.append(f'- 访问 URL / Ready URL：{ready_url}')
+    ready_command = source.get('ready_command')
+    if ready_command:
+        lines.append(f'- Ready Command：`{ready_command}`')
+    ready_output = source.get('ready_output_contains')
+    if ready_output:
+        lines.append(f'- Ready Output Contains：`{ready_output}`')
+    ready_check = (payload or {}).get('ready_check')
+    if isinstance(ready_check, dict):
+        check_type = ready_check.get('type') or 'unknown'
+        check_status = ready_check.get('status') or 'unknown'
+        lines.append(f'- Ready Check：`{check_type}` / `{check_status}`')
+    log_path = (payload or {}).get('log_path')
+    if log_path:
+        lines.append(f'- 启动日志 artifact：`{log_path}`')
+    if (payload or {}).get('pid'):
+        lines.append(f"- 启动进程 PID：`{(payload or {}).get('pid')}`")
+    if source.get('stop_command'):
+        lines.append(f"- Stop Command：`{source.get('stop_command')}`")
+    manual = (payload or {}).get('manual_launch_instructions') or source.get('manual_launch_instructions')
+    if manual:
+        lines.append(f'- 人工启动 / fallback 说明：{manual}')
+    reason = (payload or {}).get('reason') or source.get('reason')
+    if mode == 'not_required' and reason:
+        lines.append(f'- 无需启动说明：{reason}')
+    error = (payload or {}).get('error')
+    if error:
+        lines.append(f'- 启动失败原因：{error}')
+    return lines
+
+
+def _golden_path_result_lines(state: dict[str, Any], verification: dict[str, Any]) -> list[str]:
+    return _golden_path_walkthrough_lines(state, verification, Path())
 
 
 def _find_matching_evidence_row(case: dict[str, Any], rows: list[Any]) -> dict[str, Any] | None:

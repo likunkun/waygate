@@ -104,13 +104,27 @@ if sys.argv[1:2] == ["paste-buffer"]:
                 {"objective": "Delivery objective", "units": ["1.1-delivery"], "status": "partial"}
             ],
             "units": [
-                {
-                    "id": "1.1-delivery",
-                    "name": "Delivery artifact",
-                    "passes": False,
-                    "workflow_validation_level": "closure",
-                    "scope": ["Produce delivery artifact."],
-                    "test_cases": [
+                    {
+                        "id": "1.1-delivery",
+                        "name": "Delivery artifact",
+                        "passes": False,
+                        "workflow_validation_level": "closure",
+                        "scope": ["Produce delivery artifact."],
+                        "final_acceptance_walkthrough": {
+                            "inspection": {
+                                "surface_kind": "cli",
+                                "entrypoint": "delivery artifact CLI check in workspace",
+                                "manual_steps": [
+                                    "Run the delivery artifact CLI check from the workspace shell",
+                                    "Open delivery.txt and confirm the generated content",
+                                ],
+                                "expected_observations": [
+                                    "stdout prints delivery verified",
+                                    "delivery.txt contains ready newline",
+                                ],
+                            }
+                        },
+                        "test_cases": [
                         {
                             "id": "TC-delivery-golden-path",
                             "acceptance_criterion": "Verification command passes.",
@@ -216,7 +230,28 @@ if sys.argv[1:2] == ["paste-buffer"]:
 
     assert run_result.returncode == 0, run_result.stderr
     assert 'currentStep=WAITING_FINAL_ACCEPTANCE status=active' in run_result.stdout
-    approve_gate_file(state_dir / 'approvals' / 'final-acceptance.md', actor='tester')
+    final_gate = state_dir / 'approvals' / 'final-acceptance.md'
+    final_gate.write_text(
+        final_gate.read_text(encoding='utf-8')
+        .replace(
+            '- Observed entrypoint: \n',
+            '- Observed entrypoint: python -c delivery artifact CLI check\n',
+        )
+        .replace(
+            '- Actual observation: \n',
+            '- Actual observation: stdout printed delivery verified and delivery.txt contained ready newline.\n',
+        )
+        .replace(
+            '- Data/account/fixture: \n',
+            '- Data/account/fixture: temporary workspace delivery.txt fixture\n',
+        )
+        .replace(
+            '- Issues or evidence path: \n',
+            '- Issues or evidence path: artifacts/1.1-delivery/verification.json\n',
+        ),
+        encoding='utf-8',
+    )
+    approve_gate_file(final_gate, actor='tester')
 
     final_result = run_rrc('run', '--state-dir', str(state_dir), '--until-done', '--auto-approve')
 

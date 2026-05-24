@@ -390,4 +390,6 @@ def _requirements_spec_summary(state: dict[str, Any]) -> dict[str, Any] | None:
         'hash': spec.get('hash'),
         'sourceType': spec.get('sourceType'),
         'importedAt': spec.get('importedAt'),
+        'sourceMetadata': spec.get('sourceMetadata'),
+        'conversionArtifacts': spec.get('conversionArtifacts'),
     }

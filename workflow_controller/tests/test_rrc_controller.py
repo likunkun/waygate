@@ -15,7 +15,7 @@ from typing import Any
 import workflow_controller.rrc_controller as rrc_controller_module
 import workflow_controller.cli as cli_module
 from workflow_controller import __version__
-from workflow_controller.gates import render_requirements_gate_body, write_gate_file
+from workflow_controller.gates import approve_gate_file, render_requirements_gate_body, write_gate_file
 from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
 from workflow_controller.steps.requirements import run_requirements_drafter
 from workflow_controller.steps._common import TestStrategistBlocked as StrategistBlocked
@@ -5464,6 +5464,598 @@ def test_retry_clears_recoverable_agent_wait_without_changing_approvals(tmp_path
     assert state['unitPlanAcceptedHash'] == 'sha256:plan'
 
 
+def test_status_prints_recoverable_wait_guidance_with_state_dir_retry(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'scopeApproved': True,
+            'recoverableAgentWait': {
+                'stage': 'EXECUTE_UNIT',
+                'action': 'run_builder',
+                'runner_status': 'timeout',
+                'message': 'agent timed out',
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('status', '--state-dir', str(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith('currentStep=EXECUTE_UNIT status=active')
+    assert '原因：Agent 等待超时或 idle，属于可恢复等待。' in result.stdout
+    assert f'waygate retry --state-dir {shlex.quote(str(state_dir))}' in result.stdout
+
+
+def test_retry_refuses_explicit_blocked_state_with_status_guidance(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Builder is blocked: missing PRODUCTION_WEB_BASE_URL.',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('retry', '--state-dir', str(state_dir))
+
+    assert result.returncode == 1
+    assert 'retry only handles timeout/idle recoverableAgentWait' in result.stderr
+    assert f'waygate status --state-dir {shlex.quote(str(state_dir))}' in result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['status'] == 'blocked'
+
+
+def test_format_stop_guidance_colors_blocked_guidance_labels_and_commands(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    guidance = rrc_controller_module.format_stop_guidance(
+        {
+            'status': 'blocked',
+            'currentStep': 'EXECUTE_UNIT',
+            'blockedReason': 'Missing /tmp/prod evidence for AC-1.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+        },
+        state_dir=state_dir,
+        color_enabled=True,
+    )
+
+    assert '\x1b[' in guidance
+    assert '\033[31m原因\033[0m：' in guidance
+    assert '\033[33m下一步\033[0m：' in guidance
+    assert '\033[36m命令\033[0m：' in guidance
+    assert '\033[36mwaygate unblock' in guidance
+    plain = re.sub(r'\x1b\[[0-9;]*m', '', guidance)
+    assert '下一步' in plain
+    assert '命令' in plain
+    assert f'waygate unblock --state-dir {shlex.quote(str(state_dir))}' in plain
+    assert '可选返工' in plain
+
+
+def test_format_stop_guidance_keeps_blocked_guidance_plain_when_color_disabled(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    guidance = rrc_controller_module.format_stop_guidance(
+        {
+            'status': 'blocked',
+            'currentStep': 'EXECUTE_UNIT',
+            'blockedReason': 'Missing /tmp/prod evidence for AC-1.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+        },
+        state_dir=state_dir,
+        color_enabled=False,
+    )
+
+    assert '\x1b[' not in guidance
+    assert '原因：Missing /tmp/prod evidence for AC-1.' in guidance
+    assert f'命令：waygate unblock --state-dir {shlex.quote(str(state_dir))}' in guidance
+
+
+def test_annotation_runtime_blocker_guidance_does_not_request_requirements_revision(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    state = {
+        'status': 'blocked',
+        'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+        'blockedReason': (
+            "requirements_annotation annotation pass failed before human gate: "
+            "unexpected argument '--ask-for-approval'"
+        ),
+        'blockedContext': {'category': 'annotation_runtime', 'source': 'annotation_agent'},
+    }
+
+    guidance = rrc_controller_module.format_stop_guidance(
+        state,
+        state_dir=state_dir,
+        color_enabled=False,
+    )
+
+    assert rrc_controller_module.classify_blocked_reason(state['blockedReason']) == 'annotation_runtime'
+    assert 'annotation runtime' in guidance.lower()
+    assert f'waygate unblock --state-dir {shlex.quote(str(state_dir))}' in guidance
+    assert 'waygate revise --gate requirements' not in guidance
+    assert 'Requirements/Acceptance Criteria 合同问题' not in guidance
+
+
+def test_drive_color_always_colors_blocked_guidance(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('drive', '--state-dir', str(state_dir), '--color', 'always')
+
+    assert result.returncode == 0, result.stderr
+    assert '\x1b[' in result.stdout
+    assert '\033[31m原因\033[0m：' in result.stdout
+    assert '\033[33m下一步\033[0m：' in result.stdout
+    assert '\033[36m命令\033[0m：' in result.stdout
+    plain = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout)
+    assert f'waygate unblock --state-dir {shlex.quote(str(state_dir))}' in plain
+
+
+def test_drive_color_never_keeps_blocked_guidance_plain(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('drive', '--state-dir', str(state_dir), '--color', 'never')
+
+    assert result.returncode == 0, result.stderr
+    assert '\x1b[' not in result.stdout
+    assert '原因：Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.' in result.stdout
+    assert f'命令：waygate unblock --state-dir {shlex.quote(str(state_dir))}' in result.stdout
+
+
+def test_unblock_requires_reason(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Missing PRODUCTION_API_BASE_URL for production_readonly verification.',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('unblock', '--state-dir', str(state_dir))
+
+    assert result.returncode == 2
+    assert '--reason' in result.stderr
+
+
+def test_unblock_allows_environment_blocked_state_and_preserves_approvals(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req',
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:plan',
+            'unitPlanAcceptedBy': 'human',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc(
+        'unblock',
+        '--state-dir',
+        str(state_dir),
+        '--reason',
+        'exported production readonly URLs',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'status=unblocked' in result.stdout
+    assert 'nextAction=run_builder' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state.get('blockedReason') is None
+    assert 'blockedContext' not in state
+    assert state['requirementsAcceptedHash'] == 'sha256:req'
+    assert state['unitPlanAcceptedHash'] == 'sha256:plan'
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert any(event['type'] == 'blocked_state_unblocked' for event in events)
+
+
+def test_unblock_ignores_same_builder_blocked_artifact_until_new_run(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    blocker = 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'PLAN_APPROVED',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    unit_dir = state_dir / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / 'builder-summary.json').write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {
+                    'status': 'blocked',
+                    'summary': blocker,
+                    'run_id': 'builder-run-1',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+    blocked = controller.get_status()
+    assert blocked['status'] == 'blocked'
+    assert blocked['blockedContext']['run_id'] == 'builder-run-1'
+
+    controller.unblock_blocked_workflow(reason='exported production readonly URLs')
+    state = controller.get_status()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state.get('blockedReason') is None
+    assert state.get('nextAction') == 'run_builder'
+
+
+def test_unit_plan_approval_ignores_previous_builder_blocked_artifact(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    blocker = 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req',
+            'unitPlanAccepted': False,
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n- AC-1: Delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    unit_plan_path = approvals_dir / 'unit-plan.md'
+    _write_valid_unit_plan(unit_plan_path)
+    approve_gate_file(unit_plan_path, actor='human')
+    unit_dir = state_dir / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / 'builder-summary.json').write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {
+                    'status': 'blocked',
+                    'summary': blocker,
+                    'run_id': 'builder-run-before-revision',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    approved = controller.run_once()
+    state = controller.get_status()
+
+    assert approved['currentStep'] == 'PLAN_APPROVED'
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'PLAN_APPROVED'
+    assert state.get('blockedReason') is None
+    assert state.get('nextAction') == 'run_builder'
+
+
+def test_unblock_rejects_unit_plan_contract_blocked_state(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Approved Unit Plan requires a missing CLI Proxy API contract.',
+            'blockedContext': {'category': 'unit_plan_contract', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc(
+        'unblock',
+        '--state-dir',
+        str(state_dir),
+        '--reason',
+        'checked locally',
+    )
+
+    assert result.returncode == 1
+    assert 'blocked reason is not an environment/external dependency blocker' in result.stderr
+    assert 'waygate revise --gate unit-plan' in result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['status'] == 'blocked'
+
+
+def test_builder_agent_blocked_persists_official_controller_blocked_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from workflow_controller.rrc_real_runtime import AgentRunResult
+
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    prompt_path.write_text('Implement current unit.', encoding='utf-8')
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    blocker = 'Missing PRODUCTION_API_BASE_URL for production_readonly verification.'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'PLAN_APPROVED',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'promptPath': str(prompt_path),
+            'agentRunner': 'tmux-codex',
+            'tmuxTarget': '2.0',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    def fake_run_agent_for_current_step(*_args, **_kwargs) -> AgentRunResult:
+        return AgentRunResult(
+            command=['tmux', 'send-keys', '-t', '2.0', 'C-m'],
+            returncode=1,
+            stdout='',
+            stderr='',
+            backend='tmux-codex',
+            status='blocked',
+            run_dir=str(state_dir / 'artifacts' / 'unit-01' / 'runs' / 'builder-run'),
+            done_payload={'status': 'blocked', 'summary': blocker, 'run_id': 'builder-run'},
+            runner_metadata={'backend': 'tmux-codex'},
+        )
+
+    monkeypatch.setattr(
+        'workflow_controller.steps.builder.run_agent_for_current_step',
+        fake_run_agent_for_current_step,
+    )
+
+    state = controller.run_once()
+
+    assert state['status'] == 'blocked'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state['blockedReason'] == blocker
+    assert state['blockedContext']['category'] == 'environment'
+    assert state['blockedContext']['source'] == 'builder_agent'
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert any(event['type'] == 'builder_agent_blocked' for event in events)
+
+
+def test_status_reconciles_legacy_builder_summary_blocked_to_controller_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    blocker = 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'UI_DESIGN_DONE',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:plan',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    unit_dir = state_dir / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / 'builder-summary.json').write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {
+                    'status': 'blocked',
+                    'summary': blocker,
+                    'run_id': 'builder-run',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    state = controller.get_status()
+
+    assert state['status'] == 'blocked'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state['blockedReason'] == blocker
+    assert state['blockedContext']['category'] == 'environment'
+    assert state.get('nextAction') is None
+    persisted = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert persisted['status'] == 'blocked'
+    result = run_rrc('status', '--state-dir', str(state_dir))
+    assert 'waygate unblock --state-dir' in result.stdout
+    assert 'waygate revise --gate unit-plan' in result.stdout
+    assert 'waygate revise --gate requirements' in result.stdout
+
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n- AC-1: Delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Human Confirmation\n\n'
+        'Status: approved\n'
+        'Confirmed by: human\n'
+        'Content hash: sha256:plan\n',
+        encoding='utf-8',
+    )
+
+    def fake_run_agent_backend(request):
+        _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    controller.revise_human_gate('unit-plan')
+
+    revised = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert revised['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert revised['requirementsAccepted'] is True
+
+
 def test_run_stops_on_existing_recoverable_agent_wait_until_retry(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     workspace = tmp_path / 'workspace'
@@ -7652,6 +8244,14 @@ def test_unit_plan_approval_rejects_active_journey_without_mapped_test_case(tmp_
       "name": "Delivery unit",
       "passes": false,
       "workflow_validation_level": "closure",
+      "final_acceptance_walkthrough": {
+        "inspection": {
+          "surface_kind": "browser",
+          "entrypoint": "/delivery",
+          "manual_steps": ["Open /delivery and complete the delivery happy path"],
+          "expected_observations": ["delivery confirmation is visible"]
+        }
+      },
       "test_cases": [
         {
           "id": "TC-AC1-E2E",
@@ -7757,6 +8357,14 @@ def test_unit_plan_approval_enriches_journey_contract_from_mapped_test_case(tmp_
       "name": "Delivery unit",
       "passes": false,
       "workflow_validation_level": "closure",
+      "final_acceptance_walkthrough": {
+        "inspection": {
+          "surface_kind": "browser",
+          "entrypoint": "/delivery",
+          "manual_steps": ["Open /delivery and complete the delivery happy path"],
+          "expected_observations": ["delivery confirmation is visible"]
+        }
+      },
       "test_cases": [
         {
           "id": "TC-AC1-E2E",
@@ -7868,6 +8476,14 @@ def test_unit_plan_approval_accepts_covers_journeys_mapping(tmp_path: Path) -> N
       "name": "Delivery unit",
       "passes": false,
       "workflow_validation_level": "closure",
+      "final_acceptance_walkthrough": {
+        "inspection": {
+          "surface_kind": "browser",
+          "entrypoint": "/delivery",
+          "manual_steps": ["Open /delivery and complete the delivery happy path"],
+          "expected_observations": ["delivery confirmation is visible"]
+        }
+      },
       "test_cases": [
         {
           "id": "TC-AC1-E2E",
@@ -7974,6 +8590,14 @@ def test_unit_plan_approval_accepts_backticked_journey_contract_ids(tmp_path: Pa
       "name": "Delivery unit",
       "passes": false,
       "workflow_validation_level": "closure",
+      "final_acceptance_walkthrough": {
+        "inspection": {
+          "surface_kind": "browser",
+          "entrypoint": "/delivery",
+          "manual_steps": ["Open /delivery and complete the delivery happy path"],
+          "expected_observations": ["delivery confirmation is visible"]
+        }
+      },
       "test_cases": [
         {
           "id": "TC-AC1-E2E",
@@ -8081,6 +8705,14 @@ def test_unit_plan_approval_accepts_journey_refs_mapping(tmp_path: Path) -> None
       "name": "Delivery unit",
       "passes": false,
       "workflow_validation_level": "closure",
+      "final_acceptance_walkthrough": {
+        "inspection": {
+          "surface_kind": "browser",
+          "entrypoint": "/delivery",
+          "manual_steps": ["Open /delivery and complete the delivery happy path"],
+          "expected_observations": ["delivery confirmation is visible"]
+        }
+      },
       "test_cases": [
         {
           "id": "TC-AC1-E2E",
@@ -9358,6 +9990,9 @@ def test_approved_bug_fix_gate_runs_bug_fix_and_regression_verification(tmp_path
     assert (bug_fix_dir / 'bug-fix-summary.json').exists()
     root_cause = json.loads((bug_fix_dir / 'root-cause.json').read_text(encoding='utf-8'))
     assert root_cause['route'] == 'bug_fix'
+
+    state = controller.run_once()
+    assert state['currentStep'] == 'FINAL_WALKTHROUGH_PREPARE'
 
     state = controller.run_once()
     assert state['currentStep'] == 'WAITING_FINAL_ACCEPTANCE'

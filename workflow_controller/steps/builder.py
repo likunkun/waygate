@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from workflow_controller.annotation_agents import (
+    run_verification_assist_case,
+    verification_assist_spec_from_case,
+)
 from workflow_controller.evidence_policy import (
     MOCK_ENVIRONMENT_KINDS,
     REAL_E2E_ENVIRONMENT_KINDS,
@@ -747,13 +751,24 @@ def run_verifier(
 
     workspace_path = state.get('executionWorkspacePath') or state.get('workspacePath')
     commands = verification_commands_for_state(state)
-    if workspace_path and commands:
+    has_verification_assist_cases = _has_verification_assist_cases(state)
+    if workspace_path and (commands or has_verification_assist_cases):
         unit_dir.mkdir(parents=True, exist_ok=True)
         workspace_dir = Path(workspace_path)
-        results = run_verification_commands(
-            state,
-            workspace_dir,
-            progress_callback=progress_callback,
+        results = (
+            run_verification_commands(
+                state,
+                workspace_dir,
+                progress_callback=progress_callback,
+            )
+            if commands
+            else []
+        )
+        assist_results = _run_verification_assist_cases(
+            state=state,
+            unit_dir=unit_dir,
+            workspace_dir=workspace_dir,
+            evidence_refs=['green-test.txt', 'verification.json'],
         )
         issues = [
             _issue('verification_command_failed', f"Command failed: {result['command']}")
@@ -765,13 +780,15 @@ def run_verifier(
             results=results,
             evidence_files=['green-test.txt', 'verification.json'],
             workspace_dir=workspace_dir,
+            assist_results=assist_results,
         )
         issues.extend(_evidence_row_policy_issues(evidence_rows))
+        issues.extend(_agent_assisted_case_policy_issues(evidence_rows))
         combined_stdout = '\n'.join(result['stdout'] for result in results if result.get('stdout'))
         combined_stderr = '\n'.join(result['stderr'] for result in results if result.get('stderr'))
         evidence = 'PASSED\n' if not issues else 'FAILED\n'
         (unit_dir / 'green-test.txt').write_text(
-            evidence + combined_stdout + combined_stderr,
+            evidence + combined_stdout + combined_stderr + _assist_green_test_summary(assist_results),
             encoding='utf-8',
         )
         verification_payload = {
@@ -780,6 +797,7 @@ def run_verifier(
             'issues': issues,
             'commands': commands,
             'results': results,
+            'agent_assisted_results': list(assist_results.values()),
             'evidence_files': ['green-test.txt'],
             'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
             'evidence_rows': evidence_rows,
@@ -839,12 +857,84 @@ def run_verifier(
     return StepResult(summary='verification passed' if not issues else 'verification failed', outputs=['verification.json'])
 
 
+def _has_verification_assist_cases(state: dict[str, Any]) -> bool:
+    unit = _find_unit(state, state.get('currentUnitId'))
+    return any(
+        verification_assist_spec_from_case(case) is not None
+        for case in _unit_test_cases(unit)
+        if isinstance(case, dict)
+    )
+
+
+def _run_verification_assist_cases(
+    *,
+    state: dict[str, Any],
+    unit_dir: Path,
+    workspace_dir: Path,
+    evidence_refs: list[str],
+) -> dict[str, dict[str, Any]]:
+    unit_id = str(state.get('currentUnitId') or 'unknown-unit')
+    unit = _find_unit(state, unit_id)
+    artifacts_dir = unit_dir.parent
+    results: dict[str, dict[str, Any]] = {}
+    for case in _unit_test_cases(unit):
+        if not isinstance(case, dict) or verification_assist_spec_from_case(case) is None:
+            continue
+        case_id = _optional_str(case.get('id') or case.get('name')) or 'unknown-case'
+        try:
+            run_result = run_verification_assist_case(
+                state,
+                case,
+                unit_id=unit_id,
+                state_dir=artifacts_dir.parent,
+                artifacts_dir=artifacts_dir,
+                workspace_dir=workspace_dir,
+                unit_dir=unit_dir,
+                evidence_refs=evidence_refs,
+            )
+            payload = dict(run_result.payload)
+            payload['assist_artifact_path'] = str(run_result.artifact_path)
+            payload['prompt_path'] = str(run_result.prompt_path)
+            payload['returncode'] = run_result.returncode
+            payload['runner_metadata'] = run_result.runner_metadata
+        except Exception as exc:
+            payload = {
+                'status': 'blocked',
+                'agent_assisted_judgement': {
+                    'status': 'blocked',
+                    'summary': f'verification-assist case failed before artifact normalization: {exc}',
+                },
+                'risk_annotations': [
+                    {
+                        'severity': 'high',
+                        'category': 'verification_assist_unavailable',
+                        'note': str(exc),
+                    }
+                ],
+                'structured_evidence_refs': [],
+                'human_review_required': True,
+                'assist_artifact_path': None,
+            }
+        results[case_id] = payload
+    return results
+
+
+def _assist_green_test_summary(assist_results: dict[str, dict[str, Any]]) -> str:
+    if not assist_results:
+        return ''
+    lines = ['\nAgent-assisted verification cases:']
+    for case_id, payload in assist_results.items():
+        lines.append(f'- {case_id}: {payload.get("status") or "blocked"}')
+    return '\n'.join(lines) + '\n'
+
+
 def _verification_evidence_rows(
     *,
     state: dict[str, Any],
     results: list[dict[str, Any]],
     evidence_files: list[str],
     workspace_dir: Path | None,
+    assist_results: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     unit_id = str(state.get('currentUnitId') or 'unknown-unit')
     unit = _find_unit(state, unit_id)
@@ -860,6 +950,7 @@ def _verification_evidence_rows(
     for case in test_cases:
         command = _optional_str(case.get('command'))
         result_index, result = _matching_verification_result(command, results)
+        case_id = _optional_str(case.get('id') or case.get('name')) or 'unknown-case'
         rows.append(_evidence_row_from_test_case(
             unit_id=unit_id,
             case=case,
@@ -868,6 +959,7 @@ def _verification_evidence_rows(
             result=result,
             evidence_files=evidence_files,
             workspace_dir=workspace_dir,
+            assist_result=(assist_results or {}).get(case_id),
         ))
     return rows
 
@@ -881,6 +973,7 @@ def _evidence_row_from_test_case(
     result: dict[str, Any] | None,
     evidence_files: list[str],
     workspace_dir: Path | None,
+    assist_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     mocked_routes = _dedupe_strings([
         *case_declared_mocked_routes(case),
@@ -907,16 +1000,21 @@ def _evidence_row_from_test_case(
         )
     environment_kind = case_environment_kind(case, result=result)
     requires_real_e2e = case_requires_real_e2e(case)
-    status = _evidence_status(
-        command,
-        result,
-        requires_real_e2e=requires_real_e2e,
-        environment_kind=environment_kind,
-        uses_core_api_mock=uses_core_api_mock,
-        runtime_fields=runtime_fields,
-        prototype_visual_evidence_issue=prototype_visual_evidence_issue,
+    status = (
+        _agent_assisted_case_status(assist_result)
+        if verification_assist_spec_from_case(case) is not None
+        else _evidence_status(
+            command,
+            result,
+            requires_real_e2e=requires_real_e2e,
+            environment_kind=environment_kind,
+            uses_core_api_mock=uses_core_api_mock,
+            runtime_fields=runtime_fields,
+            prototype_visual_evidence_issue=prototype_visual_evidence_issue,
+        )
     )
-    return {
+    artifact_refs = _artifact_refs_for_evidence_row(command, result, evidence_files)
+    row = {
         'unit_id': unit_id,
         'test_case_id': _optional_str(case.get('id') or case.get('name')),
         'acceptance_criterion': _optional_str(case.get('acceptance_criterion') or case.get('acceptanceCriterion')),
@@ -928,7 +1026,7 @@ def _evidence_row_from_test_case(
         'status': status,
         'result_index': result_index,
         'returncode': result.get('returncode') if isinstance(result, dict) else None,
-        'artifact_refs': _artifact_refs_for_evidence_row(command, result, evidence_files),
+        'artifact_refs': artifact_refs,
         'golden_path': case.get('golden_path') is True,
         'environment_kind': environment_kind,
         'real_entrypoint': case_real_entrypoint(case, command),
@@ -938,6 +1036,11 @@ def _evidence_row_from_test_case(
         'visual_evidence_issue': prototype_visual_evidence_issue,
         **runtime_fields,
     }
+    if _case_is_descriptive_evidence(case):
+        row.update(_descriptive_evidence_fields(case, result, artifact_refs))
+    if verification_assist_spec_from_case(case) is not None:
+        row.update(_agent_assisted_case_fields(case, assist_result, artifact_refs))
+    return row
 
 
 def _evidence_row_from_command_result(
@@ -1052,6 +1155,166 @@ def _evidence_row_policy_issues(rows: list[dict[str, Any]]) -> list[dict[str, st
                 )
             )
     return issues
+
+
+def _agent_assisted_case_policy_issues(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for row in rows:
+        if row.get('evidence_type') != 'agent_assisted_case':
+            continue
+        status = str(row.get('status') or '').strip().lower()
+        if status not in {'failed', 'blocked'}:
+            continue
+        issues.append(
+            _issue(
+                'agent_assisted_verification_failed',
+                'Agent-assisted verification case '
+                f"{row.get('test_case_id') or row.get('acceptance_criterion') or 'unknown-test'} "
+                f'ended with status {status}',
+            )
+        )
+    return issues
+
+
+def _case_is_descriptive_evidence(case: dict[str, Any]) -> bool:
+    raw_type = _first_present(
+        case,
+        'evidence_type',
+        'evidenceType',
+        'evidence_kind',
+        'evidenceKind',
+        'verification_type',
+        'verificationType',
+        'row_type',
+        'rowType',
+    )
+    normalized_type = str(raw_type or '').strip().lower().replace('-', '_')
+    if normalized_type in {'descriptive', 'descriptive_command', 'agent_assisted', 'agent_assisted_command'}:
+        return True
+    return bool(
+        _optional_str(case.get('description'))
+        and (
+            _first_present(case, 'agent_assisted_judgement', 'agentAssistedJudgement') is not None
+            or _first_present(case, 'risk_annotations', 'riskAnnotations') is not None
+            or _first_present(case, 'structured_evidence_refs', 'structuredEvidenceRefs', 'evidence_refs', 'evidenceRefs') is not None
+        )
+    )
+
+
+def _descriptive_evidence_fields(
+    case: dict[str, Any],
+    result: dict[str, Any] | None,
+    artifact_refs: list[str],
+) -> dict[str, Any]:
+    structured_refs = _string_list(
+        _first_present(case, 'structured_evidence_refs', 'structuredEvidenceRefs', 'evidence_refs', 'evidenceRefs')
+    )
+    return {
+        'evidence_type': 'descriptive_command',
+        'description': _optional_str(case.get('description')) or _optional_str(case.get('expected')) or '',
+        'agent_assisted_judgement': _agent_assisted_judgement(case, result),
+        'risk_annotations': _jsonable_list(_first_present(case, 'risk_annotations', 'riskAnnotations')),
+        'structured_evidence_refs': _dedupe_strings(structured_refs or artifact_refs),
+        'human_review_required': True,
+    }
+
+
+def _agent_assisted_case_fields(
+    case: dict[str, Any],
+    assist_result: dict[str, Any] | None,
+    artifact_refs: list[str],
+) -> dict[str, Any]:
+    spec = verification_assist_spec_from_case(case) or {}
+    assist_result = assist_result or {}
+    assist_artifact_path = _optional_str(assist_result.get('assist_artifact_path') or assist_result.get('artifact_path'))
+    structured_refs = _string_list(
+        assist_result.get('structured_evidence_refs')
+        or assist_result.get('structuredEvidenceRefs')
+        or spec.get('structured_evidence_refs')
+        or spec.get('structuredEvidenceRefs')
+    )
+    if not structured_refs and assist_artifact_path:
+        structured_refs = [assist_artifact_path]
+    human_review_required = assist_result.get('human_review_required')
+    if human_review_required is None:
+        human_review_required = assist_result.get('humanReviewRequired')
+    if human_review_required is None:
+        human_review_required = spec.get('human_review_required')
+    if human_review_required is None:
+        human_review_required = spec.get('humanReviewRequired')
+    if human_review_required is None:
+        human_review_required = True
+    refs = _dedupe_strings([*artifact_refs, *structured_refs, *([assist_artifact_path] if assist_artifact_path else [])])
+    return {
+        'evidence_type': 'agent_assisted_case',
+        'description': _optional_str(spec.get('description') or case.get('description')) or '',
+        'agent_assisted_judgement': _agent_assisted_case_judgement(assist_result),
+        'risk_annotations': _jsonable_list(assist_result.get('risk_annotations') or assist_result.get('riskAnnotations')),
+        'structured_evidence_refs': _dedupe_strings(structured_refs),
+        'human_review_required': bool(human_review_required),
+        'assist_artifact_path': assist_artifact_path,
+        'artifact_refs': refs,
+    }
+
+
+def _agent_assisted_case_status(assist_result: dict[str, Any] | None) -> str:
+    if not isinstance(assist_result, dict):
+        return 'blocked'
+    status = str(assist_result.get('status') or '').strip().lower()
+    if status in {'passed', 'failed', 'blocked', 'needs_human_review'}:
+        return status
+    judgement = assist_result.get('agent_assisted_judgement')
+    if isinstance(judgement, dict):
+        status = str(judgement.get('status') or '').strip().lower()
+        if status in {'passed', 'failed', 'blocked', 'needs_human_review'}:
+            return status
+    return 'needs_human_review'
+
+
+def _agent_assisted_case_judgement(assist_result: dict[str, Any]) -> dict[str, Any]:
+    raw = (
+        assist_result.get('agent_assisted_judgement')
+        or assist_result.get('agentAssistedJudgement')
+        or assist_result.get('judgement')
+        or assist_result.get('judgment')
+    )
+    if isinstance(raw, dict):
+        return raw
+    text = _optional_str(raw)
+    if text:
+        return {'status': _agent_assisted_case_status(assist_result), 'summary': text}
+    status = _agent_assisted_case_status(assist_result)
+    return {'status': status, 'summary': 'Agent-assisted judgement was not provided.'}
+
+
+def _agent_assisted_judgement(case: dict[str, Any], result: dict[str, Any] | None) -> dict[str, Any]:
+    raw = _first_present(case, 'agent_assisted_judgement', 'agentAssistedJudgement')
+    if raw is None and isinstance(result, dict):
+        raw = _first_present(result, 'agent_assisted_judgement', 'agentAssistedJudgement')
+    if isinstance(raw, dict):
+        return raw
+    text = _optional_str(raw)
+    if text:
+        return {'summary': text}
+    return {'status': 'not_provided', 'summary': 'Agent-assisted judgement was not provided.'}
+
+
+def _jsonable_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if item is not None and item != '']
+    if isinstance(value, tuple) or isinstance(value, set):
+        return [item for item in value if item is not None and item != '']
+    text = _optional_str(value)
+    return [text] if text else []
+
+
+def _first_present(payload: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in payload:
+            return payload.get(key)
+    return None
 
 
 def _runtime_error_count(payload: dict[str, Any]) -> int:

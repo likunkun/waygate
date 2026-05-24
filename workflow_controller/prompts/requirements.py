@@ -84,24 +84,48 @@ Controller 会记录本轮 requirements revision diff artifact；请解决这些
 - 最终 `## 4.9` 仍不能接受空泛 `暂无/不清楚`；如果写“用户确认”或“已验证”，`## 4.8` 必须有对应问答、核对方式和验证结论。
 """
     if requirements_spec:
+        source_metadata = requirements_spec.get('sourceMetadata') if isinstance(requirements_spec.get('sourceMetadata'), dict) else None
+        source_metadata_lines = ''
+        if source_metadata:
+            source_metadata_lines = '\n'.join(
+                f"- Source metadata {key}: `{value}`" for key, value in sorted(source_metadata.items())
+            )
+        conversion_artifacts = requirements_spec.get('conversionArtifacts') if isinstance(requirements_spec.get('conversionArtifacts'), dict) else None
+        conversion_artifact_lines = ''
+        spec_source_instruction = 'Read the supported requirements spec file at the path above as a requirements fact source.'
+        clarification_spec_source = 'Read the supported requirements spec or its conversion artifacts before writing the Requirements Gate.'
+        if requirements_spec.get('sourceType') == 'waygate-markdown':
+            spec_source_instruction = 'Read the Waygate Markdown spec file at the path above as a requirements fact source.'
+            clarification_spec_source = 'Read the Waygate Markdown spec file before writing the Requirements Gate.'
+        if conversion_artifacts:
+            conversion_artifact_lines = '\n'.join(
+                f"- Conversion artifact {key}: `{value}`" for key, value in sorted(conversion_artifacts.items())
+            )
+            spec_source_instruction = (
+                'Read the conversion artifacts above as requirements fact sources, especially normalizedRequirements, '
+                'sourceMap, importSummary, and validationReport. Do not re-parse or guess the external source from the original path.'
+            )
+            clarification_spec_source = 'Read the supported requirements spec conversion artifacts before writing the Requirements Gate.'
         spec_section = f"""
 Supported Requirements Spec:
 - Path: `{requirements_spec.get('path')}`
 - Hash: `{requirements_spec.get('hash')}`
 - Source type: `{requirements_spec.get('sourceType')}`
 - Imported at: `{requirements_spec.get('importedAt')}`
+{source_metadata_lines}
+{conversion_artifact_lines}
 
-Read the Waygate Markdown spec file at the path above as a requirements fact source.
+{spec_source_instruction}
 Because a supported spec is available, do not perform the mandatory agent-side clarification before drafting.
 Instead, directly expand Requirements, AO, AC, Journey, Design/Architecture, and Test Strategy matrices from the spec and controller context.
 If the spec has ambiguity, record conservative assumptions and review risks in `## 4.8 已澄清事项、关键假设与待确认风险`; only ask a blocking question when no safe assumption exists.
 """
         clarification_section = """Spec-backed requirements drafting:
-- Read the Waygate Markdown spec file before writing the Requirements Gate.
+- {clarification_spec_source}
 - Do not ask mandatory pre-draft clarification questions when the supported spec provides enough facts.
 - Directly expand Requirements, AO, AC, Journey, Design/Architecture, and Test Strategy matrices from the spec.
 - Record assumptions and review risks in `## 4.8 已澄清事项、关键假设与待确认风险`.
-"""
+""".format(clarification_spec_source=clarification_spec_source)
     elif revision_feedback:
         clarification_section = """Requirements revision drafting:
 - 这是 Requirements 预检或人工反馈后的修订，不是首次 requirements intake。

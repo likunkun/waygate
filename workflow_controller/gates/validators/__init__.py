@@ -76,7 +76,32 @@ VERIFICATION_EVIDENCE_ROW_FIELDS = {
     'screenshot_refs',
     'visual_evidence_refs',
 }
-VERIFICATION_EVIDENCE_ROW_STATUSES = {'passed', 'failed', 'missing', 'manual', 'invalid'}
+DESCRIPTIVE_EVIDENCE_ROW_FIELDS = {
+    'evidence_type',
+    'description',
+    'agent_assisted_judgement',
+    'risk_annotations',
+    'structured_evidence_refs',
+    'human_review_required',
+}
+AGENT_ASSISTED_CASE_ROW_FIELDS = {
+    'evidence_type',
+    'description',
+    'agent_assisted_judgement',
+    'risk_annotations',
+    'structured_evidence_refs',
+    'human_review_required',
+    'assist_artifact_path',
+}
+VERIFICATION_EVIDENCE_ROW_STATUSES = {
+    'passed',
+    'failed',
+    'missing',
+    'manual',
+    'invalid',
+    'blocked',
+    'needs_human_review',
+}
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +168,57 @@ def validate_verification_evidence_schema(verification_path: Path) -> dict[str, 
             raise ValueError(
                 f'Verification evidence row {index} visual_evidence_refs must be an object: {verification_path}'
             )
+        if _is_agent_assisted_case_row(row):
+            missing_agent_fields = sorted(AGENT_ASSISTED_CASE_ROW_FIELDS - set(row))
+            if missing_agent_fields:
+                raise ValueError(
+                    f'Verification agent-assisted evidence row {index} missing field(s) '
+                    f'{missing_agent_fields}: {verification_path}'
+                )
+            if row.get('evidence_type') != 'agent_assisted_case':
+                raise ValueError(f'Verification agent-assisted evidence row {index} has invalid evidence_type: {verification_path}')
+            _validate_agent_assisted_fields(row, index, verification_path, row_label='agent-assisted')
+            if row.get('assist_artifact_path') is not None and not isinstance(row.get('assist_artifact_path'), str):
+                raise ValueError(
+                    f'Verification agent-assisted evidence row {index} assist_artifact_path must be a string or null: {verification_path}'
+                )
+        elif _is_descriptive_evidence_row(row):
+            missing_descriptive_fields = sorted(DESCRIPTIVE_EVIDENCE_ROW_FIELDS - set(row))
+            if missing_descriptive_fields:
+                raise ValueError(
+                    f'Verification descriptive evidence row {index} missing field(s) '
+                    f'{missing_descriptive_fields}: {verification_path}'
+                )
+            if row.get('evidence_type') != 'descriptive_command':
+                raise ValueError(f'Verification descriptive evidence row {index} has invalid evidence_type: {verification_path}')
+            _validate_agent_assisted_fields(row, index, verification_path, row_label='descriptive')
     return verification
+
+
+def _is_descriptive_evidence_row(row: dict[str, Any]) -> bool:
+    if row.get('evidence_type') == 'agent_assisted_case':
+        return False
+    if row.get('evidence_type') == 'descriptive_command':
+        return True
+    return any(field in row for field in DESCRIPTIVE_EVIDENCE_ROW_FIELDS)
+
+
+def _is_agent_assisted_case_row(row: dict[str, Any]) -> bool:
+    return row.get('evidence_type') == 'agent_assisted_case'
+
+
+def _validate_agent_assisted_fields(row: dict[str, Any], index: int, verification_path: Path, *, row_label: str) -> None:
+    prefix = f'Verification {row_label} evidence row {index}'
+    if not isinstance(row.get('description'), str):
+        raise ValueError(f'{prefix} description must be a string: {verification_path}')
+    if not isinstance(row.get('agent_assisted_judgement'), dict):
+        raise ValueError(f'{prefix} agent_assisted_judgement must be an object: {verification_path}')
+    if not isinstance(row.get('risk_annotations'), list):
+        raise ValueError(f'{prefix} risk_annotations must be a list: {verification_path}')
+    if not isinstance(row.get('structured_evidence_refs'), list):
+        raise ValueError(f'{prefix} structured_evidence_refs must be a list: {verification_path}')
+    if not isinstance(row.get('human_review_required'), bool):
+        raise ValueError(f'{prefix} human_review_required must be a boolean: {verification_path}')
 
 
 def validate_simplifier_result(result_path: Path) -> dict[str, Any]:
@@ -557,6 +632,58 @@ def validate_unit_plan_golden_path(state: dict[str, Any]) -> None:
         raise ValueError('unit plan golden_path coverage is incomplete: ' + '; '.join(missing))
 
 
+def validate_unit_plan_final_acceptance_walkthrough(state: dict[str, Any]) -> None:
+    issues: list[str] = []
+    workspace_dir = _state_workspace_dir(state)
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict):
+            continue
+        launch = _unit_final_acceptance_launch(unit)
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        if launch is not None:
+            issues.extend(
+                f'unit {unit_id} {issue}'
+                for issue in _final_acceptance_launch_issues(launch, workspace_dir)
+            )
+        inspection = _unit_final_acceptance_inspection(unit)
+        if _unit_requires_final_acceptance_inspection(unit, state) and inspection is None:
+            issues.append(
+                f'unit {unit_id} final_acceptance_walkthrough.inspection.entrypoint is required '
+                'for closure/Web/UI units'
+            )
+            continue
+        if inspection is not None:
+            issues.extend(
+                f'unit {unit_id} {issue}'
+                for issue in _final_acceptance_inspection_issues(inspection)
+            )
+    if issues:
+        raise ValueError('unit plan final_acceptance_walkthrough is invalid: ' + '; '.join(issues))
+
+
+def validate_final_acceptance_manual_observation_record(gate_path: Path) -> None:
+    content = gate_body(gate_path.read_text(encoding='utf-8'))
+    section = _markdown_section(content, '人工系统观察记录（Required）')
+    if not section.strip():
+        return
+    missing = [
+        label
+        for label in (
+            'Observed entrypoint',
+            'Actual observation',
+            'Data/account/fixture',
+            'Issues or evidence path',
+        )
+        if not _observation_record_field_value(section, label)
+    ]
+    if missing:
+        raise ValueError(
+            '人工系统观察记录（Required） is incomplete: '
+            + ', '.join(missing)
+            + ' must be filled after opening the Agent-provided entrypoint'
+        )
+
+
 
 def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
     missing: list[str] = []
@@ -578,6 +705,58 @@ def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
                 )
     if missing:
         raise ValueError('unit plan verification_env is incomplete: ' + '; '.join(missing))
+
+
+def validate_unit_plan_verification_assist_contract(
+    state: dict[str, Any],
+    *,
+    artifacts_dir: Path,
+) -> None:
+    from workflow_controller.annotation_agents import (
+        normalize_verification_assist_config,
+        verification_assist_spec_from_case,
+    )
+
+    issues: list[str] = []
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict) or bool(unit.get('passes')):
+            continue
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        for case in _unit_test_cases(unit):
+            if not isinstance(case, dict):
+                continue
+            spec = verification_assist_spec_from_case(case)
+            if spec is None:
+                continue
+            case_id = str(case.get('id') or case.get('name') or 'unknown-test')
+            if str(case.get('command') or '').strip():
+                issues.append(
+                    f'unit {unit_id} test case {case_id} must use either command or verification_assist; '
+                    'use evidence_type=descriptive_command when a command still runs and Agent only adds context'
+                )
+            if not isinstance(spec, dict):
+                issues.append(f'unit {unit_id} test case {case_id} verification_assist must be an object')
+                continue
+            if not str(spec.get('description') or '').strip():
+                issues.append(f'unit {unit_id} test case {case_id} verification_assist.description is required')
+            expected = spec.get('expected')
+            if isinstance(expected, list):
+                has_expected = any(str(item).strip() for item in expected)
+            else:
+                has_expected = bool(str(expected or '').strip())
+            if not has_expected:
+                issues.append(f'unit {unit_id} test case {case_id} verification_assist.expected is required')
+            try:
+                config = normalize_verification_assist_config(state, case, artifacts_dir=artifacts_dir)
+            except ValueError as exc:
+                issues.append(f'unit {unit_id} test case {case_id} verification_assist agent config is invalid: {exc}')
+                continue
+            if not config.enabled or not config.command:
+                issues.append(
+                    f'unit {unit_id} test case {case_id} has no enabled verification-assist agent config'
+                )
+    if issues:
+        raise ValueError('unit plan verification_assist contract is invalid: ' + '; '.join(issues))
 
 
 def validate_unit_plan_real_e2e_evidence_policy(
@@ -2517,6 +2696,261 @@ def _unit_requires_golden_path(unit: dict[str, Any]) -> bool:
     return 'playwright' in commands or 'e2e' in commands
 
 
+_FINAL_WALKTHROUGH_LAUNCH_MODES = {'agent_start', 'manual_only', 'not_required'}
+_FINAL_WALKTHROUGH_SURFACE_KINDS = {'browser', 'api', 'cli', 'artifact'}
+_FINAL_WALKTHROUGH_READINESS_KEYS = ('ready_url', 'ready_command', 'ready_output_contains')
+_ENV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+_SECRET_KEY_RE = re.compile(r'(?:password|passwd|token|secret|api[_-]?key|signature|database[_-]?url|db[_-]?url)', re.IGNORECASE)
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r'(?i)(?:^|\s)(?:[A-Za-z_][A-Za-z0-9_]*_)?'
+    r'(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY|APIKEY|SIGNATURE|DATABASE_URL|DB_URL)\s*=\s*["\']?[^"\'\s]+'
+)
+_FORBIDDEN_ENV_VALUE_KEYS = {
+    'env',
+    'environment',
+    'env_values',
+    'envValues',
+    'env_vars',
+    'envVars',
+    'secrets',
+    'secret_values',
+    'secretValues',
+}
+_TEST_ONLY_MANUAL_STEP_RE = re.compile(
+    r'(?i)\b('
+    r'pytest|py\.test|unittest|playwright\s+test|cypress|jest|vitest|rspec|phpunit|'
+    r'go\s+test|cargo\s+test|mvn\s+test|gradle\s+test|'
+    r'npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+(?:run\s+)?test|bun\s+(?:run\s+)?test'
+    r')\b'
+)
+_TEST_ONLY_PHRASE_RE = re.compile(
+    r'(?i)(?:run|execute|rerun|运行|执行|跑)(?:\s+the)?\s+'
+    r'(?:tests?|verification command|golden path command|测试|验证命令|pytest)'
+)
+
+
+def _unit_final_acceptance_launch(unit: dict[str, Any]) -> dict[str, Any] | None:
+    walkthrough = unit.get('final_acceptance_walkthrough') or unit.get('finalAcceptanceWalkthrough')
+    if isinstance(walkthrough, dict):
+        launch = walkthrough.get('launch')
+        if isinstance(launch, dict):
+            return launch
+        return None
+    return None
+
+
+def _unit_final_acceptance_inspection(unit: dict[str, Any]) -> dict[str, Any] | None:
+    walkthrough = unit.get('final_acceptance_walkthrough') or unit.get('finalAcceptanceWalkthrough')
+    if isinstance(walkthrough, dict):
+        inspection = walkthrough.get('inspection')
+        if isinstance(inspection, dict):
+            return inspection
+    return None
+
+
+def _unit_requires_final_acceptance_inspection(unit: dict[str, Any], state: dict[str, Any]) -> bool:
+    if bool(unit.get('passes')):
+        return False
+    validation_level = str(unit.get('workflow_validation_level') or '').strip().lower()
+    if validation_level == 'closure':
+        return True
+    for key in (
+        'currentUnitIsWebSystem',
+        'currentUnitNeedsUiDesign',
+        'web_system',
+        'ui_system',
+        'needs_ui_design',
+        'needsUiDesign',
+    ):
+        if bool(unit.get(key)) or bool(state.get(key)):
+            return True
+    for case in _unit_test_cases(unit):
+        if not isinstance(case, dict):
+            continue
+        if case.get('golden_path') is True:
+            return True
+        if str(case.get('layer') or '').strip().lower() == 'e2e':
+            return True
+        if case.get('prototype_conformance') or case.get('prototype_surfaces'):
+            return True
+    return False
+
+
+def _final_acceptance_launch_issues(launch: dict[str, Any], workspace_dir: Path | None) -> list[str]:
+    issues: list[str] = []
+    mode = str(launch.get('mode') or '').strip()
+    if mode not in _FINAL_WALKTHROUGH_LAUNCH_MODES:
+        issues.append(
+            'final_acceptance_walkthrough.launch.mode must be agent_start, manual_only, or not_required'
+        )
+        return issues
+
+    issues.extend(_final_acceptance_launch_secret_issues(launch))
+    cwd_issue = _final_acceptance_launch_cwd_issue(launch.get('cwd'), workspace_dir)
+    if cwd_issue:
+        issues.append(cwd_issue)
+
+    timeout = launch.get('ready_timeout_seconds')
+    if timeout is not None:
+        try:
+            timeout_value = float(timeout)
+        except (TypeError, ValueError):
+            timeout_value = 0
+        if timeout_value <= 0:
+            issues.append('final_acceptance_walkthrough.launch.ready_timeout_seconds must be greater than 0')
+
+    if mode == 'agent_start':
+        if not str(launch.get('command') or '').strip():
+            issues.append('final_acceptance_walkthrough.launch.command is required for agent_start')
+        if not any(str(launch.get(key) or '').strip() for key in _FINAL_WALKTHROUGH_READINESS_KEYS):
+            issues.append(
+                'final_acceptance_walkthrough.launch agent_start requires a readiness hint: '
+                'ready_url, ready_command, or ready_output_contains'
+            )
+    elif mode == 'manual_only':
+        if not str(launch.get('manual_launch_instructions') or '').strip():
+            issues.append(
+                'final_acceptance_walkthrough.launch.manual_launch_instructions is required for manual_only'
+            )
+    return issues
+
+
+def _final_acceptance_inspection_issues(inspection: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    surface_kind = str(inspection.get('surface_kind') or inspection.get('surfaceKind') or '').strip().lower()
+    if surface_kind not in _FINAL_WALKTHROUGH_SURFACE_KINDS:
+        issues.append(
+            'final_acceptance_walkthrough.inspection.surface_kind must be browser, api, cli, or artifact'
+        )
+    entrypoint = str(inspection.get('entrypoint') or '').strip()
+    if not entrypoint:
+        issues.append('final_acceptance_walkthrough.inspection.entrypoint is required')
+    elif _url_contains_secret_query(entrypoint):
+        issues.append('final_acceptance_walkthrough.inspection.entrypoint contains a secret-like query parameter')
+
+    manual_steps = _inspection_strings(inspection.get('manual_steps') or inspection.get('manualSteps'))
+    if not manual_steps:
+        issues.append('final_acceptance_walkthrough.inspection.manual_steps is required')
+    elif _manual_steps_are_test_only(manual_steps):
+        issues.append(
+            'final_acceptance_walkthrough.inspection.manual_steps must describe real system operations, '
+            'not only pytest, Playwright, golden path, or other test commands'
+        )
+
+    expected = _inspection_strings(
+        inspection.get('expected_observations') or inspection.get('expectedObservations')
+    )
+    if not expected:
+        issues.append('final_acceptance_walkthrough.inspection.expected_observations is required')
+    return issues
+
+
+def _inspection_strings(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [line.strip('- ').strip() for line in value.splitlines() if line.strip('- ').strip()]
+    return []
+
+
+def _manual_steps_are_test_only(steps: list[str]) -> bool:
+    if not steps:
+        return False
+    return all(_manual_step_is_test_only(step) for step in steps)
+
+
+def _manual_step_is_test_only(step: str) -> bool:
+    normalized = step.strip().strip('`').lower()
+    if not normalized:
+        return False
+    return bool(_TEST_ONLY_MANUAL_STEP_RE.search(normalized) or _TEST_ONLY_PHRASE_RE.search(normalized))
+
+
+def _observation_record_field_value(section: str, label: str) -> str:
+    pattern = re.compile(rf'(?im)^\s*[-*]\s*{re.escape(label)}\s*:\s*(.+?)\s*$')
+    match = pattern.search(section)
+    if not match:
+        return ''
+    value = match.group(1).strip()
+    return value if value and value not in {'-', 'N/A', 'n/a', 'TBD', '待填写'} else ''
+
+
+def _final_acceptance_launch_secret_issues(launch: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for key in sorted(_FORBIDDEN_ENV_VALUE_KEYS):
+        if key in launch and _has_non_empty_value(launch.get(key)):
+            issues.append(
+                f'final_acceptance_walkthrough.launch.{key} must not store env or secret values; '
+                'use env_keys with names only'
+            )
+
+    env_keys = launch.get('env_keys')
+    if env_keys is not None:
+        if not isinstance(env_keys, list):
+            issues.append('final_acceptance_walkthrough.launch.env_keys must be a list of environment variable names')
+        else:
+            for env_key in env_keys:
+                env_name = str(env_key or '').strip()
+                if not _ENV_KEY_RE.match(env_name):
+                    issues.append(
+                        'final_acceptance_walkthrough.launch.env_keys must contain names only, '
+                        f'not secret values: {env_name or "<empty>"}'
+                    )
+
+    for key in ('command', 'ready_command', 'manual_launch_instructions'):
+        value = str(launch.get(key) or '')
+        if value and _SECRET_ASSIGNMENT_RE.search(value):
+            issues.append(
+                f'final_acceptance_walkthrough.launch.{key} appears to store a secret/env value; '
+                'store only env key names in env_keys'
+            )
+
+    for key in ('ready_url',):
+        value = str(launch.get(key) or '')
+        if value and _url_contains_secret_query(value):
+            issues.append(
+                f'final_acceptance_walkthrough.launch.{key} contains a secret-like query parameter'
+            )
+    return issues
+
+
+def _has_non_empty_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if value == '':
+        return False
+    if isinstance(value, (list, dict, tuple, set)) and not value:
+        return False
+    return True
+
+
+def _url_contains_secret_query(value: str) -> bool:
+    if '?' not in value:
+        return False
+    query = value.split('?', 1)[1]
+    for part in query.split('&'):
+        key = part.split('=', 1)[0]
+        if _SECRET_KEY_RE.search(key):
+            return True
+    return False
+
+
+def _final_acceptance_launch_cwd_issue(raw_cwd: Any, workspace_dir: Path | None) -> str | None:
+    if raw_cwd is None:
+        return None
+    cwd_text = str(raw_cwd).strip()
+    if not cwd_text or '\x00' in cwd_text:
+        return 'final_acceptance_walkthrough.launch.cwd is invalid'
+    if workspace_dir is None:
+        return None
+    workspace_root = workspace_dir.resolve()
+    candidate = Path(cwd_text)
+    resolved = candidate.resolve() if candidate.is_absolute() else (workspace_root / candidate).resolve()
+    if not resolved.is_relative_to(workspace_root):
+        return 'final_acceptance_walkthrough.launch.cwd must stay inside the workspace'
+    return None
+
+
 
 def _is_golden_path_case(case: Any) -> bool:
     return isinstance(case, dict) and case.get('golden_path') is True
@@ -2543,7 +2977,15 @@ def _golden_path_case_issue(
     fixture = _case_fixture_or_setup(case)
     expected = str(case.get('expected') or case.get('expected_result') or case.get('expectedResult') or '').strip()
     if not command or not fixture or _expected_is_weak(expected):
-        return 'must include command, fixture/setup or test data, and a concrete expected result'
+        if _case_has_verification_assist(case) and fixture and not _expected_is_weak(expected):
+            pass
+        else:
+            return 'must include command, fixture/setup or test data, and a concrete expected result'
+    if _case_has_verification_assist(case):
+        mocked_routes = _case_core_api_mock_routes(case, command, workspace_dir)
+        if mocked_routes or case_declares_core_api_mock(case):
+            return f'must not use core API mock/stub routes: {mocked_routes or case_declared_mocked_routes(case) or ["declared"]}'
+        return ''
     if not any(command == candidate or command in candidate or candidate in command for candidate in verification_commands):
         return 'command must appear in verification_commands'
 
@@ -2551,6 +2993,10 @@ def _golden_path_case_issue(
     if mocked_routes or case_declares_core_api_mock(case):
         return f'must not use core API mock/stub routes: {mocked_routes or case_declared_mocked_routes(case) or ["declared"]}'
     return ''
+
+
+def _case_has_verification_assist(case: dict[str, Any]) -> bool:
+    return 'verification_assist' in case or 'verificationAssist' in case
 
 
 def _case_has_explicit_real_entrypoint(case: dict[str, Any]) -> bool:

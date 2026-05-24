@@ -910,7 +910,7 @@ def test_controller_generated_gate_bodies_are_chinese_first(tmp_path: Path) -> N
     assert '## Controller State Patch' in unit_plan_body
     assert '# 最终验收确认' in final_body
     assert '## 证据摘要' in final_body
-    assert '## Golden Path 正常流程' in final_body
+    assert '## Golden Path 人工走查' in final_body
     assert 'TC-AC-01-golden-path' in final_body
     assert '`pnpm exec playwright test tests/e2e/ac-01.spec.ts` -> passed' in final_body
     assert '## 返工路由（Rejection Routing）' in final_body
@@ -1985,11 +1985,11 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
       "status": "partial"
     }
   ],
-  "units": [
-    {
-      "id": "unit-a",
-      "name": "Implementation",
-      "passes": false,
+      "units": [
+        {
+          "id": "unit-a",
+          "name": "Implementation",
+          "passes": false,
       "scope": ["Implement the delivery path"],
       "verification_commands": ["pytest tests/test_delivery.py -q"]
     },
@@ -2010,11 +2010,19 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
           "command": "pytest tests/e2e/test_delivery.py -q",
           "expected": "Delivery normal flow completes with confirmation"
         }
-      ],
-      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+          ],
+          "final_acceptance_walkthrough": {
+            "inspection": {
+              "surface_kind": "browser",
+              "entrypoint": "/delivery",
+              "manual_steps": ["Open /delivery and complete the delivery normal flow"],
+              "expected_observations": ["Delivery normal flow completes with confirmation"]
+            }
+          },
+          "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+        }
+      ]
     }
-  ]
-}
 ```
 
 ## Human Review Checklist
@@ -2787,13 +2795,21 @@ def test_unit_plan_approval_accepts_closure_unit_with_golden_path(tmp_path: Path
                     {'objective': 'Delivery objective', 'units': ['unit-e2e'], 'status': 'partial'}
                 ],
                 'units': [
-                    {
-                        'id': 'unit-e2e',
-                        'name': 'E2E delivery',
-                        'passes': False,
-                        'workflow_validation_level': 'closure',
-                        'test_cases': [
-                            {
+                        {
+                            'id': 'unit-e2e',
+                            'name': 'E2E delivery',
+                            'passes': False,
+                            'workflow_validation_level': 'closure',
+                            'final_acceptance_walkthrough': {
+                                'inspection': {
+                                    'surface_kind': 'browser',
+                                    'entrypoint': '/delivery',
+                                    'manual_steps': ['Open /delivery and complete the normal delivery flow'],
+                                    'expected_observations': ['Confirmation #D-100 is visible'],
+                                }
+                            },
+                            'test_cases': [
+                                {
                                 'id': 'TC-AC-01-golden-path',
                                 'acceptance_criterion': 'AC-01',
                                 'layer': 'e2e',
@@ -3963,6 +3979,11 @@ def test_final_acceptance_gate_blocks_done_until_approved(tmp_path: Path) -> Non
         },
         force=True,
     )
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'FINAL_WALKTHROUGH_PREPARE'
+    assert state['nextAllowedActions'] == ['prepare_final_walkthrough']
 
     state = controller.run_once()
 

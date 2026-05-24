@@ -126,6 +126,7 @@ E2E unit rules (applies when workflow_validation_level is "closure"):
 - Prototype conformance E2E output must include visual evidence markers: `PROTOTYPE_SCREENSHOT: <path>`, `PRODUCTION_SCREENSHOT: <path>`, `INTERACTION_SCREENSHOT: <path>` for interactive surfaces, and `VISUAL_EVIDENCE: {{...}}` with viewport, entrypoint, action_path, and fidelity_level.
 - Prototype conformance assertions must verify structure/order and interaction behavior, including that fixed headers, badges, modals, drawers, overlays, and loading masks do not obstruct the key clickable target.
 - 完成 summary 必须说明覆盖了哪些 AC、创建或修改了哪些测试文件、实际运行了哪些 verification commands。
+- 如果当前 unit 声明了 `final_acceptance_walkthrough.inspection`，DONE_FILE 的 `summary` 或 `done_payload.final_acceptance_walkthrough.inspection` 必须确认最终人工走查入口。若实际入口和 Unit Plan 不一致，写最终 `surface_kind`、`entrypoint`、`manual_steps`、`expected_observations` 和 `reason`；Controller 会优先展示 Builder 确认过的入口给 Final Acceptance 人工审阅。
 """
 
 

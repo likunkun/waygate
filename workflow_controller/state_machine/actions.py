@@ -25,6 +25,8 @@ def compute_next_allowed_action(state: dict[str, Any]) -> str | None:
         return 'check_final_acceptance'
     if step == 'FINAL_ACCEPTANCE_AGENT_SYNC':
         return 'sync_final_acceptance_agent'
+    if step == 'FINAL_WALKTHROUGH_PREPARE':
+        return 'prepare_final_walkthrough'
     if step == 'WAITING_BUG_FIX_GATE':
         return 'check_bug_fix_gate'
     if step == 'BUG_FIX':
