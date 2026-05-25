@@ -91,6 +91,47 @@ def test_v061_required_formal_docs_and_registry_exist() -> None:
     assert 'docs/architecture/external-spec-intake-and-annotation-architecture.md' in registry
 
 
+def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
+    workflow_doc = _read('docs/workflow/staged-requirements-package-policy.md')
+    architecture_doc = _read('docs/architecture/staged-requirements-package-architecture.md')
+    registry = _read('docs/README.md')
+    roadmap = _read('ROADMAP.md')
+    roadmap_zh = _read('ROADMAP.zh-CN.md')
+
+    for expected in [
+        'Staged Requirements Package',
+        'Requirements Scope',
+        'Product Design Brief',
+        'Technical Architecture Brief',
+        'Requirements Test Strategy Brief',
+        'final human Requirements approval gate',
+        'Infrastructure / Execution Context Matrix',
+        'downstream invalidation',
+        'requirements_annotation',
+    ]:
+        assert expected in workflow_doc
+
+    for expected in [
+        'workflow_controller/requirements_package.py',
+        'workflow_controller/prompts/requirements_package.py',
+        'workflow_controller/steps/requirements_package.py',
+        'workflow_controller/rrc_controller.py',
+        'validate_staged_requirements_package_consistency',
+        'Unit Plan prompt',
+        'artifact path/hash/status',
+    ]:
+        assert expected in architecture_doc
+
+    assert 'docs/workflow/staged-requirements-package-policy.md' in registry
+    assert 'docs/architecture/staged-requirements-package-architecture.md' in registry
+    assert 'V0.6.2 - Staged Requirements Package' in roadmap
+    assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap
+    assert 'Merge the original V0.6.2 Strict Test Presence scope into V0.6.3.' in roadmap
+    assert 'V0.6.2 - Staged Requirements Package' in roadmap_zh
+    assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap_zh
+    assert '原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。' in roadmap_zh
+
+
 def test_annotation_policy_docs_use_current_codex_cli_contract() -> None:
     workflow_doc = _read('docs/workflow/external-spec-intake-and-annotation-policy.md')
     usage = _read('USAGE.md')

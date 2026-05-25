@@ -16,9 +16,26 @@ from workflow_controller.gates.validators import validate_unit_plan_acceptance_o
 from workflow_controller.gates.validators import validate_unit_plan_design_architecture_traceability
 from workflow_controller.gates.validators import validate_unit_plan_document_deliverables
 from workflow_controller.gates.validators import validate_unit_plan_golden_path
+from workflow_controller.gates.validators import validate_unit_plan_infrastructure_execution_context_matrix
 from workflow_controller.gates.validators import validate_unit_plan_prototype_conformance
 from workflow_controller.gates.validators import validate_unit_plan_real_e2e_evidence_policy
 from workflow_controller.prototype_review import validate_final_prototype_conformance
+from workflow_controller.requirements_package import REQUIREMENTS_PACKAGE_VERSION
+
+
+def _staged_package_state() -> dict:
+    return {
+        'requestedOutcome': 'V0.6.2',
+        'requirementsPackage': {
+            'version': REQUIREMENTS_PACKAGE_VERSION,
+            'artifacts': {
+                'scope': {'path': '/tmp/scope.md', 'hash': 'scopehash', 'status': 'complete'},
+                'product_design': {'path': '/tmp/product.md', 'hash': 'producthash', 'status': 'complete'},
+                'architecture': {'path': '/tmp/arch.md', 'hash': 'archhash', 'status': 'complete'},
+                'test_strategy': {'path': '/tmp/test.md', 'hash': 'testhash', 'status': 'complete'},
+            },
+        },
+    }
 
 
 def _write_prototype_manifest_for_gate(
@@ -1019,6 +1036,54 @@ def test_unit_plan_accepts_required_workflow_document_deliverable(tmp_path: Path
     }
 
     validate_unit_plan_document_deliverables(gate, state)
+
+
+def test_unit_plan_infrastructure_matrix_rejects_missing_matrix(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text('# Unit Plan\n\n## Test Case Matrix\n', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='Infrastructure / Execution Context Matrix'):
+        validate_unit_plan_infrastructure_execution_context_matrix(gate, _staged_package_state())
+
+
+def test_unit_plan_infrastructure_matrix_rejects_missing_category(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan\n\n'
+        '## Infrastructure / Execution Context Matrix\n'
+        '| 类别 | 事实 | 来源 | Unit Plan 消费方式 |\n'
+        '| --- | --- | --- | --- |\n'
+        '| 代码仓库 | repo | docs | builder scope |\n'
+        '| 项目部署运行时环境 | python3 pytest | progress | verification |\n'
+        '| 调试分析方法 | session/events/artifacts | AGENTS | failure triage |\n'
+        '| 参考环境 | current workflow | roadmap | keep ordering |\n'
+        '| 文档地址 | docs/README.md | docs registry | formal docs |\n'
+        '| 架构/交互逻辑/接口说明 | controller modules | requirements | implementation |\n',
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='依赖信息'):
+        validate_unit_plan_infrastructure_execution_context_matrix(gate, _staged_package_state())
+
+
+def test_unit_plan_infrastructure_matrix_accepts_all_categories(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan\n\n'
+        '## Infrastructure / Execution Context Matrix\n'
+        '| 类别 | 事实 | 来源 | Unit Plan 消费方式 |\n'
+        '| --- | --- | --- | --- |\n'
+        '| 代码仓库 | repo | docs | builder scope |\n'
+        '| 项目部署运行时环境 | python3 pytest | progress | verification |\n'
+        '| 调试分析方法 | session/events/artifacts | AGENTS | failure triage |\n'
+        '| 参考环境 | current workflow | roadmap | keep ordering |\n'
+        '| 文档地址 | docs/README.md | docs registry | formal docs |\n'
+        '| 架构/交互逻辑/接口说明 | controller modules | requirements | implementation |\n'
+        '| 依赖信息 | Python stdlib and pytest | roadmap | no new deps |\n',
+        encoding='utf-8',
+    )
+
+    validate_unit_plan_infrastructure_execution_context_matrix(gate, _staged_package_state())
 
 
 def test_final_acceptance_blocks_missing_required_document_deliverable(tmp_path: Path) -> None:

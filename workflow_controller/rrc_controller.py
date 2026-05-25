@@ -32,6 +32,7 @@ from workflow_controller.gates.generators import (
     ensure_requirements_gate,
     ensure_unit_plan_gate,
     normalize_final_acceptance_rejection_routing,
+    render_staged_requirements_package_gate_body,
 )
 from workflow_controller.gates.parsers import (
     CONFIRMATION_HEADING,
@@ -63,6 +64,7 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_document_deliverables,
     validate_unit_plan_final_acceptance_walkthrough,
     validate_unit_plan_golden_path,
+    validate_unit_plan_infrastructure_execution_context_matrix,
     validate_unit_plan_prototype_conformance,
     validate_unit_plan_real_e2e_evidence_policy,
     validate_unit_plan_test_case_coverage,
@@ -91,6 +93,14 @@ from workflow_controller.prototype_review import (
     prototype_review_paths,
     start_prototype_review_preview_server,
     validate_final_prototype_conformance,
+)
+from workflow_controller.requirements_package import (
+    CHECKPOINT_STAGES,
+    REQUIREMENTS_PACKAGE_VERSION,
+    STAGE_ARTIFACT_FILENAMES,
+    STAGE_TO_ACTION,
+    invalidate_stage_and_downstream,
+    mark_stage_artifact,
 )
 from workflow_controller.networking import browser_display_host, url_host
 from workflow_controller.rrc_plannotator import run_plannotator_gate_review
@@ -133,6 +143,11 @@ from workflow_controller.steps.final_sync import (
 )
 from workflow_controller.steps.final_walkthrough import run_final_walkthrough_prepare
 from workflow_controller.steps.requirements import run_requirements_drafter
+from workflow_controller.steps.requirements_package import (
+    NEXT_STAGE_STEP,
+    STAGE_ARTIFACT_DIRNAMES,
+    run_requirements_package_stage,
+)
 from workflow_controller.steps.unit_plan import run_unit_plan_drafter
 
 
@@ -222,6 +237,11 @@ ANSI_RESET = '\033[0m'
 
 ACTION_LABELS = {
     'run_requirements_drafter': '生成需求与验收草案',
+    'run_requirements_scope_drafter': '生成 Requirements Scope checkpoint',
+    'run_requirements_product_design_brief': '生成 Product Design checkpoint',
+    'run_requirements_architecture_brief': '生成 Architecture checkpoint',
+    'run_requirements_test_strategy_brief': '生成 Test Strategy checkpoint',
+    'assemble_requirements_package': '装配 Requirements package',
     'run_unit_plan_drafter': '生成 Unit Plan 草案',
     'check_requirements_acceptance': '检查需求与验收确认',
     'check_unit_plan_approval': '检查 Unit Plan 确认',
@@ -259,9 +279,18 @@ COMPACT_PLANNING_STAGE_LABELS = {
 
 COMPACT_PLANNING_ACTION_STAGES = {
     'run_requirements_drafter': 'Requirements draft',
+    'run_requirements_scope_drafter': 'Requirements scope',
+    'run_requirements_product_design_brief': 'Requirements product design',
+    'run_requirements_architecture_brief': 'Requirements architecture',
+    'run_requirements_test_strategy_brief': 'Requirements test strategy',
     'check_requirements_acceptance': 'Requirements confirmation',
     'run_unit_plan_drafter': 'Unit plan',
     'check_unit_plan_approval': 'Unit plan confirmation',
+}
+
+REQUIREMENTS_PACKAGE_STAGE_ACTIONS = {
+    STAGE_TO_ACTION[stage]: stage
+    for stage in CHECKPOINT_STAGES
 }
 
 COMPACT_RESULT_LABELS = {
@@ -599,6 +628,7 @@ class RalphRefinerController:
                 candidate_state,
             )
             validate_unit_plan_document_deliverables(gate_path, candidate_state)
+            validate_unit_plan_infrastructure_execution_context_matrix(gate_path, candidate_state)
             validate_unit_plan_verification_environment(candidate_state)
             validate_unit_plan_verification_assist_contract(candidate_state, artifacts_dir=self.artifacts_dir)
             validate_unit_plan_golden_path(candidate_state)
@@ -1637,6 +1667,23 @@ class RalphRefinerController:
         state['blockedReason'] = None
         (self.approvals_dir / 'unit-plan.md').unlink(missing_ok=True)
 
+        package = state.get('requirementsPackage')
+        if isinstance(package, dict) and package.get('version') == REQUIREMENTS_PACKAGE_VERSION:
+            invalidate_stage_and_downstream(
+                state,
+                'scope',
+                reason='requirements revision requested',
+            )
+            state['currentStep'] = 'REQUIREMENTS_SCOPE_DRAFT'
+            self.store.append_event('requirements_staged_revision_routed', {
+                'task_id': state.get('task_id'),
+                'unit_id': state.get('currentUnitId'),
+                'stage': 'scope',
+                'revision_count': revision_count,
+            })
+            self._save_state(state)
+            return gate_path
+
         run_requirements_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)
         validate_required_artifacts(
             self.artifacts_dir / 'requirements-draft',
@@ -2279,6 +2326,64 @@ class RalphRefinerController:
         unit_dir = self.artifacts_dir / current_unit_id if current_unit_id else self.artifacts_dir
         unit_dir.mkdir(parents=True, exist_ok=True)
         self.approvals_dir.mkdir(parents=True, exist_ok=True)
+
+        if action in REQUIREMENTS_PACKAGE_STAGE_ACTIONS:
+            stage = REQUIREMENTS_PACKAGE_STAGE_ACTIONS[action]
+            result = run_requirements_package_stage(
+                state,
+                self.artifacts_dir,
+                stage=stage,
+                dry_run=self.dry_run,
+            )
+            stage_dir = self.artifacts_dir / STAGE_ARTIFACT_DIRNAMES[stage]
+            artifact_name = STAGE_ARTIFACT_FILENAMES[stage]
+            summary_name = f'{Path(artifact_name).stem}-summary.json'
+            validate_required_artifacts(stage_dir, [artifact_name, summary_name])
+            state['currentStep'] = NEXT_STAGE_STEP[stage]
+            self.store.append_event('requirements_package_stage_generated', {
+                'task_id': state.get('task_id'),
+                'unit_id': state.get('currentUnitId'),
+                'stage': stage,
+                'outputs': result.outputs or [],
+                'path': str(stage_dir / artifact_name),
+                'summary_path': str(stage_dir / summary_name),
+            })
+            self._save_state(state)
+            return state
+
+        if action == 'assemble_requirements_package':
+            gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
+            write_gate_file(gate_path, render_staged_requirements_package_gate_body(state))
+            mark_stage_artifact(state, 'final_gate', gate_path)
+            validate_required_artifacts(self.approvals_dir, ['requirements-and-acceptance.md'])
+            state['requirementsDraftGenerated'] = True
+            state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+            self.store.append_event('requirements_package_final_assembled', {
+                'task_id': state.get('task_id'),
+                'unit_id': state.get('currentUnitId'),
+                'path': str(gate_path),
+            })
+            reason = self._requirements_gate_invalid_reason(state, gate_path)
+            if reason:
+                state['requirementsAccepted'] = False
+                state['blockedReason'] = reason
+                self._save_state(state)
+                return state
+            state['blockedReason'] = None
+            self.store.append_event('requirements_gate_preflight_completed', {
+                'task_id': state.get('task_id'),
+                'path': str(gate_path),
+            })
+            if not self._run_annotation_before_human_gate(
+                state,
+                role='requirements_annotation',
+                gate_path=gate_path,
+                validator_summary='Staged Requirements package assembly and deterministic preflight passed before human review.',
+            ):
+                self._save_state(state)
+                return state
+            self._save_state(state)
+            return state
 
         if action == 'run_requirements_drafter':
             run_requirements_drafter(state, self.approvals_dir, self.artifacts_dir, dry_run=self.dry_run)

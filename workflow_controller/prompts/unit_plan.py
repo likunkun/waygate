@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from workflow_controller.acceptance_obligations import render_acceptance_obligations_markdown
+from workflow_controller.requirements_package import CHECKPOINT_STAGES, REQUIREMENTS_PACKAGE_VERSION
 from workflow_controller.steps._common import _find_unit
 
 
@@ -55,6 +56,7 @@ Acceptance Obligation Coverage:
 - 除非必须重新执行，否则已完成单元不要放回 `units`；`units` 应只包含下一步要执行的缺陷修复单元。
 - 将 `currentUnitId` 设置为第一个缺陷修复单元。
 """
+    staged_requirements_section = _staged_requirements_unit_plan_section(state)
 
     return f"""为 workflow-controller 生成"单元计划确认"Markdown 正文。
 
@@ -119,6 +121,8 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - 可行目标：`{state.get('feasibleOutcome')}`
 - 当前单元 id：`{state.get('currentUnitId')}`
 - 当前单元名称：`{unit.get('name', state.get('currentUnitId'))}`
+
+{staged_requirements_section}
 
 controller state 中的已知目标覆盖：
 
@@ -259,6 +263,39 @@ JSON 必须合法，且 `units` 必须列出下一步要执行的每个可执行
 
 使用未勾选的 Markdown checkbox。
 """
+
+
+def _staged_requirements_unit_plan_section(state: dict[str, Any]) -> str:
+    package = state.get('requirementsPackage')
+    if not isinstance(package, dict) or package.get('version') != REQUIREMENTS_PACKAGE_VERSION:
+        return ''
+    artifacts = package.get('artifacts')
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+    lines = [
+        'Staged Requirements Package artifact inheritance:',
+        '',
+        '| Stage | Path | Hash | Status |',
+        '| --- | --- | --- | --- |',
+    ]
+    for stage in CHECKPOINT_STAGES:
+        record = artifacts.get(stage)
+        if isinstance(record, dict):
+            lines.append(
+                f"| {stage} | `{record.get('path')}` | `{record.get('hash')}` | `{record.get('status')}` |"
+            )
+        else:
+            lines.append(f'| {stage} | missing | missing | missing |')
+    lines.extend([
+        '',
+        'Unit Plan 必须从以上 staged artifact path/hash/status 继承 AC、Journey、Product Design、Architecture、Test Strategy、E2E 方法、界面相关义务和风险义务；不要从聊天上下文重建这些事实。',
+        '',
+        'Infrastructure / Execution Context Matrix 约束：',
+        '- Unit Plan 必须新增 `Infrastructure / Execution Context Matrix`。',
+        '- 矩阵必须覆盖七类事实：代码仓库、项目部署运行时环境、调试分析方法、参考环境、文档地址、架构/交互逻辑/接口说明、依赖信息。',
+        '- 每行必须写事实、来源和 Unit Plan 消费方式；环境变量只写 key 名，不写 secret 值。',
+    ])
+    return '\n'.join(lines)
 
 
 def _render_test_strategist_prompt(

@@ -49,6 +49,12 @@ from workflow_controller.prototype_review import (
     surface_contract_requires_browser_e2e,
     validate_prototype_review_manifest,
 )
+from workflow_controller.requirements_package import (
+    CHECKPOINT_STAGES,
+    REQUIREMENTS_PACKAGE_VERSION,
+    STAGE_APPENDIX_TITLES,
+    artifact_hash,
+)
 
 
 VERIFICATION_EVIDENCE_SCHEMA_VERSION = 'v0.3.5'
@@ -483,6 +489,38 @@ def validate_unit_plan_document_deliverables(
         raise ValueError('unit plan document deliverables are incomplete: ' + '; '.join(issues))
 
 
+def validate_unit_plan_infrastructure_execution_context_matrix(
+    unit_plan_path: Path,
+    state: dict[str, Any],
+) -> None:
+    if not _staged_requirements_package_state(state):
+        return
+    if not unit_plan_path.exists():
+        return
+    content = gate_body(unit_plan_path.read_text(encoding='utf-8'))
+    section = (
+        _markdown_section(content, 'Infrastructure / Execution Context Matrix')
+        or _markdown_section(content, 'Infrastructure / Execution Context')
+        or _markdown_section(content, '执行上下文矩阵')
+    )
+    if not section.strip():
+        raise ValueError(
+            'Unit Plan missing `Infrastructure / Execution Context Matrix`; '
+            'add repository, runtime, debugging, reference environment, documentation, architecture/interface, and dependencies'
+        )
+    normalized = _normalized_requirements_text(section)
+    missing = [
+        label
+        for label, aliases in _REQUIREMENTS_INFRASTRUCTURE_CATEGORIES
+        if not any(_normalized_requirements_text(alias) in normalized for alias in aliases)
+    ]
+    if missing:
+        raise ValueError(
+            'Unit Plan Infrastructure / Execution Context Matrix missing category: '
+            + ', '.join(missing)
+        )
+
+
 def validate_final_document_deliverables(
     unit_plan_path: Path,
     state: dict[str, Any],
@@ -558,8 +596,14 @@ def validate_requirements_acceptance_quality(
 
     issues.extend(_requirements_e2e_review_matrix_issues(content, state))
 
+    staged_package = _staged_requirements_package_state(state)
+    prototype_contract_source = (
+        _staged_requirements_appendices_content(content)
+        if staged_package
+        else content
+    )
     prototype_contract_content = _requirements_content_without_e2e_review_section(
-        _requirements_prototype_contract_content(content)
+        _requirements_prototype_contract_content(prototype_contract_source)
     )
     content_declares_prototype_contract = _requirements_declares_prototype_contract(prototype_contract_content, state)
     if _requirements_need_uiux_prototype(state) and not _requirements_has_uiux_prototype_evidence(prototype_contract_content):
@@ -601,11 +645,120 @@ def validate_requirements_acceptance_quality(
             except ValueError as exc:
                 issues.append(str(exc))
 
-    if _requirements_target_infrastructure_required(state):
+    if staged_package:
+        issues.extend(_staged_requirements_package_consistency_issues(content, state))
+    elif _requirements_target_infrastructure_required(state):
         issues.extend(_requirements_target_infrastructure_issues(content))
 
     if issues:
         raise ValueError('; '.join(issues))
+
+
+def validate_staged_requirements_package_consistency(
+    requirements: Path | str,
+    state: dict[str, Any],
+) -> None:
+    content = requirements.read_text(encoding='utf-8') if isinstance(requirements, Path) else str(requirements)
+    issues = _staged_requirements_package_consistency_issues(gate_body(content), state)
+    if issues:
+        raise ValueError('; '.join(issues))
+
+
+def _staged_requirements_package_state(state: dict[str, Any]) -> bool:
+    package = state.get('requirementsPackage')
+    return isinstance(package, dict) and package.get('version') == REQUIREMENTS_PACKAGE_VERSION
+
+
+def _staged_requirements_package_consistency_issues(content: str, state: dict[str, Any]) -> list[str]:
+    package = state.get('requirementsPackage')
+    artifacts = package.get('artifacts') if isinstance(package, dict) else {}
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+
+    issues: list[str] = []
+    hash_section = _markdown_section(content, 'Artifact Hashes')
+    for stage in CHECKPOINT_STAGES:
+        title = STAGE_APPENDIX_TITLES[stage]
+        if not _markdown_heading_exists(content, title, level=2):
+            issues.append(f'staged requirements package missing appendix for {title}')
+        record = artifacts.get(stage)
+        if not isinstance(record, dict):
+            issues.append(f'staged requirements package missing artifact record for {stage}')
+            continue
+        path_text = str(record.get('path') or '')
+        expected_hash = str(record.get('hash') or '')
+        if not hash_section.strip() or stage not in hash_section or expected_hash not in hash_section:
+            issues.append(f'staged requirements package missing artifact hash row for {stage}')
+        artifact_path = Path(path_text)
+        if not artifact_path.exists():
+            issues.append(f'staged requirements package missing artifact file for {stage}: {path_text}')
+            continue
+        actual_hash = artifact_hash(artifact_path)
+        if actual_hash != expected_hash:
+            issues.append(
+                f'staged requirements package hash mismatch for {stage}: expected {expected_hash}, got {actual_hash}'
+            )
+    issues.extend(_staged_requirements_conflict_issues(content))
+    return issues
+
+
+def _staged_requirements_appendices_content(content: str) -> str:
+    starts: list[int] = []
+    for title in STAGE_APPENDIX_TITLES.values():
+        match = _markdown_heading_match(content, title, level=2)
+        if match:
+            starts.append(match.start())
+    if not starts:
+        return ''
+    return content[min(starts):]
+
+
+def _markdown_heading_exists(content: str, heading_contains: str, *, level: int | None = None) -> bool:
+    return _markdown_heading_match(content, heading_contains, level=level) is not None
+
+
+def _markdown_heading_match(
+    content: str,
+    heading_contains: str,
+    *,
+    level: int | None = None,
+) -> re.Match[str] | None:
+    hashes = f'{{{level}}}' if level is not None else '{1,6}'
+    return re.search(
+        rf'(?im)^\s{{0,3}}#{hashes}\s+.*{re.escape(heading_contains)}.*\s*#*\s*$',
+        content,
+    )
+
+
+def _staged_requirements_conflict_issues(content: str) -> list[str]:
+    issues: list[str] = []
+    ac_layers: dict[str, set[str]] = {}
+    for match in re.finditer(r'\b(AC-\d+(?:[-.]\d+)*)\b[^\n|]*(?:\[verification:\s*([a-z_]+)\])', content, re.IGNORECASE):
+        ac_id = match.group(1).upper()
+        layer = match.group(2).lower()
+        ac_layers.setdefault(ac_id, set()).add(layer)
+    for ac_id, layers in sorted(ac_layers.items()):
+        if len(layers) > 1:
+            issues.append(f'staged requirements package conflicting AC verification layers for {ac_id}: {sorted(layers)}')
+
+    journey_statuses: dict[str, set[str]] = {}
+    for row in _markdown_table_rows(content):
+        row_text = ' '.join(row)
+        journey_ids = _requirements_journey_ids_in_text(row_text)
+        if not journey_ids:
+            continue
+        normalized_row = _normalized_requirements_text(row_text)
+        statuses = {
+            status
+            for status in ('active', 'inactive', 'deferred', 'rejected')
+            if status in normalized_row
+        }
+        for journey_id in journey_ids:
+            journey_statuses.setdefault(journey_id, set()).update(statuses)
+    for journey_id, statuses in sorted(journey_statuses.items()):
+        if 'active' in statuses and statuses & {'inactive', 'deferred', 'rejected'}:
+            issues.append(f'staged requirements package conflicting Journey status for {journey_id}: {sorted(statuses)}')
+    return issues
 
 
 
@@ -2623,6 +2776,14 @@ def _markdown_table_cells(line: str) -> list[str]:
     if _is_markdown_table_separator(stripped):
         return []
     return [cell.strip() for cell in stripped.strip('|').split('|')]
+
+
+def _markdown_table_rows(content: str) -> list[list[str]]:
+    return [
+        cells
+        for line in content.splitlines()
+        if (cells := _markdown_table_cells(line))
+    ]
 
 
 def _is_markdown_table_separator(line: str) -> bool:

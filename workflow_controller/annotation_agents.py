@@ -1261,9 +1261,16 @@ def _expanded_command(config: AnnotationAgentConfig, prompt_path: Path) -> list[
         'prompt_path': str(prompt_path),
         'artifact_path': str(config.artifact_path),
     }
-    command = config.command.format(**placeholders)
-    args = [arg.format(**placeholders) for arg in config.args]
+    command = _expand_known_placeholders(config.command, placeholders)
+    args = [_expand_known_placeholders(arg, placeholders) for arg in config.args]
     return [command, *args]
+
+
+def _expand_known_placeholders(value: str, placeholders: dict[str, str]) -> str:
+    expanded = value
+    for key, replacement in placeholders.items():
+        expanded = expanded.replace('{' + key + '}', replacement)
+    return expanded
 
 
 def _normalize_annotation_artifact(

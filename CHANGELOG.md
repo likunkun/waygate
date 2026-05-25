@@ -2,6 +2,14 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2
+
+- Added the Staged Requirements Package flow: Requirements Scope, Product Design Brief, Technical Architecture Brief, and Requirements Test Strategy Brief now run as focused checkpoints before one final human Requirements approval gate.
+- Added final package assembly with checkpoint artifact hashes and appendix content, plus staged package consistency validation.
+- Moved detailed target infrastructure intake into the Unit Plan Infrastructure / Execution Context Matrix while keeping Requirements focused on minimal context.
+- Added Unit Plan inheritance of staged artifact path, hash, and status metadata so scope, ACs, journeys, design, architecture, E2E, and risk obligations continue downstream.
+- Added formal V0.6.2 workflow and architecture docs, and kept Strict Test Presence / Per-Role Runner Configuration in V0.6.3.
+
 ## 0.6.1
 
 - Added supported OpenSpec/OpenAPI and Spec Kit intake paths with normalized requirements, source maps, validation reports, and clear unsupported/deferred errors.

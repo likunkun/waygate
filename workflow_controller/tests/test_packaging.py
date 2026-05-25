@@ -19,7 +19,7 @@ def _timestamped_version_line_re() -> str:
 
 
 def test_version_flag_outputs_package_version() -> None:
-    assert __version__ == '0.6.1'
+    assert __version__ == '0.6.2'
     result = subprocess.run(
         [sys.executable, '-m', 'workflow_controller.cli', '--version'],
         text=True,
@@ -159,9 +159,11 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     assert './usr/share/doc/waygate/ROADMAP.zh-CN.md' in contents
     assert './usr/share/doc/waygate/docs/architecture.md' in contents
     assert './usr/share/doc/waygate/docs/architecture/external-spec-intake-and-annotation-architecture.md' in contents
+    assert './usr/share/doc/waygate/docs/architecture/staged-requirements-package-architecture.md' in contents
     assert './usr/share/doc/waygate/docs/README.md' in contents
     assert './usr/share/doc/waygate/docs/workflow.zh-CN.md' in contents
     assert './usr/share/doc/waygate/docs/workflow/external-spec-intake-and-annotation-policy.md' in contents
+    assert './usr/share/doc/waygate/docs/workflow/staged-requirements-package-policy.md' in contents
     assert './usr/share/doc/waygate/docs/workflow/prototype-fidelity-policy.md' in contents
     assert './usr/share/doc/waygate/docs/workflow/ui-ux-skill-policy.md' in contents
     assert './usr/share/doc/waygate/docs/product/waygate-introduction-and-best-practices.md' in contents
@@ -218,7 +220,7 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
         'focus:',
         'action_required',
         '--color',
-        '0.6.1',
+        __version__,
     ]:
         assert expected in packaged_docs
 

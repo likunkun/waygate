@@ -28,7 +28,9 @@
 | 正式维护文档 | `docs/workflow/controller-agent-interaction-audit.html` | 上述审计的自包含 Plannotator 风格可视化版本，便于浏览流程图、提示语卡片和贯穿性矩阵。 |
 | 正式维护文档 | `docs/workflow/external-spec-intake-and-annotation-policy.md` | V0.6.1 外部 spec intake、gate ordering、role-based annotation、prompt contract、non-approval semantics、`descriptive_command` 与 `agent_assisted_case` evidence 流程规则。 |
 | 正式维护文档 | `docs/architecture/external-spec-intake-and-annotation-architecture.md` | V0.6.1 OpenSpec / Spec Kit import contract、annotation_agents.py、prompt template registry、runner adapter、verification-assist case runner 和 verification.json schema 模块边界。 |
-| 正式维护文档 | `docs/workflow/requirements-e2e-review-policy.md` | V0.6.2 Requirements 阶段真实 E2E / 浏览器/API/service 验收前置审阅矩阵；V0.6.0m Unit Plan golden path 必须是真实 `layer=e2e`。 |
+| 正式维护文档 | `docs/workflow/staged-requirements-package-policy.md` | V0.6.2 Staged Requirements Package 流程规则：Requirements Scope、Product Design Brief、Technical Architecture Brief、Requirements Test Strategy Brief、final gate assembly、annotation ordering、Unit Plan handoff 和 downstream invalidation。 |
+| 正式维护文档 | `docs/architecture/staged-requirements-package-architecture.md` | V0.6.2 `requirements_package.py`、checkpoint prompt renderer、stage runner、controller orchestration、gate generator/validator、Unit Plan prompt inheritance 和 Infrastructure / Execution Context Matrix 模块边界。 |
+| 正式维护文档 | `docs/workflow/requirements-e2e-review-policy.md` | V0.6.3 Strict Test Presence 中的真实 E2E / 浏览器/API/service 验收前置审阅规则；V0.6.0m Unit Plan golden path 必须是真实 `layer=e2e`。 |
 | 正式维护文档 | `docs/workflow/recoverable-agent-timeout-policy.md` | Agent 超时、idle-without-DONE 和 `waygate retry` 的可恢复等待策略；说明 transient runner silence 不走 `waygate revise`。 |
 | 正式维护文档 | `docs/workflow/stop-guidance-and-unblock-policy.md` | Waygate 停止状态原因化 guidance、`retry` 与显式 `blocked` 的边界、环境类 `unblock` 和 Builder blocked reconciliation 规则。 |
 | 正式维护文档 | `docs/workflow/final-acceptance-guided-walkthrough-policy.md` | Final Acceptance 前的启动准备阶段、Agent 提供的 `final_acceptance_walkthrough.inspection` / `launch` 合同、人工观察记录审阅上下文和 Golden Path 人工走查 gate 规则。 |

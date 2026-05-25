@@ -1,6 +1,28 @@
 # 进度日志
 
+## 会话：2026-05-25
+
+### V0.6.2 Final Acceptance 终验同步
+- **状态：** Final Acceptance approved; human-readable status synced.
+- Controller state `.rrc-controller-v0.6.2/session.json` 显示 `finalAcceptanceAccepted=true`、确认人为 `human`，目标 `Complete V0.6.2 development acceptance using current planning progress` 已 `covered`，四个 V0.6.2 units 均 `passes=true`。
+- 同步 `ROADMAP.md`、`ROADMAP.zh-CN.md` 和 `task_plan.md` 的 V0.6.2 状态；`docs/README.md` 已登记 required staged Requirements workflow / architecture 文档，本同步未修改 docs registry。
+- 未发现需要新增到 `findings.md` 的 workflow decision、defect 或 risk；除本轮 `DONE_FILE` 外，本次只写 final sync summary artifact。
+
 ## 会话：2026-05-24
+
+### V0.6.2 Staged Requirements Package 文档登记与回归
+- **状态：** implementation verified; focused and full regression passed.
+- 完成 U4 文档交付：新增 `docs/workflow/staged-requirements-package-policy.md` 和 `docs/architecture/staged-requirements-package-architecture.md`，并在 `docs/README.md` 登记；同步 `requirements-e2e-review-policy.md` 中 V0.6.2 Test Strategy Brief / Unit Plan 继承边界。
+- 同步版本边界：`ROADMAP.md` / `ROADMAP.zh-CN.md` 记录 V0.6.2 为 Staged Requirements Package，原 Strict Test Presence / TC1-TC7 并入 V0.6.3 Strict Test Presence / Per-Role Runner Configuration；`task_plan.md` 同步当前阶段记录。
+- Focused regression 暴露并修复 annotation command placeholder 问题：`_expanded_command()` 原先对整段 args 使用 `str.format()`，会把 fake annotation JSON/Python 字典里的普通 `{...}` 误识别为占位符；现改为只替换 Waygate 已知 `{role}`、`{stage}`、`{prompt_path}`、`{artifact_path}` token，并把 staged requirements annotation fixture 的 `summary` 改为简体中文以符合既有 annotation artifact 合同。
+- 未发现需要沉淀到 `findings.md` 的新增长期决策；本轮根因和验证证据记录在本进度项。
+- 已完成 RED/GREEN 与回归验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_requirements_staged_package.py -q -k 'staged_requirements_docs or roadmap'` -> failed on missing `docs/workflow/staged-requirements-package-policy.md`
+  - GREEN: 同一命令 -> `2 passed, 20 deselected`
+  - Focused regression first run -> failed in `test_staged_requirements_final_assembly_run_once_preflights_before_annotation` on annotation arg placeholder expansion, then on non-Chinese `summary`
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_v061_annotation_agents.py -q` -> `211 passed in 29.46s`
+  - `python3 -m pytest workflow_controller/tests -q` -> `649 passed in 76.77s`
+  - `git diff --check` -> passed
 
 ### Final Acceptance 人工批准不再被观察记录阻断
 - **状态：** implementation verified; full regression passed.

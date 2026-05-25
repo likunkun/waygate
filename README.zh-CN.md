@@ -26,6 +26,7 @@ Waygate 不是要把人移出流程，而是把人的注意力放回真正重要
 | --- | --- |
 | 可恢复工作流 | `session.json`、`events.jsonl`、approvals 和 artifacts 是事实源。 |
 | Requirements Gate | 生成人类可审阅的需求与验收标准，并执行可追溯校验，包括 V0.6.0j 基础设施缺口追问和验证留痕。 |
+| 分段 Requirements Package | V0.6.2 把过载的 Requirements draft 拆成 scope、产品设计、架构和测试策略 checkpoint，再汇总到一个最终人工 Requirements approval gate。 |
 | 外部 spec intake | V0.6.1 会把受支持的 OpenSpec/OpenAPI 和 Spec Kit 来源导入为可审计 conversion artifacts，并对 unsupported/deferred 格式给出清晰错误。 |
 | Unit Plan Gate | Unit Plan 必须映射目标、AC、测试用例、Journey 和验证命令。 |
 | 标注 Agent | V0.6.1 支持在 Requirements、Unit Plan 和 Final Acceptance 人工 gate 前运行非批准型、按 role 配置的 annotation / verification-assist pass。 |
@@ -57,7 +58,7 @@ Waygate 以 Python 3 代码运行。本地开发和验证使用 `python -m pytes
 
 Waygate Markdown spec intake 仍可通过 `init`、`start`、`go` 的 `--spec <path>` 使用。V0.6.1 还支持受支持 OpenSpec/OpenAPI 输入和受支持 Spec Kit 输入；识别到但 unsupported 或 deferred 的格式会清晰失败，不会被静默导入。
 
-V0.6.1 外部 spec intake、annotation、提示词合同和灵活验收证据规则见 [docs/workflow/external-spec-intake-and-annotation-policy.md](docs/workflow/external-spec-intake-and-annotation-policy.md) 和 [docs/architecture/external-spec-intake-and-annotation-architecture.md](docs/architecture/external-spec-intake-and-annotation-architecture.md)。V0.6.0m golden-path E2E 前置校验和 V0.6.2 Requirements E2E 审阅规则见 [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md)。V0.6.0j Requirements 基础设施追问与验证规则见 [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md)。V0.6.0k UI/UX skill policy 见 [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md)。V0.6.0i 文档生命周期入口见 [docs/README.md](docs/README.md)。V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
+V0.6.2 staged Requirements package 规则见 [docs/workflow/staged-requirements-package-policy.md](docs/workflow/staged-requirements-package-policy.md) 和 [docs/architecture/staged-requirements-package-architecture.md](docs/architecture/staged-requirements-package-architecture.md)。V0.6.1 外部 spec intake、annotation、提示词合同和灵活验收证据规则见 [docs/workflow/external-spec-intake-and-annotation-policy.md](docs/workflow/external-spec-intake-and-annotation-policy.md) 和 [docs/architecture/external-spec-intake-and-annotation-architecture.md](docs/architecture/external-spec-intake-and-annotation-architecture.md)。V0.6.0m golden-path E2E 前置校验和 V0.6.2 Requirements E2E 审阅规则见 [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md)。V0.6.0j Requirements 基础设施追问与验证规则见 [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md)。V0.6.0k UI/UX skill policy 见 [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md)。V0.6.0i 文档生命周期入口见 [docs/README.md](docs/README.md)。V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
 
 ## Waygate Agent 使用的 Skills
 

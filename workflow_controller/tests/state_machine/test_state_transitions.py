@@ -38,6 +38,24 @@ class TestComputeNextAllowedAction:
         state = _make_state(currentStep='REQUIREMENTS_DRAFT')
         assert compute_next_allowed_action(state) == 'run_requirements_drafter'
 
+    @pytest.mark.parametrize(
+        ('step', 'expected_action'),
+        [
+            ('REQUIREMENTS_SCOPE_DRAFT', 'run_requirements_scope_drafter'),
+            ('REQUIREMENTS_PRODUCT_DESIGN_BRIEF', 'run_requirements_product_design_brief'),
+            ('REQUIREMENTS_TECH_ARCH_BRIEF', 'run_requirements_architecture_brief'),
+            ('REQUIREMENTS_TEST_STRATEGY_BRIEF', 'run_requirements_test_strategy_brief'),
+            ('REQUIREMENTS_PACKAGE_ASSEMBLE', 'assemble_requirements_package'),
+        ],
+    )
+    def test_staged_requirements_steps_route_to_stage_actions(
+        self,
+        step: str,
+        expected_action: str,
+    ) -> None:
+        state = _make_state(currentStep=step, stagedRequirementsEnabled=True)
+        assert compute_next_allowed_action(state) == expected_action
+
     def test_unit_plan_draft(self) -> None:
         state = _make_state(currentStep='UNIT_PLAN_DRAFT')
         assert compute_next_allowed_action(state) == 'run_unit_plan_drafter'

@@ -2,6 +2,14 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2
+
+- 新增 Staged Requirements Package 流程：Requirements Scope、Product Design Brief、Technical Architecture Brief 和 Requirements Test Strategy Brief 作为聚焦 checkpoint 运行，最后仍保留一个人工 Requirements approval gate。
+- 新增最终 package assembly，包含 checkpoint artifact hash、附录内容和 staged package 一致性校验。
+- 将详细目标项目基础设施 intake 后移到 Unit Plan Infrastructure / Execution Context Matrix，Requirements 只保留最小上下文。
+- Unit Plan 继承 staged artifact path、hash 和 status metadata，确保 scope、AC、Journey、设计、架构、E2E 和风险义务继续向下游传递。
+- 新增 V0.6.2 正式 workflow / architecture 文档，并将 Strict Test Presence / Per-Role Runner Configuration 保留在 V0.6.3。
+
 ## 0.6.1
 
 - 新增受支持的 OpenSpec/OpenAPI 和 Spec Kit intake 路径，生成 normalized requirements、source maps、validation reports，并对 unsupported/deferred 格式给出清晰错误。

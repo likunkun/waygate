@@ -26,6 +26,12 @@ from workflow_controller.gates.parsers import (
 from workflow_controller.journeys import final_journey_matrix_rows
 from workflow_controller.prototype_review import prototype_conformance_matrix_rows
 from workflow_controller.scope_audit import final_scope_audit_gate_lines
+from workflow_controller.requirements_package import (
+    CHECKPOINT_STAGES,
+    STAGE_APPENDIX_TITLES,
+    STAGE_LABELS,
+    artifact_hash,
+)
 
 
 def ensure_requirements_gate(state: dict[str, Any], approvals_dir: Path) -> Path:
@@ -37,6 +43,54 @@ def ensure_requirements_gate(state: dict[str, Any], approvals_dir: Path) -> Path
 
 def render_requirements_gate_body(state: dict[str, Any]) -> str:
     return format_requirements_gate_body(state, _requirements_body(state))
+
+
+def render_staged_requirements_package_gate_body(state: dict[str, Any]) -> str:
+    package = state.get('requirementsPackage')
+    artifacts = package.get('artifacts') if isinstance(package, dict) else {}
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+
+    records: list[tuple[str, dict[str, Any], str]] = []
+    for stage in CHECKPOINT_STAGES:
+        record = artifacts.get(stage)
+        if not isinstance(record, dict):
+            raise ValueError(f'staged requirements package missing artifact record for {stage}')
+        path = Path(str(record.get('path') or ''))
+        expected_hash = str(record.get('hash') or '')
+        if not path.exists():
+            raise ValueError(f'staged requirements package missing artifact file for {stage}: {path}')
+        actual_hash = artifact_hash(path)
+        if actual_hash != expected_hash:
+            raise ValueError(f'staged requirements package hash mismatch for {stage}: expected {expected_hash}, got {actual_hash}')
+        if record.get('status') != 'complete':
+            raise ValueError(f'staged requirements package artifact {stage} is not complete')
+        records.append((stage, record, path.read_text(encoding='utf-8').strip()))
+
+    lines = [
+        '# 需求与验收确认',
+        '',
+        *_requirements_summary_lines(state),
+        '',
+        '## Artifact Hashes',
+        '',
+        '| Stage | Path | Hash | Status |',
+        '| --- | --- | --- | --- |',
+    ]
+    for stage, record, _body in records:
+        lines.append(
+            f"| {stage} | `{record.get('path')}` | `{record.get('hash')}` | `{record.get('status')}` |"
+        )
+    lines.append('')
+    for stage, _record, body in records:
+        lines.extend([
+            f"## {STAGE_APPENDIX_TITLES[stage]}",
+            '',
+            body or f'- {STAGE_LABELS[stage]} artifact is empty.',
+            '',
+        ])
+
+    return '\n'.join(lines).rstrip() + '\n'
 
 
 def ensure_unit_plan_gate(state: dict[str, Any], approvals_dir: Path) -> Path:

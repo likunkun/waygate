@@ -1,6 +1,6 @@
 # Requirements E2E Review Policy
 
-This policy belongs to V0.6.2 Strict Test Presence and was tightened in V0.6.0m for golden-path Unit Plan preflight. It moves real E2E/browser/API/service acceptance review into the Requirements gate so humans approve the method before Unit Plan and implementation.
+This policy belongs to V0.6.3 Strict Test Presence after the original V0.6.2 scope was merged into V0.6.3. It was tightened in V0.6.0m for golden-path Unit Plan preflight. Under V0.6.2 Staged Requirements Package, the Requirements Test Strategy Brief is the checkpoint that carries this review before Unit Plan and implementation; the Unit Plan then inherits the method through its test cases and `Infrastructure / Execution Context Matrix`.
 
 ## Trigger
 
@@ -31,6 +31,8 @@ Controller preflight blocks approval when 4.6 is missing, rows do not cover requ
 ## Unit Plan Inheritance
 
 Unit Plan must preserve the approved 4.6 method, real entrypoint, fixture/setup, command dependencies, environment kind, mock policy, and assertion intent. Weakening those details requires a Requirements change request and a new Requirements approval.
+
+In V0.6.2 staged mode, these details are inherited from the Requirements Test Strategy Brief and the final assembled Requirements package artifact hashes. The detailed project infrastructure inventory is no longer duplicated as a full Requirements `4.9` responsibility; it is expanded in the Unit Plan `Infrastructure / Execution Context Matrix`, where execution commands, local runtime, dependencies, documentation, and debugging facts are closer to the implementation plan.
 
 For V0.6.0m, Unit Plan approval also blocks any `golden_path: true` test case unless it satisfies all of these conditions:
 

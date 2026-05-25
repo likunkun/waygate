@@ -2,7 +2,7 @@
 
 [中文](USAGE.zh-CN.md) | [README](README.md)
 
-This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.1 external spec intake and annotation policy, V0.6.0m golden-path E2E preflight, V0.6.0j Requirements infrastructure follow-up, V0.6.0k UI/UX skill policy, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), [docs/workflow/external-spec-intake-and-annotation-policy.md](docs/workflow/external-spec-intake-and-annotation-policy.md), [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md), [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md), and [docs/architecture/external-spec-intake-and-annotation-architecture.md](docs/architecture/external-spec-intake-and-annotation-architecture.md).
+This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.2 staged Requirements package policy, V0.6.1 external spec intake and annotation policy, V0.6.0m golden-path E2E preflight, V0.6.0j Requirements infrastructure follow-up, V0.6.0k UI/UX skill policy, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), [docs/workflow/staged-requirements-package-policy.md](docs/workflow/staged-requirements-package-policy.md), [docs/workflow/external-spec-intake-and-annotation-policy.md](docs/workflow/external-spec-intake-and-annotation-policy.md), [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md), [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md), [docs/architecture/staged-requirements-package-architecture.md](docs/architecture/staged-requirements-package-architecture.md), and [docs/architecture/external-spec-intake-and-annotation-architecture.md](docs/architecture/external-spec-intake-and-annotation-architecture.md).
 
 For V0.6.0h environment preparation, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For an introduction and best-practices walkthrough, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
@@ -11,6 +11,8 @@ V0.6.0f tightens browser acceptance evidence: Playwright or browser tests that m
 V0.6.0m moves golden-path E2E mistakes earlier: Unit Plan approval rejects `golden_path: true` cases that are not `layer=e2e`, lack a real entrypoint, use mock environments, omit concrete fixture/setup, or are absent from `verification_commands`. API-only or service-only E2E can use pytest/API/service commands and does not require browser fields.
 
 V0.6.1 adds OpenSpec/OpenAPI and Spec Kit spec intake, non-approving annotation / verification-assist passes before human gates, and flexible verifier evidence rows with `human_review_required`.
+
+V0.6.2 splits Requirements drafting into focused scope, product design, architecture, and test strategy checkpoints, then assembles one final Requirements approval package with checkpoint hashes.
 
 ## Prerequisites
 
@@ -27,7 +29,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.1_all.deb
+sudo apt install ./dist/waygate_0.6.2_all.deb
 waygate --help
 waygate doctor
 waygate doctor --color auto

@@ -140,7 +140,7 @@ Delivered work:
 - Add bilingual recommended-environment docs under `docs/operations/`, including `docs/operations/recommended-environment.md`.
 - Add bilingual Waygate introduction and best-practices docs under `docs/product/`, including a 10-12 page PPT outline without generating a `.pptx`.
 - Package the new product and operations docs under `/usr/share/doc/waygate/docs/`.
-- Keep V0.6.1 External Spec Intake and V0.6.2 Strict Test Presence as future planned scope, not V0.6.0e delivery.
+- Keep V0.6.1 External Spec Intake, V0.6.2 Staged Requirements Package, and V0.6.3 Strict Test Presence / Per-Role Runner Configuration as future planned scope, not V0.6.0e delivery.
 
 ### V0.6.0f - Real E2E Evidence Gate
 
@@ -249,36 +249,46 @@ Delivered work:
 - Preserve approval semantics: annotation agents and agent-assisted verification may focus human review on risks, but they cannot approve, skip, or bypass controller gates.
 - Document the long-lived workflow rules in `docs/workflow/external-spec-intake-and-annotation-policy.md` and the module boundaries in `docs/architecture/external-spec-intake-and-annotation-architecture.md`.
 
-### V0.6.2 - Strict Test Presence
+### V0.6.2 - Staged Requirements Package
+
+Goal: reduce Requirements-stage overload by splitting scope, product design, architecture, and test strategy into focused checkpoints while preserving one final human Requirements approval gate.
+
+Status: final acceptance approved on 2026-05-25; implemented in package `0.6.2`.
+
+Delivered work:
+
+- Replace the single overloaded Requirements draft with staged checkpoints: Requirements Scope, Product Design Brief, Technical Architecture Brief, and Requirements Test Strategy Brief.
+- Assemble one final `requirements-and-acceptance.md` approval package that embeds all checkpoint artifacts and records their hashes.
+- Move detailed `## 4.9 目标项目基础设施信息` intake from Requirements into the Unit Plan Infrastructure / Execution Context Matrix, while keeping a minimal context gate in Requirements.
+- Preserve V0.6.1 gate ordering: controller preflight and annotation run before the final human Requirements gate; approved legacy gates are not forced to migrate.
+- Ensure Unit Plan explicitly consumes staged artifact paths and hashes so scope, ACs, journeys, product design, architecture, prototype, E2E, and risk obligations continue downstream.
+- Document the long-lived workflow rules in `docs/workflow/staged-requirements-package-policy.md` and the module boundaries in `docs/architecture/staged-requirements-package-architecture.md`.
+
+### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.
 
 Planned work:
 
+- Merge the original V0.6.2 Strict Test Presence scope into V0.6.3.
 - Bring Test Strategist forward into the requirements phase.
 - Require executable test cases for non-manual ACs.
 - Require concrete fixture/setup, command, and expected assertion in Unit Plan test cases.
 - Ensure verifier and final acceptance evidence rows map back to test case IDs.
+- Move Final Scope Audit evidence-row gaps earlier: Unit Plan preflight must reject planned test cases whose command cannot be executed exactly, resolved by `command_id`, or explicitly covered by an aggregate command that emits one passed evidence row per mapped test case.
+- Add role-specific runner, command, env, and timeout configuration for Builder, Refiner, Reviewer, Verifier, and Bug Fix Agent.
+- Normalize role metadata in artifacts.
+- Keep secret values out of logs and artifacts.
 
 Test case contract hardening sequence:
 
 - TC1 - Test Case Contract v1: define a stable Unit Plan `test_cases[]` contract with `acceptance_criteria[]`, `covers_obligations[]`, `covers_journeys[]`, `layer`, `path_type`, `golden_path`, `setup[]`, `entrypoint`, optional `cleanup[]`, `command_id`, `manual_evidence`, and `assertions[]`.
 - TC2 - Source of truth cleanup: make `test_cases[]` in the Controller State Patch the authoritative source; render the Markdown Test Case Matrix from that structured data instead of treating prose and JSON as separate facts.
 - TC3 - Backward compatibility and migration: continue reading older fields such as `acceptance_criterion`, `fixture`, `command`, `evidence`, `expected`, `journey_refs`, and `journeyRefs`, but normalize them into the v1 contract and surface migration warnings.
-- TC4 - Strict Unit Plan preflight: block missing or unknown AC/AO/Journey references, unresolved `command_id`, static-only behavior coverage, weak assertions, missing E2E `user_steps`, missing setup/entrypoint, and manual evidence masquerading as automated proof.
+- TC4 - Strict Unit Plan preflight: block missing or unknown AC/AO/Journey references, unresolved `command_id`, static-only behavior coverage, weak assertions, missing E2E `user_steps`, missing setup/entrypoint, manual evidence masquerading as automated proof, and aggregate commands that cannot declare exact mapped test-case coverage before human Unit Plan approval.
 - TC5 - Pre-human Test Case Review Agent: before Unit Plan human confirmation, run a non-approving reviewer that annotates shallow assertions, fake fixtures, over-broad commands, happy-path-only E2E coverage, AO name-only coverage, and test cases that do not prove their mapped AC.
-- TC6 - Verifier evidence alignment: emit one evidence row per planned test case, include command IDs and structured assertions, mark unexecuted planned test cases as `missing`, and keep manual evidence separate from automated `passed` results.
+- TC6 - Verifier evidence alignment: emit one evidence row per planned test case, include command IDs and structured assertions, mark unexecuted planned test cases as `missing`, and keep manual evidence separate from automated `passed` results. Do not rely on fuzzy command substring matching; bind rows through `command_id`, planned test case id, and structured assertion coverage. Aggregated pytest commands must fan out into per-test-case evidence rows or be rejected before human Unit Plan approval.
 - TC7 - Final Acceptance matrix upgrade: show the full chain from Requirement / Use Case / Journey / AC / AO to Test Case and Evidence so humans review traceable proof instead of agent summaries.
-
-### V0.6.3 - Per-Role Runner Configuration
-
-Goal: make Builder, Refiner, Reviewer, Verifier, and Bug Fix Agent independently configurable.
-
-Planned work:
-
-- Add role-specific runner, command, env, and timeout configuration.
-- Normalize role metadata in artifacts.
-- Keep secret values out of logs and artifacts.
 
 ### V0.6.4 - OpenCode Runner
 

@@ -140,7 +140,7 @@
 - 在 `docs/operations/` 新增双语推荐环境 recommended-environment 文档，包括 `docs/operations/recommended-environment.zh-CN.md`。
 - 在 `docs/product/` 新增双语 Waygate introduction and best practices 文档，包含 10-12 页 PPT 大纲，但不生成 `.pptx`。
 - Debian 包会把新增 product 与 operations 文档安装到 `/usr/share/doc/waygate/docs/`。
-- V0.6.1 External Spec Intake 和 V0.6.2 Strict Test Presence 仍是后续 planned scope，不属于 V0.6.0e 当前交付。
+- V0.6.1 External Spec Intake、V0.6.2 Staged Requirements Package，以及 V0.6.3 Strict Test Presence / Per-Role Runner Configuration 仍是后续 planned scope，不属于 V0.6.0e 当前交付。
 
 ### V0.6.0f - Real E2E Evidence Gate
 
@@ -249,36 +249,46 @@
 - 保持人工审批语义不变：标注 Agent 和 agent-assisted verification 只能帮助人聚焦风险，不能批准、跳过或绕过 controller gate。
 - 将长期流程规则沉淀到 `docs/workflow/external-spec-intake-and-annotation-policy.md`，将模块边界沉淀到 `docs/architecture/external-spec-intake-and-annotation-architecture.md`。
 
-### V0.6.2 - Strict Test Presence
+### V0.6.2 - Staged Requirements Package
+
+目标：降低 Requirements 阶段一次性产物过载，把范围、产品设计、技术架构和测试策略拆成聚焦 checkpoint，同时保留一个最终人工 Requirements approval gate。
+
+状态：Final Acceptance 已于 2026-05-25 批准；已在 package `0.6.2` 实施。
+
+已交付：
+
+- 将单个过载 Requirements draft 替换为分段 checkpoint：Requirements Scope、Product Design Brief、Technical Architecture Brief 和 Requirements Test Strategy Brief。
+- 组装一个最终 `requirements-and-acceptance.md` 审批包，嵌入所有 checkpoint artifact 并记录 hash。
+- 将详细 `## 4.9 目标项目基础设施信息` intake 从 Requirements 后移到 Unit Plan 的 Infrastructure / Execution Context Matrix；Requirements 只保留最小上下文门槛。
+- 保留 V0.6.1 gate ordering：controller preflight 和 annotation 在最终人工 Requirements gate 前运行；已批准的 legacy gate 不强制迁移。
+- 确保 Unit Plan 显式消费 staged artifact path/hash，让 scope、AC、Journey、产品设计、架构、prototype、E2E 和风险义务持续向下游传递。
+- 将长期流程规则沉淀到 `docs/workflow/staged-requirements-package-policy.md`，将模块边界沉淀到 `docs/architecture/staged-requirements-package-architecture.md`。
+
+### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。
 
 计划：
 
+- 原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。
 - 将 Test Strategist 前移到 requirements 阶段。
 - 要求每条非 manual AC 都有可执行测试用例。
 - Unit Plan test case 必须包含 fixture/setup、command 和 expected assertion。
 - Verifier 和 Final Acceptance 的 evidence rows 必须能映射回 Test Case ID。
+- 将 Final Scope Audit 的 evidence row 缺口前移：Unit Plan 预检必须阻断那些 command 不能被精确执行、不能通过 `command_id` 解析，或只被聚合命令模糊覆盖但无法为每个映射 test case 产出 passed evidence row 的测试用例。
+- 为 Builder、Refiner、Reviewer、Verifier 和 Bug Fix Agent 增加 role-specific runner、command、env 和 timeout 配置。
+- 标准化 artifacts 中的 role metadata。
+- 避免 secrets value 出现在 logs 和 artifacts 中。
 
 测试用例契约强化路线：
 
 - TC1 - Test Case Contract v1：定义稳定的 Unit Plan `test_cases[]` 契约，包含 `acceptance_criteria[]`、`covers_obligations[]`、`covers_journeys[]`、`layer`、`path_type`、`golden_path`、`setup[]`、`entrypoint`、可选 `cleanup[]`、`command_id`、`manual_evidence` 和 `assertions[]`。
 - TC2 - 事实源收敛：以 Controller State Patch 中的 `test_cases[]` 作为权威事实源；Markdown Test Case Matrix 只从结构化数据渲染，不再让 prose 和 JSON 各自成为事实源。
 - TC3 - 旧格式兼容与迁移：继续读取 `acceptance_criterion`、`fixture`、`command`、`evidence`、`expected`、`journey_refs`、`journeyRefs` 等旧字段，但归一化到 v1 契约，并输出迁移 warning。
-- TC4 - 严格 Unit Plan 预检：阻断缺失或未知 AC/AO/Journey 引用、无法解析的 `command_id`、static-only 冒充行为覆盖、弱断言、E2E 缺少 `user_steps`、缺少 setup/entrypoint，以及 manual evidence 冒充自动化通过。
+- TC4 - 严格 Unit Plan 预检：阻断缺失或未知 AC/AO/Journey 引用、无法解析的 `command_id`、static-only 冒充行为覆盖、弱断言、E2E 缺少 `user_steps`、缺少 setup/entrypoint、manual evidence 冒充自动化通过，以及无法在人工 Unit Plan approval 前声明精确 test-case 覆盖关系的聚合命令。
 - TC5 - 人工确认前 Test Case Review Agent：在 Unit Plan 人工确认前运行不具备批准权的审阅 agent，标注浅断言、假 fixture、过宽命令、只覆盖 happy path 的 E2E、AO 只挂名覆盖，以及不能证明所映射 AC 的测试用例。
-- TC6 - Verifier evidence 对齐：每个计划中的 test case 都产出 evidence row，包含 command ID 和结构化 assertions；未执行的计划 test case 明确标记为 `missing`；manual evidence 与自动化 `passed` 结果分开。
+- TC6 - Verifier evidence 对齐：每个计划中的 test case 都产出 evidence row，包含 command ID 和结构化 assertions；未执行的计划 test case 明确标记为 `missing`；manual evidence 与自动化 `passed` 结果分开。不再依赖命令字符串模糊包含匹配；通过 `command_id`、计划 test case id 和结构化 assertions 绑定 evidence row。聚合 pytest 命令必须展开为每个 test case 的 evidence row，否则在 Unit Plan 人工批准前阻断。
 - TC7 - Final Acceptance 矩阵升级：展示从 Requirement / Use Case / Journey / AC / AO 到 Test Case 和 Evidence 的完整链路，让人工审的是可追踪证据而不是 agent 总结。
-
-### V0.6.3 - Per-Role Runner Configuration
-
-目标：Builder、Refiner、Reviewer、Verifier 和 Bug Fix Agent 都可以独立配置。
-
-计划：
-
-- 增加 role-specific runner、command、env 和 timeout 配置。
-- 标准化 artifacts 中的 role metadata。
-- 避免 secrets value 出现在 logs 和 artifacts 中。
 
 ### V0.6.4 - OpenCode Runner
 

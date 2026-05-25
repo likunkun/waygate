@@ -16,11 +16,16 @@ from workflow_controller.gates.parsers import (
 from workflow_controller.gates.generators import (
     ensure_final_acceptance_gate,
     render_requirements_gate_body,
+    render_staged_requirements_package_gate_body,
     render_unit_plan_gate_body,
 )
 from workflow_controller.prompts.builder import _render_builder_execution_prompt
 from workflow_controller.prompts.requirements import _render_requirements_draft_prompt
 from workflow_controller.prompts.unit_plan import _render_unit_plan_draft_prompt
+from workflow_controller.requirements_package import (
+    REQUIREMENTS_PACKAGE_VERSION,
+    mark_stage_artifact,
+)
 from workflow_controller.prototype_review import validate_final_prototype_conformance
 from workflow_controller.steps.builder import prepare_builder_prompt
 
@@ -41,6 +46,26 @@ def run_rrc(*args: str) -> subprocess.CompletedProcess[str]:
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding='utf-8')
+
+
+def _staged_requirements_state(tmp_path: Path) -> dict:
+    artifacts: dict[str, dict[str, str]] = {}
+    state = {
+        'requestedOutcome': 'V0.6.2',
+        'feasibleOutcome': 'V0.6.2',
+        'currentUnitId': 'v0-6-2-u3-package-assembly-validation',
+        'requirementsPackage': {
+            'version': REQUIREMENTS_PACKAGE_VERSION,
+            'artifacts': artifacts,
+        },
+        'units': [],
+        'objectiveCoverage': [],
+    }
+    for stage in ['scope', 'product_design', 'architecture', 'test_strategy']:
+        path = tmp_path / f'{stage}.md'
+        path.write_text(f'# {stage}\n', encoding='utf-8')
+        artifacts[stage] = mark_stage_artifact(state, stage, path)
+    return state
 
 
 def _make_target_workspace(tmp_path: Path) -> tuple[Path, Path]:
@@ -85,6 +110,83 @@ def test_unit_plan_prompt_allows_covered_legacy_units_outside_executable_units(t
     assert '已完成的既有 unit id 如果在 objectiveCoverage 中标记为 `covered`' in prompt
     assert '每个未完成的 `partial` objectiveCoverage unit id 都必须存在于 `units`' in prompt
     assert 'every objectiveCoverage unit id must exist in units' not in prompt
+
+
+def test_unit_plan_prompt_injects_staged_requirements_artifacts(tmp_path: Path) -> None:
+    requirements_path = tmp_path / 'requirements-and-acceptance.md'
+    requirements_path.write_text('# Requirements\n', encoding='utf-8')
+    state = _staged_requirements_state(tmp_path)
+
+    prompt = _render_unit_plan_draft_prompt(
+        state,
+        requirements_path,
+        tmp_path / 'unit-plan-body.md',
+    )
+
+    for stage, record in state['requirementsPackage']['artifacts'].items():
+        assert stage in prompt
+        assert record['path'] in prompt
+        assert record['hash'] in prompt
+        assert record['status'] in prompt
+    assert 'Infrastructure / Execution Context Matrix' in prompt
+    assert '代码仓库' in prompt
+    assert '项目部署运行时环境' in prompt
+    assert '调试分析方法' in prompt
+    assert '参考环境' in prompt
+    assert '文档地址' in prompt
+    assert '架构/交互逻辑/接口说明' in prompt
+    assert '依赖信息' in prompt
+    assert '继承 AC、Journey、Product Design、Architecture、Test Strategy、E2E 方法、界面相关义务和风险义务' in prompt
+
+
+def test_requirements_revision_staged_route_rewinds_to_scope_and_stales_downstream(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, dry_run=True, auto_approve=True)
+    state = _staged_requirements_state(tmp_path)
+    state.update({
+        'task_id': 'target-v0-6-2',
+        'currentStep': 'PLAN_APPROVED',
+        'lastVerifiedStep': 'PLAN_CREATED',
+        'status': 'active',
+        'scopeApproved': True,
+        'requirementsAccepted': True,
+        'requirementsAcceptedHash': 'sha256:req',
+        'requirementsAcceptedBy': 'tester',
+        'unitPlanAccepted': True,
+        'unitPlanAcceptedHash': 'sha256:unit',
+        'unitPlanAcceptedBy': 'tester',
+        'unitPlanDraftGenerated': True,
+        'units': [{'id': 'v0-6-2-u3-package-assembly-validation', 'passes': False}],
+        'objectiveCoverage': [
+            {
+                'objective': 'Complete V0.6.2 development acceptance',
+                'units': ['v0-6-2-u3-package-assembly-validation'],
+                'status': 'partial',
+            }
+        ],
+    })
+    controller.init_state(state, force=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    write_gate_file(
+        approvals_dir / 'requirements-and-acceptance.md',
+        render_staged_requirements_package_gate_body(state),
+    )
+    write_gate_file(approvals_dir / 'unit-plan.md', '# Unit Plan\n')
+
+    controller.revise_human_gate('requirements', reason='scope needs one more journey')
+
+    revised = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert revised['currentStep'] == 'REQUIREMENTS_SCOPE_DRAFT'
+    assert revised['requirementsAccepted'] is False
+    assert revised['unitPlanAccepted'] is False
+    assert 'scope needs one more journey' in revised['requirementsRevisionFeedback']
+    artifacts = revised['requirementsPackage']['artifacts']
+    assert artifacts['scope']['status'] == 'stale'
+    assert artifacts['product_design']['status'] == 'stale'
+    assert artifacts['architecture']['status'] == 'stale'
+    assert artifacts['test_strategy']['status'] == 'stale'
+    assert artifacts['final_gate']['status'] == 'stale'
 
 
 def test_unit_plan_prompt_defect_fix_mode_requires_bug_fix_units_without_requirement_changes(tmp_path: Path) -> None:
