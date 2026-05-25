@@ -969,6 +969,135 @@ def _write_valid_unit_plan(path: Path, *, command: str = 'pytest tests/test_deli
     )
 
 
+def _write_unit_plan_with_aggregate_command(path: Path) -> None:
+    case_command = 'python3 -m pytest tests/test_api.py::test_one -q'
+    aggregate_command = 'python3 -m pytest tests/test_api.py -q'
+    path.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        f'| AC-1 | TC-API-ONE | functional | {case_command} | API behavior works |\n\n'
+        '## Controller State Patch\n\n'
+        '```json\n'
+        + json.dumps(
+            {
+                'currentUnitId': 'unit-01',
+                'objectiveCoverage': [
+                    {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'}
+                ],
+                'units': [
+                    {
+                        'id': 'unit-01',
+                        'name': 'Delivery unit',
+                        'passes': False,
+                        'test_cases': [
+                            {
+                                'id': 'TC-API-ONE',
+                                'acceptance_criterion': 'AC-1',
+                                'layer': 'functional',
+                                'command': case_command,
+                                'expected': 'API behavior works',
+                            }
+                        ],
+                        'verification_commands': [aggregate_command],
+                    }
+                ],
+            }
+        )
+        + '\n```\n',
+        encoding='utf-8',
+    )
+
+
+def test_unit_plan_preflight_rejects_aggregate_command_before_human_review(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-1 [verification: functional]: API behavior works.\n',
+        encoding='utf-8',
+    )
+    _write_unit_plan_with_aggregate_command(approvals_dir / 'unit-plan.md')
+
+    state = controller.get_status()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'unit plan evidence row preflight is incomplete' in state['blockedReason']
+    assert 'TC-API-ONE' in state['blockedReason']
+    assert 'exactly match verification_commands' in state['blockedReason']
+
+
+def test_unit_plan_approval_rejects_aggregate_command_after_human_approval(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': False,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': False,
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-1 [verification: functional]: API behavior works.\n',
+        encoding='utf-8',
+    )
+    gate_path = approvals_dir / 'unit-plan.md'
+    _write_unit_plan_with_aggregate_command(gate_path)
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'unit plan evidence row preflight is incomplete' in state['blockedReason']
+    assert 'TC-API-ONE' in state['blockedReason']
+    assert 'exactly match verification_commands' in state['blockedReason']
+
+
 def _controller_state_for_unit_plan(workspace: Path) -> dict[str, Any]:
     return {
         'task_id': 'delivery',
@@ -5602,6 +5731,30 @@ def test_annotation_runtime_blocker_guidance_does_not_request_requirements_revis
     assert 'Requirements/Acceptance Criteria 合同问题' not in guidance
 
 
+def test_final_scope_audit_missing_ac_guidance_points_to_unit_plan_revision(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    reason = (
+        'final acceptance gate invalid: final scope audit has blocker(s): '
+        'approved acceptance criterion AC-2 has no passed or valid manual evidence row'
+    )
+    state = {
+        'status': 'blocked',
+        'currentStep': 'FINAL_WALKTHROUGH_PREPARE',
+        'blockedReason': reason,
+    }
+
+    guidance = rrc_controller_module.format_stop_guidance(
+        state,
+        state_dir=state_dir,
+        color_enabled=False,
+    )
+
+    assert rrc_controller_module.classify_blocked_reason(reason, state) == 'unit_plan_contract'
+    assert 'Unit Plan/执行计划约束问题' in guidance
+    assert f'waygate revise --gate unit-plan --state-dir {shlex.quote(str(state_dir))}' in guidance
+    assert 'waygate revise --gate requirements' not in guidance
+
+
 def test_drive_color_always_colors_blocked_guidance(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -5899,6 +6052,103 @@ def test_unblock_rejects_unit_plan_contract_blocked_state(tmp_path: Path) -> Non
     assert 'waygate revise --gate unit-plan' in result.stderr
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['status'] == 'blocked'
+
+
+def test_final_scope_audit_missing_ac_blocker_revises_unit_plan_and_preserves_requirements(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    reason = (
+        'final acceptance gate invalid: final scope audit has blocker(s): '
+        'approved acceptance criterion AC-2 has no passed or valid manual evidence row'
+    )
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'FINAL_WALKTHROUGH_PREPARE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'blocked',
+            'blockedReason': reason,
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req',
+            'requirementsAcceptedBy': 'tester',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:plan',
+            'unitPlanAcceptedBy': 'tester',
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': True}],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-1 [verification: functional]: First behavior works.\n'
+        '- AC-2 [verification: functional]: Second behavior works.\n',
+        encoding='utf-8',
+    )
+    unit_plan_gate = approvals_dir / 'unit-plan.md'
+    _write_valid_unit_plan(unit_plan_gate)
+    approve_gate_file(unit_plan_gate, actor='tester')
+    audit_path = state_dir / 'artifacts' / 'final-scope-audit' / 'scope-audit.json'
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(
+        json.dumps(
+            {
+                'issues': [
+                    {
+                        'severity': 'blocker',
+                        'type': 'missing_acceptance_criterion_evidence',
+                        'id': 'AC-2',
+                        'message': 'approved acceptance criterion AC-2 has no passed or valid manual evidence row',
+                    }
+                ],
+                'ac_coverage': {'uncovered_ids': ['AC-2']},
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    captured_feedback: list[str] = []
+
+    def fake_run_controller_unit_plan_drafter(state: dict[str, Any]) -> None:
+        captured_feedback.append(state['unitPlanRevisionFeedback'])
+        draft_dir = state_dir / 'artifacts' / 'unit-plan-draft'
+        draft_dir.mkdir(parents=True, exist_ok=True)
+        _write_valid_unit_plan(draft_dir / 'unit-plan-body.md')
+        _write_valid_unit_plan(approvals_dir / 'unit-plan.md')
+        (draft_dir / 'unit-plan-draft-summary.json').write_text(
+            json.dumps({'status': 'ok'}),
+            encoding='utf-8',
+        )
+
+    monkeypatch.setattr(controller, '_run_controller_unit_plan_drafter', fake_run_controller_unit_plan_drafter)
+
+    controller.revise_human_gate('unit-plan')
+
+    assert captured_feedback
+    assert 'Final Scope Audit Missing Evidence Rows' in captured_feedback[0]
+    assert 'AC-2' in captured_feedback[0]
+    assert 'scope-audit.json' in captured_feedback[0]
+    assert 'exact command' in captured_feedback[0]
+    revised = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert revised['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert revised['status'] == 'active'
+    assert revised['requirementsAccepted'] is True
+    assert revised['requirementsAcceptedHash'] == 'sha256:req'
+    assert revised['unitPlanAccepted'] is False
+    assert 'unitPlanAcceptedHash' not in revised
+    assert revised.get('blockedReason') is None
 
 
 def test_builder_agent_blocked_persists_official_controller_blocked_state(

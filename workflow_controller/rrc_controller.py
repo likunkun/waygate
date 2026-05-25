@@ -61,6 +61,7 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_acceptance_obligation_coverage,
     validate_unit_plan_design_architecture_traceability,
     validate_unit_plan_document_deliverables,
+    validate_unit_plan_evidence_row_preflight,
     validate_unit_plan_final_acceptance_walkthrough,
     validate_unit_plan_golden_path,
     validate_unit_plan_prototype_conformance,
@@ -78,6 +79,7 @@ from workflow_controller.journeys import (
     validate_and_write_journey_contract,
 )
 from workflow_controller.scope_audit import (
+    load_final_scope_audit,
     validate_final_scope_audit,
     write_final_scope_audit,
 )
@@ -601,6 +603,7 @@ class RalphRefinerController:
             validate_unit_plan_document_deliverables(gate_path, candidate_state)
             validate_unit_plan_verification_environment(candidate_state)
             validate_unit_plan_verification_assist_contract(candidate_state, artifacts_dir=self.artifacts_dir)
+            validate_unit_plan_evidence_row_preflight(candidate_state)
             validate_unit_plan_golden_path(candidate_state)
             validate_unit_plan_real_e2e_evidence_policy(
                 self.approvals_dir / 'requirements-and-acceptance.md',
@@ -1047,6 +1050,62 @@ class RalphRefinerController:
             f'{blocker_summary}\n\n'
             f'Builder artifact: {summary_path}\n'
         )
+
+    def _final_scope_audit_unit_plan_revision_feedback(self, state: dict[str, Any]) -> str:
+        reason = str(state.get('blockedReason') or '').strip()
+        if not _is_final_scope_missing_ac_evidence_blocker(reason):
+            raise ValueError(
+                'Current state does not support Final Scope Audit recovery to Unit Plan revision: '
+                'blockedReason is not missing AC evidence'
+            )
+        audit = load_final_scope_audit(self.artifacts_dir)
+        issues: list[dict[str, Any]] = []
+        if isinstance(audit, dict):
+            issues = [
+                issue for issue in audit.get('issues') or []
+                if isinstance(issue, dict)
+                and str(issue.get('type') or '') == 'missing_acceptance_criterion_evidence'
+            ]
+        if not issues:
+            ac_ids = sorted({match.upper() for match in re.findall(r'\bAC-\d+\b', reason, flags=re.IGNORECASE)})
+            issues = [
+                {
+                    'id': ac_id,
+                    'message': reason,
+                    'type': 'missing_acceptance_criterion_evidence',
+                }
+                for ac_id in ac_ids
+            ]
+        if not issues:
+            issues = [{'id': 'unknown-AC', 'message': reason, 'type': 'missing_acceptance_criterion_evidence'}]
+
+        audit_json = self.artifacts_dir / 'final-scope-audit' / 'scope-audit.json'
+        audit_markdown = self.artifacts_dir / 'final-scope-audit' / 'scope-audit.md'
+        lines = [
+            '## Final Scope Audit Missing Evidence Rows',
+            '',
+            'Final Scope Audit blocked before Final Acceptance because approved acceptance criteria do not have matching passed evidence rows.',
+            '',
+            f'- Audit JSON: `{audit_json}`',
+            f'- Audit Markdown: `{audit_markdown}`',
+            '',
+            'Missing acceptance criteria:',
+        ]
+        for issue in issues:
+            ac_id = str(issue.get('id') or 'unknown-AC').strip()
+            message = str(issue.get('message') or '').strip()
+            lines.append(f'- {ac_id}: {message or "missing passed evidence row"}')
+        lines.extend([
+            '',
+            'Required Unit Plan revision:',
+            '',
+            '- Add or repair Unit Plan test_cases for every missing AC.',
+            '- Every automated test case must use an exact command that exactly matches one string in verification_commands.',
+            '- Do not rely on aggregate pytest commands, substring/fuzzy command matching, or manual evidence for automated evidence rows.',
+            '- verification_assist cases may omit command only when they explicitly declare verification_assist.',
+            '- Preserve the approved Requirements unless the AC contract itself must change through a separate Requirements change request.',
+        ])
+        return '\n'.join(lines).rstrip() + '\n'
 
     def _prepend_builder_blocked_unit_plan_feedback(
         self,
@@ -1713,10 +1772,16 @@ class RalphRefinerController:
         state = self.store.load_state()
         current_step = state.get('currentStep')
         builder_blocked_feedback: str | None = None
+        final_scope_audit_feedback: str | None = None
         if current_step == 'WAITING_UNIT_PLAN_APPROVAL':
             pass
         elif current_step in {'PLAN_APPROVED', 'EXECUTE_UNIT'}:
             builder_blocked_feedback = self._builder_blocked_unit_plan_revision_feedback(state)
+        elif (
+            current_step == 'FINAL_WALKTHROUGH_PREPARE'
+            and _is_final_scope_missing_ac_evidence_blocker(str(state.get('blockedReason') or ''))
+        ):
+            final_scope_audit_feedback = self._final_scope_audit_unit_plan_revision_feedback(state)
         else:
             raise ValueError('Unit plan can only be revised at WAITING_UNIT_PLAN_APPROVAL')
 
@@ -1736,6 +1801,8 @@ class RalphRefinerController:
                 builder_blocked_feedback,
                 revision_feedback,
             )
+        if final_scope_audit_feedback:
+            revision_feedback = final_scope_audit_feedback.rstrip() + '\n\n' + revision_feedback
         state['unitPlanRevisionFeedback'] = revision_feedback
         state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
         if not controller_validation_only:
@@ -2438,6 +2505,7 @@ class RalphRefinerController:
                     validate_unit_plan_document_deliverables(gate_path, state)
                     validate_unit_plan_verification_environment(state)
                     validate_unit_plan_verification_assist_contract(state, artifacts_dir=self.artifacts_dir)
+                    validate_unit_plan_evidence_row_preflight(state)
                     validate_unit_plan_golden_path(state)
                     validate_unit_plan_real_e2e_evidence_policy(
                         self.approvals_dir / 'requirements-and-acceptance.md',
@@ -4072,6 +4140,8 @@ def classify_blocked_reason(reason: str, state: dict[str, Any] | None = None) ->
     final_route = str(state.get('finalAcceptanceRejectionRoute') or '')
     if final_route == 'blocked' or 'final acceptance rejected as blocked' in text:
         return 'final_acceptance_blocked'
+    if _is_final_scope_missing_ac_evidence_blocker(reason):
+        return 'unit_plan_contract'
     if (
         'annotation pass failed before human gate' in text
         or 'annotation runtime' in text
@@ -4087,6 +4157,17 @@ def classify_blocked_reason(reason: str, state: dict[str, Any] | None = None) ->
     if current_step == 'WAITING_FINAL_ACCEPTANCE':
         return 'final_acceptance_contract'
     return 'blocked'
+
+
+def _is_final_scope_missing_ac_evidence_blocker(reason: str) -> bool:
+    text = reason.lower()
+    if 'final scope audit' not in text:
+        return False
+    return (
+        'missing_acceptance_criterion_evidence' in text
+        or ('acceptance criterion' in text and 'evidence row' in text)
+        or ('approved acceptance criterion' in text and 'evidence' in text)
+    )
 
 
 def _blocked_category(state: dict[str, Any]) -> str:

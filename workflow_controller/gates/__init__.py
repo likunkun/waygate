@@ -35,6 +35,7 @@ from workflow_controller.gates.validators import (  # noqa: F401
     validate_final_real_e2e_evidence,
     validate_unit_plan_acceptance_obligation_coverage,
     validate_unit_plan_design_architecture_traceability,
+    validate_unit_plan_evidence_row_preflight,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_real_e2e_evidence_policy,
     validate_unit_plan_test_strategy,
