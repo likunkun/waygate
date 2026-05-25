@@ -1854,6 +1854,70 @@ def test_codex_patcher_fills_critical_gap_and_enters_unit_plan_gate(tmp_path: Pa
     assert summary['test_strategist']['gap_counts']['critical'] == 0
 
 
+def test_unit_plan_drafter_failure_message_includes_runner_status_and_reason(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    approvals_dir = state_dir / 'approvals'
+    artifacts_dir = state_dir / 'artifacts'
+    approvals_dir.mkdir(parents=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements\n\n- AC-1 [verification: integration]: Delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    state = _controller_state_for_unit_plan(workspace)
+    state['agentRunner'] = 'tmux-codex'
+    state['agentCommand'] = 'codex'
+    state['tmuxTarget'] = '2.0'
+    run_dir = artifacts_dir / 'unit-plan-draft' / 'runs' / 'unit-plan-draft-run'
+    done_path = run_dir / 'done.json'
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-codex', agent_command='codex', tmux_target='2.0')
+
+    def fake_run_agent_backend(request):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        done_path.write_text(
+            json.dumps({'status': 'done', 'summary': 'draft written', 'run_id': run_dir.name}),
+            encoding='utf-8',
+        )
+        (request.artifact_dir / 'unit-plan-body.md').write_text('body exists\n', encoding='utf-8')
+        return RunnerResult(
+            backend='tmux-codex',
+            status='agent_busy_after_done',
+            command=['tmux', 'send-keys', '-t', '2.0', 'Enter'],
+            returncode=124,
+            stdout='',
+            stderr='tmux-codex wrote DONE_FILE but the pane still shows a Working state.',
+            run_dir=run_dir,
+            prompt_path=request.prompt_path,
+            done_path=done_path,
+            done_payload={'status': 'done', 'summary': 'draft written', 'run_id': run_dir.name},
+            runner_metadata={'backend': 'tmux-codex'},
+        )
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'make_runner', fake_make_runner)
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+
+    try:
+        run_unit_plan_drafter(state, approvals_dir, artifacts_dir)
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError('unit plan drafter failure must raise RuntimeError')
+
+    assert 'Unit plan drafter failed with exit code 124' in message
+    assert 'status=agent_busy_after_done' in message
+    assert 'tmux-codex wrote DONE_FILE but the pane still shows a Working state.' in message
+    assert str(artifacts_dir / 'unit-plan-draft' / 'unit-plan-draft-summary.json') in message
+
+
 def test_controller_renders_major_minor_gap_report_in_existing_unit_plan_gate(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
