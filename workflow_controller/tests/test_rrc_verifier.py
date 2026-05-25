@@ -73,6 +73,35 @@ def test_run_verifier_generates_passing_verification_when_green_test_exists(tmp_
     ]
 
 
+def test_run_verifier_uses_manual_evidence_alias_in_evidence_row(tmp_path: Path) -> None:
+    unit_dir = tmp_path / 'artifacts' / 'unit-01'
+    _write(unit_dir / 'green-test.txt', 'PASSED manual observation\n')
+
+    state = {
+        'currentUnitId': 'unit-01',
+        'units': [
+            {
+                'id': 'unit-01',
+                'test_cases': [
+                    {
+                        'id': 'TC-MANUAL-ALIAS',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'manual',
+                        'manual_evidence': 'green-test.txt records manual observation',
+                        'expected': 'manual observation confirms AC-1',
+                    }
+                ],
+            }
+        ],
+    }
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    verification = validate_verification_evidence_schema(unit_dir / 'verification.json')
+    assert verification['evidence_rows'][0]['manual_evidence'] == 'green-test.txt records manual observation'
+
+
 def test_run_verifier_generates_failing_verification_when_green_test_missing_or_invalid(tmp_path: Path) -> None:
     unit_dir = tmp_path / 'artifacts' / 'unit-01'
     _write(unit_dir / 'green-test.txt', 'still running maybe?\n')

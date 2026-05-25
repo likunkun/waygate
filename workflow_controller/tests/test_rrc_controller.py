@@ -969,6 +969,58 @@ def _write_valid_unit_plan(path: Path, *, command: str = 'pytest tests/test_deli
     )
 
 
+def _write_valid_unit_plan_with_manual_ac2(
+    path: Path,
+    *,
+    command: str = 'pytest tests/test_delivery.py -q',
+) -> None:
+    path.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        f'| AC-1 | TC-AC1 | integration | {command} | Delivery behavior works |\n'
+        '| AC-2 | TC-AC2-MANUAL | manual | artifacts/manual/ac-2-gap-report.md | Test strategy gaps are visible |\n\n'
+        '## Controller State Patch\n\n'
+        '```json\n'
+        + json.dumps(
+            {
+                'currentUnitId': 'unit-01',
+                'objectiveCoverage': [
+                    {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'}
+                ],
+                'units': [
+                    {
+                        'id': 'unit-01',
+                        'name': 'Delivery unit',
+                        'passes': False,
+                        'test_cases': [
+                            {
+                                'id': 'TC-AC1',
+                                'acceptance_criterion': 'AC-1',
+                                'layer': 'integration',
+                                'command': command,
+                                'expected': 'Delivery behavior works',
+                            },
+                            {
+                                'id': 'TC-AC2-MANUAL',
+                                'acceptance_criterion': 'AC-2',
+                                'layer': 'manual',
+                                'evidence_type': 'manual_evidence',
+                                'manual_evidence': 'artifacts/manual/ac-2-gap-report.md',
+                                'expected': 'Test strategy gaps are visible in the Unit Plan gate',
+                            },
+                        ],
+                        'verification_commands': [command],
+                    }
+                ],
+            }
+        )
+        + '\n```\n',
+        encoding='utf-8',
+    )
+
+
 def _write_unit_plan_with_aggregate_command(path: Path) -> None:
     case_command = 'python3 -m pytest tests/test_api.py::test_one -q'
     aggregate_command = 'python3 -m pytest tests/test_api.py -q'
@@ -1001,6 +1053,73 @@ def _write_unit_plan_with_aggregate_command(path: Path) -> None:
                             }
                         ],
                         'verification_commands': [aggregate_command],
+                    }
+                ],
+            }
+        )
+        + '\n```\n',
+        encoding='utf-8',
+    )
+
+
+def _init_unit_plan_preflight_controller(state_dir: Path, state_patch: dict[str, Any] | None = None) -> RalphRefinerController:
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-01',
+        'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+        'lastVerifiedStep': 'PLAN_CREATED',
+        'status': 'active',
+        'requestedOutcome': 'usable-system',
+        'feasibleOutcome': 'usable-system',
+        'scopeApproved': False,
+        'humanGatesRequired': True,
+        'requirementsAccepted': True,
+        'unitPlanAccepted': False,
+        'unitPlanDraftGenerated': True,
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+        ],
+        'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+    }
+    if state_patch:
+        state.update(state_patch)
+    controller.init_state(state, force=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 3. Acceptance Criteria\n'
+        '- AC-1 [verification: functional]: API behavior works.\n',
+        encoding='utf-8',
+    )
+    return controller
+
+
+def _write_unit_plan_for_single_case(path: Path, case: dict[str, Any], verification_commands: list[str]) -> None:
+    path.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        f"| AC-1 | {case.get('id', 'TC-AC1')} | {case.get('layer', 'functional')} | "
+        f"{case.get('command') or case.get('manual_evidence') or case.get('evidence') or 'verification_assist'} | "
+        f"{case.get('expected', 'API behavior works')} |\n\n"
+        '## Controller State Patch\n\n'
+        '```json\n'
+        + json.dumps(
+            {
+                'currentUnitId': 'unit-01',
+                'objectiveCoverage': [
+                    {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'}
+                ],
+                'units': [
+                    {
+                        'id': 'unit-01',
+                        'name': 'Delivery unit',
+                        'passes': False,
+                        'test_cases': [case],
+                        'verification_commands': verification_commands,
                     }
                 ],
             }
@@ -1051,6 +1170,95 @@ def test_unit_plan_preflight_rejects_aggregate_command_before_human_review(tmp_p
     assert 'unit plan evidence row preflight is incomplete' in state['blockedReason']
     assert 'TC-API-ONE' in state['blockedReason']
     assert 'exactly match verification_commands' in state['blockedReason']
+
+
+def test_unit_plan_preflight_rejects_approved_ac_covered_only_by_verification_assist(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = _init_unit_plan_preflight_controller(
+        state_dir,
+        {
+            'annotationAgents': {
+                'final_acceptance_verification_assist': {
+                    'enabled': True,
+                    'role': 'final_acceptance_verification_assist',
+                    'backend': 'codex',
+                    'command': sys.executable,
+                    'args': ['-c', 'print("ok")'],
+                }
+            }
+        },
+    )
+    _write_unit_plan_for_single_case(
+        state_dir / 'approvals' / 'unit-plan.md',
+        {
+            'id': 'TC-AC1-ASSIST',
+            'acceptance_criterion': 'AC-1',
+            'layer': 'functional',
+            'expected': 'API behavior works.',
+            'verification_assist': {
+                'description': 'Inspect the API retry/idempotency behavior.',
+                'expected': 'Structured evidence confirms API behavior.',
+            },
+        },
+        [],
+    )
+
+    state = controller.get_status()
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert state['unitPlanAccepted'] is False
+    assert 'final evidence candidate preflight is incomplete' in state['blockedReason']
+    assert 'AC-1' in state['blockedReason']
+    assert 'TC-AC1-ASSIST' in state['blockedReason']
+    assert 'verification_assist is auxiliary' in state['blockedReason']
+
+
+def test_unit_plan_preflight_accepts_approved_ac_with_exact_command_candidate(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = _init_unit_plan_preflight_controller(state_dir)
+    command = 'python3 -m pytest tests/test_api.py::test_api_behavior -q'
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    _write_unit_plan_for_single_case(
+        gate_path,
+        {
+            'id': 'TC-AC1-COMMAND',
+            'acceptance_criterion': 'AC-1',
+            'layer': 'functional',
+            'command': command,
+            'expected': 'API behavior works.',
+        },
+        [command],
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'PLAN_CREATED'
+    assert state['unitPlanAccepted'] is True
+
+
+def test_unit_plan_preflight_accepts_approved_ac_with_explicit_manual_evidence(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = _init_unit_plan_preflight_controller(state_dir)
+    gate_path = state_dir / 'approvals' / 'unit-plan.md'
+    _write_unit_plan_for_single_case(
+        gate_path,
+        {
+            'id': 'TC-AC1-MANUAL',
+            'acceptance_criterion': 'AC-1',
+            'layer': 'manual',
+            'evidence_type': 'manual_evidence',
+            'manual_evidence': 'artifacts/manual/ac-1-observation.md',
+            'expected': 'Manual observation records the API behavior.',
+        },
+        [],
+    )
+    approve_gate_file(gate_path, actor='tester')
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'PLAN_CREATED'
+    assert state['unitPlanAccepted'] is True
 
 
 def test_unit_plan_approval_rejects_aggregate_command_after_human_approval(tmp_path: Path) -> None:
@@ -1974,7 +2182,7 @@ def test_e2e_test_strategist_unit_plan_flow(tmp_path: Path, monkeypatch) -> None
             (request.artifact_dir / 'unit-plan-gap-report.json').write_text(json.dumps({'gaps': gaps}), encoding='utf-8')
         else:
             planner_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
-            _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+            _write_valid_unit_plan_with_manual_ac2(request.artifact_dir / 'unit-plan-body.md')
         return _fake_agent_result(request)
 
     monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
@@ -6125,8 +6333,8 @@ def test_final_scope_audit_missing_ac_blocker_revises_unit_plan_and_preserves_re
         captured_feedback.append(state['unitPlanRevisionFeedback'])
         draft_dir = state_dir / 'artifacts' / 'unit-plan-draft'
         draft_dir.mkdir(parents=True, exist_ok=True)
-        _write_valid_unit_plan(draft_dir / 'unit-plan-body.md')
-        _write_valid_unit_plan(approvals_dir / 'unit-plan.md')
+        _write_valid_unit_plan_with_manual_ac2(draft_dir / 'unit-plan-body.md')
+        _write_valid_unit_plan_with_manual_ac2(approvals_dir / 'unit-plan.md')
         (draft_dir / 'unit-plan-draft-summary.json').write_text(
             json.dumps({'status': 'ok'}),
             encoding='utf-8',

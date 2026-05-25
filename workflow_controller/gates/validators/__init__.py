@@ -801,6 +801,63 @@ def validate_unit_plan_evidence_row_preflight(state: dict[str, Any]) -> None:
         raise ValueError('unit plan evidence row preflight is incomplete: ' + '; '.join(issues))
 
 
+def validate_unit_plan_final_evidence_candidates(
+    requirements_path: Path,
+    state: dict[str, Any],
+) -> None:
+    if not requirements_path.exists():
+        return
+    requirements_content = gate_body(requirements_path.read_text(encoding='utf-8'))
+    required_ac_ids = sorted(_requirements_acceptance_criterion_ids(requirements_content))
+    if not required_ac_ids:
+        return
+
+    valid_candidates: dict[str, list[str]] = {ac_id: [] for ac_id in required_ac_ids}
+    weak_candidates: dict[str, list[str]] = {ac_id: [] for ac_id in required_ac_ids}
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict):
+            continue
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        verification_commands = {
+            str(command).strip()
+            for command in unit.get('verification_commands') or []
+            if str(command).strip()
+        }
+        for case in _unit_test_cases(unit):
+            if not isinstance(case, dict):
+                continue
+            ac_ids = _case_acceptance_criterion_ids(case)
+            mapped_ac_ids = sorted(ac_id for ac_id in ac_ids if ac_id in valid_candidates)
+            if not mapped_ac_ids:
+                continue
+            case_id = str(case.get('id') or case.get('name') or 'unknown-test')
+            issue = _final_evidence_candidate_issue(case, verification_commands)
+            label = f'unit {unit_id} test case {case_id}'
+            for ac_id in mapped_ac_ids:
+                if issue:
+                    weak_candidates[ac_id].append(f'{label} {issue}')
+                else:
+                    valid_candidates[ac_id].append(label)
+
+    missing = [ac_id for ac_id in required_ac_ids if not valid_candidates[ac_id]]
+    if not missing:
+        return
+
+    issues: list[str] = []
+    for ac_id in missing:
+        weak = weak_candidates.get(ac_id) or []
+        if weak:
+            issues.append(f'{ac_id} has no final-valid evidence candidate; weak candidate(s): ' + '; '.join(weak))
+        else:
+            issues.append(f'{ac_id} has no Unit Plan test case with a final-valid evidence candidate')
+    raise ValueError(
+        'unit plan final evidence candidate preflight is incomplete: '
+        + '; '.join(issues)
+        + '; add an exact test_cases[].command listed in verification_commands[] '
+        'or an explicit manual evidence case'
+    )
+
+
 def validate_unit_plan_real_e2e_evidence_policy(
     requirements_path: Path,
     state: dict[str, Any],
@@ -3062,6 +3119,23 @@ def _case_is_manual_evidence_case(case: dict[str, Any]) -> bool:
         or layer.startswith('manual ')
         or evidence_type in {'manual', 'manual_evidence'}
     )
+
+
+def _final_evidence_candidate_issue(case: dict[str, Any], verification_commands: set[str]) -> str | None:
+    command = str(case.get('command') or '').strip()
+    if command:
+        if command in verification_commands:
+            return None
+        return 'command is not an exact verification_commands[] entry'
+    if _case_is_manual_evidence_case(case):
+        if _case_has_manual_evidence(case):
+            return None
+        return 'is manual but lacks manual_evidence, evidence, or evidence_path'
+    if _case_has_verification_assist(case):
+        return 'uses verification_assist; verification_assist is auxiliary and cannot statically prove final-valid AC coverage'
+    if _case_has_manual_evidence(case):
+        return 'has manual evidence but is not declared as layer=manual or evidence_type=manual_evidence'
+    return 'lacks exact command or explicit manual evidence'
 
 
 def _case_has_explicit_real_entrypoint(case: dict[str, Any]) -> bool:

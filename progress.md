@@ -1,5 +1,27 @@
 # 进度日志
 
+## 会话：2026-05-25
+
+### Unit Plan Evidence Closure Gap
+- **状态：** implementation verified; full regression passed; classroom V0.3 evidence artifact regenerated.
+- 根因：既有 Unit Plan evidence-row preflight 只检查 automated test case 的 exact command，且显式跳过 `verification_assist`；它没有检查每个 approved Requirements AC 是否至少有一个 Final Scope Audit 可计数的 planned evidence candidate，导致 AC 可能只靠 `verification_assist` / `needs_human_review` 到终验才暴露缺口。
+- 已新增 controller 回归：approved AC 仅由 `verification_assist` 覆盖时 Unit Plan preflight 阻断；approved AC 由 exact command 覆盖时通过；approved AC 由 explicit manual evidence 覆盖时通过；Final Scope Audit 继续拒绝 `needs_human_review` 作为 AC coverage。
+- 已实现 `validate_unit_plan_final_evidence_candidates()` 并接入 Unit Plan gate validation；已更新 `docs/workflow/unit-plan-evidence-row-preflight-policy.md`。
+- 已完成 focused 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'approved_ac_covered_only_by_verification_assist or approved_ac_with_exact_command_candidate or approved_ac_with_explicit_manual_evidence'` -> `1 failed, 2 passed`，失败点为 assist-only AC 未设置 `blockedReason`。
+  - GREEN: 同一 controller focused 范围 -> `3 passed`；`python3 -m pytest workflow_controller/tests/test_scope_audit.py -q -k 'needs_human_review'` -> `1 passed`。
+  - RED/GREEN: `python3 -m pytest workflow_controller/tests/test_rrc_verifier.py -q -k 'manual_evidence_alias'` -> RED `1 failed`，GREEN `1 passed`，确保 Unit Plan `manual_evidence` alias 能进入 verifier row。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_v061_flexible_evidence.py workflow_controller/tests/test_scope_audit.py -q` -> `93 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'unit_plan or final_scope_audit or verification_assist'` -> 初次发现测试 fixture 对 AC-2 缺 evidence candidate；修正 fixture 后 -> `48 passed, 164 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_verifier.py -q` -> `7 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `635 passed in 77.35s`。
+  - `git diff --check` -> passed。
+  - `python -m pytest workflow_controller/tests -q` -> failed because this shell has no `python` executable (`zsh:1: command not found: python`); `python3` is the verified interpreter.
+- Classroom V0.3 修订：
+  - Added deterministic Go test `TestV03CapabilityErrorRetryIdempotencyEvidence` in `/home/lichangkun/code/classroom/services/api/v03_contract_test.go`.
+  - Updated `.rrc-controller-v0.3/approvals/unit-plan.md` and `.rrc-controller-v0.3/session.json` so `TC-V03-AC05-AC08-ERROR-RETRY-IDEMPOTENCY-EVIDENCE` uses exact command `cd services/api && sh -c 'test -n "$DATABASE_URL" && go test ./... -run TestV03CapabilityErrorRetryIdempotencyEvidence'`, no `verification_assist`.
+  - Verified exact command against `classroom_v03_test`; regenerated `.rrc-controller-v0.3/artifacts/target-v0-3/verification.json` and `.rrc-controller-v0.3/artifacts/final-scope-audit/scope-audit.json`; Final Scope Audit now reports AC coverage `13/13`, uncovered `[]`, issues `[]`.
+
 ## 会话：2026-05-24
 
 ### Final Acceptance 人工批准不再被观察记录阻断
