@@ -106,6 +106,7 @@
 - [x] timeout/idle 诊断：区分 idle、无输出、wrong run、invalid done
 - [x] Agent timeout/idle 可恢复等待：`timeout` / `agent_idle_without_done` 保持当前阶段 active，记录 `recoverableAgentWait`，通过 `waygate retry` 恢复，不再把 transient runner silence 当作 Requirements / Unit Plan revise。
 - [x] Waygate 停止状态原因化引导：recoverable wait、human gate、blocked、max steps、no progress 和 no next action 均输出原因/下一步/命令；`retry` 限定 timeout/idle，环境类 blocked 通过 `unblock` 恢复，Builder blocked artifact reconciliation 为官方 blocked state。
+- [x] Unit Plan AC 证据闭环预检：approved Requirements AC 必须有 exact command 或 explicit manual evidence final-valid candidate，`verification_assist` 只能作为辅助，不能静态替代 Final Scope Audit coverage。
 - [x] 完整测试通过
 - **状态：** complete
 

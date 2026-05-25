@@ -63,6 +63,7 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_design_architecture_traceability,
     validate_unit_plan_document_deliverables,
     validate_unit_plan_evidence_row_preflight,
+    validate_unit_plan_final_evidence_candidates,
     validate_unit_plan_final_acceptance_walkthrough,
     validate_unit_plan_golden_path,
     validate_unit_plan_infrastructure_execution_context_matrix,
@@ -634,6 +635,10 @@ class RalphRefinerController:
             validate_unit_plan_verification_environment(candidate_state)
             validate_unit_plan_verification_assist_contract(candidate_state, artifacts_dir=self.artifacts_dir)
             validate_unit_plan_evidence_row_preflight(candidate_state)
+            validate_unit_plan_final_evidence_candidates(
+                self.approvals_dir / 'requirements-and-acceptance.md',
+                candidate_state,
+            )
             validate_unit_plan_golden_path(candidate_state)
             validate_unit_plan_real_e2e_evidence_policy(
                 self.approvals_dir / 'requirements-and-acceptance.md',

@@ -1021,7 +1021,13 @@ def _evidence_row_from_test_case(
         'acceptance_obligations': _string_list(case.get('covers_obligations') or case.get('coversObligations')),
         'layer': _optional_str(case.get('layer')),
         'command': command,
-        'manual_evidence': _optional_str(case.get('evidence')),
+        'manual_evidence': _optional_str(
+            case.get('evidence')
+            or case.get('manual_evidence')
+            or case.get('manualEvidence')
+            or case.get('evidence_path')
+            or case.get('evidencePath')
+        ),
         'expected': _optional_str(case.get('expected') or case.get('expected_result') or case.get('expectedResult')),
         'status': status,
         'result_index': result_index,
