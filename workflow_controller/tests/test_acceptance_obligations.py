@@ -1454,6 +1454,59 @@ def test_requirements_e2e_review_matrix_accepts_command_intent_without_exact_com
     validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
 
 
+@pytest.mark.parametrize(
+    'command',
+    [
+        'bash tests/e2e/verify-orders.sh --journey J-001 --ac AC-01',
+        'sh tests/e2e/verify-orders.sh --journey J-001 --ac AC-01',
+        './tests/e2e/verify-orders.sh --journey J-001 --ac AC-01',
+        'scripts/verify-orders-e2e.sh --journey J-001 --ac AC-01',
+        '/home/gaoqi/wkspace/claude_project/karen/dev24/docs/run_cascade_unbind_retain_case.sh',
+    ],
+)
+def test_requirements_e2e_review_matrix_accepts_concrete_shell_e2e_commands(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(command=command)
+        ),
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        'bash',
+        'sh',
+        'bash test',
+        'sh test',
+        './test',
+        'echo tests/e2e/verify-orders.sh',
+        'run e2e',
+    ],
+)
+def test_requirements_e2e_review_matrix_rejects_vague_shell_commands(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(command=command)
+        ),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='Verification Command'):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
 def test_requirements_e2e_review_matrix_requires_rows_for_e2e_ac_and_journey(tmp_path: Path) -> None:
     gate = tmp_path / 'requirements-and-acceptance.md'
     gate.write_text(

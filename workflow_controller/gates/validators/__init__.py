@@ -2282,6 +2282,13 @@ def _requirements_e2e_command_intent_is_specific(value: str) -> bool:
         or re.search(r'\b[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+', value)
         or re.search(r'/(?:api|service|services|routes?|pages?)(?:/|\b)', value, flags=re.IGNORECASE)
     )
+    command_text = value.replace('`', '').strip()
+    has_shell_script_command = bool(
+        re.search(r'^(?:bash|sh)\s+[^\s`|;&]+\.sh(?:\s|$)', command_text)
+        or re.search(r'^(?:\./|/|[^\s`|;&]+/)[^\s`|;&]*\.sh(?:\s|$)', command_text)
+    )
+    if has_shell_script_command:
+        return True
     has_command_family = any(marker in normalized for marker in command_family_markers)
     has_verification_intent = any(marker in normalized for marker in intent_markers)
     if not has_command_family or not has_verification_intent:
