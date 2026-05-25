@@ -132,6 +132,24 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
     assert '原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。' in roadmap_zh
 
 
+def test_unit_plan_evidence_row_preflight_policy_doc_and_registry_exist() -> None:
+    workflow_doc = _read('docs/workflow/unit-plan-evidence-row-preflight-policy.md')
+    registry = _read('docs/README.md')
+
+    for expected in [
+        'exactly matches',
+        'verification_commands',
+        'verification_assist',
+        'Manual evidence does not satisfy automated evidence-row preflight',
+        'FINAL_WALKTHROUGH_PREPARE',
+        'waygate revise --gate unit-plan',
+        'preserves Requirements approval',
+    ]:
+        assert expected in workflow_doc
+
+    assert 'docs/workflow/unit-plan-evidence-row-preflight-policy.md' in registry
+
+
 def test_annotation_policy_docs_use_current_codex_cli_contract() -> None:
     workflow_doc = _read('docs/workflow/external-spec-intake-and-annotation-policy.md')
     usage = _read('USAGE.md')

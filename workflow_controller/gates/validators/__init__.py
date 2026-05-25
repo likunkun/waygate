@@ -914,6 +914,46 @@ def validate_unit_plan_verification_assist_contract(
         raise ValueError('unit plan verification_assist contract is invalid: ' + '; '.join(issues))
 
 
+def validate_unit_plan_evidence_row_preflight(state: dict[str, Any]) -> None:
+    issues: list[str] = []
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict) or bool(unit.get('passes')):
+            continue
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        verification_commands = {
+            str(command).strip()
+            for command in unit.get('verification_commands') or []
+            if str(command).strip()
+        }
+        for case in _unit_test_cases(unit):
+            if not isinstance(case, dict):
+                continue
+            if _case_has_verification_assist(case) or _case_is_manual_evidence_case(case):
+                continue
+            case_id = str(case.get('id') or case.get('name') or 'unknown-test')
+            command = str(case.get('command') or '').strip()
+            if not command:
+                if _case_has_manual_evidence(case):
+                    issues.append(
+                        f'unit {unit_id} test case {case_id} manual evidence does not satisfy '
+                        'automated evidence row preflight; add a command that exactly matches '
+                        'verification_commands or declare verification_assist'
+                    )
+                else:
+                    issues.append(
+                        f'unit {unit_id} test case {case_id} must declare a command that exactly '
+                        'matches verification_commands or declare verification_assist'
+                    )
+                continue
+            if command not in verification_commands:
+                issues.append(
+                    f'unit {unit_id} test case {case_id} command must exactly match '
+                    f'verification_commands: {command}'
+                )
+    if issues:
+        raise ValueError('unit plan evidence row preflight is incomplete: ' + '; '.join(issues))
+
+
 def validate_unit_plan_real_e2e_evidence_policy(
     requirements_path: Path,
     state: dict[str, Any],
@@ -3160,6 +3200,29 @@ def _golden_path_case_issue(
 
 def _case_has_verification_assist(case: dict[str, Any]) -> bool:
     return 'verification_assist' in case or 'verificationAssist' in case
+
+
+def _case_has_manual_evidence(case: dict[str, Any]) -> bool:
+    return bool(
+        str(
+            case.get('manual_evidence')
+            or case.get('manualEvidence')
+            or case.get('evidence')
+            or case.get('evidence_path')
+            or case.get('evidencePath')
+            or ''
+        ).strip()
+    )
+
+
+def _case_is_manual_evidence_case(case: dict[str, Any]) -> bool:
+    layer = str(case.get('layer') or '').strip().lower()
+    evidence_type = str(case.get('evidence_type') or case.get('evidenceType') or '').strip().lower()
+    return (
+        layer in {'manual', 'human', 'inspection'}
+        or layer.startswith('manual ')
+        or evidence_type in {'manual', 'manual_evidence'}
+    )
 
 
 def _case_has_explicit_real_entrypoint(case: dict[str, Any]) -> bool:
