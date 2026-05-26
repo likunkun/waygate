@@ -27,6 +27,7 @@
 | 正式维护文档 | `docs/workflow/controller-agent-interaction-audit.md` | Controller-Agent 主流程、返工路线、关键 prompt 来源和 Requirements 到 Final Acceptance 贯穿性审计。 |
 | 正式维护文档 | `docs/workflow/controller-agent-interaction-audit.html` | 上述审计的自包含 Plannotator 风格可视化版本，便于浏览流程图、提示语卡片和贯穿性矩阵。 |
 | 正式维护文档 | `docs/workflow/external-spec-intake-and-annotation-policy.md` | V0.6.1 外部 spec intake、gate ordering、role-based annotation、prompt contract、non-approval semantics、`descriptive_command` 与 `agent_assisted_case` evidence 流程规则。 |
+| 正式维护文档 | `docs/workflow/unit-plan-evidence-row-preflight-policy.md` | Unit Plan evidence-row 前置校验规则：自动化 test case command 必须精确匹配 `verification_commands`，`verification_assist` 例外，Final Scope Audit 缺 AC evidence row 时回到 Unit Plan revise。 |
 | 正式维护文档 | `docs/architecture/external-spec-intake-and-annotation-architecture.md` | V0.6.1 OpenSpec / Spec Kit import contract、annotation_agents.py、prompt template registry、runner adapter、verification-assist case runner 和 verification.json schema 模块边界。 |
 | 正式维护文档 | `docs/workflow/requirements-e2e-review-policy.md` | V0.6.2 Requirements 阶段真实 E2E / 浏览器/API/service 验收前置审阅矩阵；V0.6.0m Unit Plan golden path 必须是真实 `layer=e2e`。 |
 | 正式维护文档 | `docs/workflow/recoverable-agent-timeout-policy.md` | Agent 超时、idle-without-DONE 和 `waygate retry` 的可恢复等待策略；说明 transient runner silence 不走 `waygate revise`。 |

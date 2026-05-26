@@ -162,6 +162,29 @@ def test_scope_audit_writes_json_and_markdown_with_manual_evidence_rules(tmp_pat
         validate_final_scope_audit(audit)
 
 
+def test_scope_audit_rejects_needs_human_review_as_ac_coverage(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    requirements_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    _write_requirements(requirements_path, ['AC-1'])
+    row = _passed_row('AC-1', [])
+    row['status'] = 'needs_human_review'
+    row['manual_evidence'] = 'Human must still inspect the assisted judgement.'
+    _write_unit_artifacts(artifacts_dir, [row])
+    state = _final_acceptance_state()
+    state['acceptanceObligations'] = []
+
+    audit = write_final_scope_audit(
+        state,
+        artifacts_dir,
+        requirements_path=requirements_path,
+    )
+
+    assert audit['ac_coverage']['covered_ids'] == []
+    assert audit['ac_coverage']['uncovered_ids'] == ['AC-1']
+    with pytest.raises(ValueError, match='AC-1'):
+        validate_final_scope_audit(audit)
+
+
 def test_final_acceptance_gate_renders_final_scope_audit_summary(tmp_path: Path) -> None:
     artifacts_dir = tmp_path / 'artifacts'
     approvals_dir = tmp_path / 'approvals'

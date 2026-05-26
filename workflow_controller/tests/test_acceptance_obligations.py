@@ -18,6 +18,7 @@ from workflow_controller.gates.validators import validate_unit_plan_document_del
 from workflow_controller.gates.validators import validate_unit_plan_golden_path
 from workflow_controller.gates.validators import validate_unit_plan_prototype_conformance
 from workflow_controller.gates.validators import validate_unit_plan_real_e2e_evidence_policy
+from workflow_controller.gates.validators import validate_unit_plan_evidence_row_preflight
 from workflow_controller.prototype_review import validate_final_prototype_conformance
 
 
@@ -908,6 +909,118 @@ def test_unit_plan_requires_e2e_case_for_e2e_acceptance_criterion(tmp_path: Path
 
     with pytest.raises(ValueError, match='AC-01'):
         validate_unit_plan_real_e2e_evidence_policy(requirements, state)
+
+
+def test_unit_plan_evidence_row_preflight_rejects_aggregate_command() -> None:
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-API-ONE',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'functional',
+                        'command': 'python3 -m pytest tests/test_api.py::test_one -q',
+                        'expected': 'first API behavior passes',
+                    },
+                    {
+                        'id': 'TC-API-TWO',
+                        'acceptance_criterion': 'AC-02',
+                        'layer': 'functional',
+                        'command': 'python3 -m pytest tests/test_api.py::test_two -q',
+                        'expected': 'second API behavior passes',
+                    },
+                ],
+                'verification_commands': ['python3 -m pytest tests/test_api.py -q'],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError) as exc:
+        validate_unit_plan_evidence_row_preflight(state)
+
+    message = str(exc.value)
+    assert 'TC-API-ONE' in message
+    assert 'TC-API-TWO' in message
+    assert 'exactly match verification_commands' in message
+
+
+def test_unit_plan_evidence_row_preflight_accepts_exact_commands() -> None:
+    command = 'python3 -m pytest tests/test_api.py::test_one -q'
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-API-ONE',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'functional',
+                        'command': command,
+                        'expected': 'first API behavior passes',
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ]
+    }
+
+    validate_unit_plan_evidence_row_preflight(state)
+
+
+def test_unit_plan_evidence_row_preflight_allows_verification_assist_without_command() -> None:
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-API-ASSIST',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'e2e',
+                        'verification_assist': {
+                            'description': 'Inspect the system manually through the configured assist runner.',
+                            'expected': 'The assisted judgement records structured evidence.',
+                        },
+                        'expected': 'The assisted judgement records structured evidence.',
+                    }
+                ],
+                'verification_commands': [],
+            }
+        ]
+    }
+
+    validate_unit_plan_evidence_row_preflight(state)
+
+
+def test_unit_plan_evidence_row_preflight_rejects_automatic_case_with_manual_evidence_only() -> None:
+    state = {
+        'units': [
+            {
+                'id': 'unit-api',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-API-MANUAL-NOTE',
+                        'acceptance_criterion': 'AC-01',
+                        'layer': 'functional',
+                        'evidence': 'Manual note in approvals/unit-plan.md',
+                        'expected': 'API behavior is verified.',
+                    }
+                ],
+                'verification_commands': [],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError) as exc:
+        validate_unit_plan_evidence_row_preflight(state)
+
+    assert 'manual evidence does not satisfy automated evidence row preflight' in str(exc.value)
 
 
 def test_unit_plan_approval_accepts_non_padded_ao_ids(tmp_path: Path) -> None:

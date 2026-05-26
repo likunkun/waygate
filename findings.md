@@ -1,5 +1,11 @@
 # 发现与决策
 
+## 2026-05-25 Unit Plan AC 证据闭环预检
+
+- `verification_assist` 是辅助验证形态，不能在 Unit Plan 阶段静态替代 Final Scope Audit 可计数的 AC coverage；它可能产出 `needs_human_review`，而 Final Scope Audit 只接受 `passed` 或带有效 manual evidence 的 `manual` evidence row。
+- Unit Plan gate 需要同时检查单个 test case 的 exact command 合同，以及 approved Requirements AC id 是否至少有一个 final-valid evidence candidate。有效 candidate 是精确匹配 `verification_commands[]` 的 command case，或显式 manual layer / `evidence_type=manual_evidence` 且带具体 manual evidence 的 manual case。
+- 如果 approved AC 只有 `verification_assist`、弱 manual note 或没有映射 test case，应在 Unit Plan preflight 阶段阻断，并指向具体 AC 与 test case；不要等到 Final Scope Audit 才暴露缺口。
+
 ## 2026-05-24 Final Acceptance 人工批准优先
 
 - Final Acceptance gate 已经位于 verifier、scope audit、journey/prototype/real E2E/document deliverable 和 walkthrough entrypoint 预检之后；到人工 gate 时，人工批准应是最终验收决策本身。

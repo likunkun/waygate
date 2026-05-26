@@ -57,6 +57,20 @@ def is_recoverable_agent_status(status: Any) -> bool:
     return str(status or '').strip().lower() in RECOVERABLE_AGENT_RUN_STATUSES
 
 
+def agent_failure_details(result: Any) -> str:
+    parts: list[str] = []
+    status = str(getattr(result, 'status', '') or '').strip()
+    if status:
+        parts.append(f'status={status}')
+    stderr = str(getattr(result, 'stderr', '') or '').strip()
+    if stderr:
+        parts.append(f'reason={stderr}')
+    done_path = getattr(result, 'done_path', None)
+    if done_path:
+        parts.append(f'done_path={done_path}')
+    return '; '.join(parts)
+
+
 def _approval_requested_by_state(state: dict[str, Any]) -> bool:
     return bool(state.get('autoApprove'))
 

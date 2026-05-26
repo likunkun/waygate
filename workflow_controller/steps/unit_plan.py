@@ -20,6 +20,7 @@ from workflow_controller.steps._common import (
     RecoverableAgentWait,
     StepResult,
     TestStrategistFallbackBlocked,
+    agent_failure_details,
     is_recoverable_agent_status,
     _write_json,
     _read_json_object,
@@ -126,8 +127,11 @@ def run_unit_plan_drafter(
             done_path=getattr(planner_result, 'done_path', None),
         )
     if planner_result.returncode != 0:
+        details = agent_failure_details(planner_result)
+        details_text = f' ({details})' if details else ''
         raise RuntimeError(
-            f"Unit plan drafter failed with exit code {planner_result.returncode}. See {summary_path}"
+            f"Unit plan drafter failed with exit code {planner_result.returncode}{details_text}. "
+            f"See {summary_path}"
         )
     if not body_path.exists():
         raise FileNotFoundError(
