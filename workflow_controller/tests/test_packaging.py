@@ -123,7 +123,15 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
         capture_output=True,
         check=False,
     )
-    unpacked_retry_help = subprocess.run(
+    unpacked_help = subprocess.run(
+        [str(extract_dir / 'usr/bin/waygate'), '--help'],
+        cwd=tmp_path,
+        env={**env, 'WAYGATE_LIB_DIR': str(extract_dir / 'usr/lib/waygate')},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    unpacked_retry_removed = subprocess.run(
         [str(extract_dir / 'usr/bin/waygate'), 'retry', '--help'],
         cwd=tmp_path,
         env={**env, 'WAYGATE_LIB_DIR': str(extract_dir / 'usr/lib/waygate')},
@@ -146,9 +154,10 @@ def test_build_deb_creates_waygate_package(tmp_path: Path) -> None:
     assert unpacked_version.stdout.strip() == f'waygate {__version__}'
     assert unpacked_start.returncode == 0, unpacked_start.stderr + unpacked_start.stdout
     assert re.match(_timestamped_version_line_re(), unpacked_start.stdout.splitlines()[0])
-    assert unpacked_retry_help.returncode == 0, unpacked_retry_help.stderr + unpacked_retry_help.stdout
-    assert 'usage: waygate retry' in unpacked_retry_help.stdout
-    assert '--state-dir' in unpacked_retry_help.stdout
+    assert unpacked_help.returncode == 0, unpacked_help.stderr + unpacked_help.stdout
+    assert '  retry' not in unpacked_help.stdout
+    assert unpacked_retry_removed.returncode == 2
+    assert 'invalid choice' in unpacked_retry_removed.stderr
     assert './usr/bin/waygate' in contents
     assert './usr/lib/waygate/workflow_controller/cli.py' in contents
     assert './usr/share/doc/waygate/README.md' in contents

@@ -5455,7 +5455,6 @@ def test_requirements_draft_timeout_resumes_existing_pending_run_without_redispa
     os.utime(body_path, (newer_than_timeout, newer_than_timeout))
     os.utime(done_path, (newer_than_timeout, newer_than_timeout))
 
-    controller.retry_recoverable_agent_wait()
     state = controller.run_once()
 
     assert dispatch_count == 1
@@ -5820,8 +5819,17 @@ def test_unit_plan_draft_timeout_records_recoverable_wait_and_preserves_requirem
     assert state['unitPlanAccepted'] is False
 
 
-def test_retry_clears_recoverable_agent_wait_without_changing_approvals(tmp_path: Path) -> None:
+def test_run_auto_resumes_recoverable_agent_wait_without_changing_approvals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from workflow_controller.rrc_real_runtime import AgentRunResult
+
     state_dir = tmp_path / 'state'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'builder-prompt.md'
+    prompt_path.write_text('Implement delivery.', encoding='utf-8')
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
     controller.init_state(
         {
@@ -5832,6 +5840,10 @@ def test_retry_clears_recoverable_agent_wait_without_changing_approvals(tmp_path
             'status': 'active',
             'requestedOutcome': 'usable-system',
             'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'promptPath': str(prompt_path),
+            'agentRunner': 'tmux-codex',
+            'tmuxTarget': '2.0',
             'humanGatesRequired': True,
             'requirementsAccepted': True,
             'requirementsAcceptedHash': 'sha256:req',
@@ -5853,19 +5865,56 @@ def test_retry_clears_recoverable_agent_wait_without_changing_approvals(tmp_path
         },
         force=True,
     )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.write_text(
+        '# Requirements & Acceptance Confirmation\n\n- AC-1: Delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    approve_gate_file(requirements_path, actor='human')
+    unit_plan_path = approvals_dir / 'unit-plan.md'
+    _write_valid_unit_plan(unit_plan_path)
+    approve_gate_file(unit_plan_path, actor='human')
+    run_dir = state_dir / 'artifacts' / 'unit-01' / 'runs' / 'builder-resumed'
 
-    result = run_rrc('retry', '--state-dir', str(state_dir))
+    def fake_run_agent_for_current_step(*_args, **_kwargs) -> AgentRunResult:
+        return AgentRunResult(
+            command=['tmux', 'send-keys', '-t', '2.0', 'C-m'],
+            returncode=0,
+            stdout='',
+            stderr='',
+            backend='tmux-codex',
+            status='done',
+            run_dir=str(run_dir),
+            done_payload={'status': 'done', 'summary': 'builder resumed', 'run_id': run_dir.name},
+            runner_metadata={'backend': 'tmux-codex'},
+        )
 
-    assert result.returncode == 0, result.stderr
-    assert 'status=retry-ready' in result.stdout
-    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    monkeypatch.setattr(
+        'workflow_controller.steps.builder.run_agent_for_current_step',
+        fake_run_agent_for_current_step,
+    )
+
+    state = controller.run_once()
+
+    assert state['currentStep'] == 'REFINE_UNIT'
     assert 'recoverableAgentWait' not in state
-    assert state['currentStep'] == 'EXECUTE_UNIT'
     assert state['requirementsAcceptedHash'] == 'sha256:req'
     assert state['unitPlanAcceptedHash'] == 'sha256:plan'
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    resumed = [event for event in events if event['type'] == 'agent_wait_auto_resumed']
+    assert resumed
+    assert resumed[-1]['payload']['stage'] == 'EXECUTE_UNIT'
+    assert resumed[-1]['payload']['action'] == 'run_builder'
+    assert resumed[-1]['payload']['trigger'] == 'run_once'
 
 
-def test_status_prints_recoverable_wait_guidance_with_state_dir_retry(tmp_path: Path) -> None:
+def test_status_prints_recoverable_wait_guidance_with_state_dir_go(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
     controller.init_state(
@@ -5877,6 +5926,7 @@ def test_status_prints_recoverable_wait_guidance_with_state_dir_retry(tmp_path: 
             'status': 'active',
             'requestedOutcome': 'usable-system',
             'feasibleOutcome': 'usable-system',
+            'agentRunner': 'subprocess',
             'humanGatesRequired': True,
             'requirementsAccepted': True,
             'unitPlanAccepted': True,
@@ -5901,38 +5951,16 @@ def test_status_prints_recoverable_wait_guidance_with_state_dir_retry(tmp_path: 
     lines = result.stdout.splitlines()
     assert lines[0].startswith('currentStep=EXECUTE_UNIT status=active')
     assert '原因：Agent 等待超时或 idle，属于可恢复等待。' in result.stdout
-    assert f'waygate retry --state-dir {shlex.quote(str(state_dir))}' in result.stdout
+    assert f'waygate go --state-dir {shlex.quote(str(state_dir))}' in result.stdout
+    assert 'waygate retry' not in result.stdout
 
 
-def test_retry_refuses_explicit_blocked_state_with_status_guidance(tmp_path: Path) -> None:
-    state_dir = tmp_path / 'state'
-    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
-    controller.init_state(
-        {
-            'task_id': 'delivery',
-            'currentUnitId': 'unit-01',
-            'currentStep': 'EXECUTE_UNIT',
-            'lastVerifiedStep': 'PLAN_CREATED',
-            'status': 'blocked',
-            'blockedReason': 'Builder is blocked: missing PRODUCTION_WEB_BASE_URL.',
-            'requestedOutcome': 'usable-system',
-            'feasibleOutcome': 'usable-system',
-            'scopeApproved': True,
-            'objectiveCoverage': [
-                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
-            ],
-            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
-        },
-        force=True,
-    )
+def test_retry_command_is_removed(tmp_path: Path) -> None:
+    result = run_rrc('retry', '--state-dir', str(tmp_path / 'state'))
 
-    result = run_rrc('retry', '--state-dir', str(state_dir))
-
-    assert result.returncode == 1
-    assert 'retry only handles timeout/idle recoverableAgentWait' in result.stderr
-    assert f'waygate status --state-dir {shlex.quote(str(state_dir))}' in result.stderr
-    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
-    assert state['status'] == 'blocked'
+    assert result.returncode == 2
+    assert 'invalid choice' in result.stderr
+    assert 'retry' in result.stderr
 
 
 def test_format_stop_guidance_colors_blocked_guidance_labels_and_commands(tmp_path: Path) -> None:
@@ -6120,6 +6148,98 @@ def test_unblock_requires_reason(tmp_path: Path) -> None:
     assert '--reason' in result.stderr
 
 
+def test_run_does_not_auto_clear_explicit_blocked_state(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Approved Unit Plan requires a missing CLI Proxy API contract.',
+            'blockedContext': {'category': 'unit_plan_contract', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('run', '--state-dir', str(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['status'] == 'blocked'
+    assert state['blockedContext']['category'] == 'unit_plan_contract'
+    assert 'waygate revise --gate unit-plan' in result.stdout
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        ('run', '--dry-run'),
+        ('run', '--dry-run', '--until-done', '--max-steps', '1'),
+        ('go', '--runner', 'subprocess', '--dry-run', '--max-steps', '1'),
+    ],
+)
+def test_execution_commands_do_not_auto_clear_explicit_blocked_state_with_stale_recoverable_wait(
+    tmp_path: Path,
+    args: tuple[str, ...],
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Builder is blocked: missing PRODUCTION_WEB_BASE_URL.',
+            'blockedContext': {'category': 'environment', 'source': 'builder_agent'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'recoverableAgentWait': {
+                'stage': 'EXECUTE_UNIT',
+                'action': 'run_builder',
+                'runner_status': 'timeout',
+                'message': 'stale timeout before explicit blocker',
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc(args[0], '--state-dir', str(state_dir), *args[1:])
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['status'] == 'blocked'
+    assert state['blockedReason'] == 'Builder is blocked: missing PRODUCTION_WEB_BASE_URL.'
+    assert state['blockedContext']['category'] == 'environment'
+    assert 'recoverableAgentWait' in state
+    output = result.stdout + result.stderr
+    assert 'waygate unblock' in output
+    assert 'waygate go --state-dir' not in output
+    assert '已读取上次 timeout/idle 状态' not in output
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert not [event for event in events if event['type'] == 'agent_wait_auto_resumed']
+
+
 def test_unblock_allows_environment_blocked_state_and_preserves_approvals(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -6142,6 +6262,12 @@ def test_unblock_allows_environment_blocked_state_and_preserves_approvals(tmp_pa
             'unitPlanAcceptedHash': 'sha256:plan',
             'unitPlanAcceptedBy': 'human',
             'scopeApproved': True,
+            'recoverableAgentWait': {
+                'stage': 'EXECUTE_UNIT',
+                'action': 'run_builder',
+                'runner_status': 'timeout',
+                'message': 'stale timeout before environment was fixed',
+            },
             'objectiveCoverage': [
                 {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
             ],
@@ -6166,6 +6292,7 @@ def test_unblock_allows_environment_blocked_state_and_preserves_approvals(tmp_pa
     assert state['currentStep'] == 'EXECUTE_UNIT'
     assert state.get('blockedReason') is None
     assert 'blockedContext' not in state
+    assert 'recoverableAgentWait' not in state
     assert state['requirementsAcceptedHash'] == 'sha256:req'
     assert state['unitPlanAcceptedHash'] == 'sha256:plan'
     events = [
@@ -6578,29 +6705,25 @@ def test_status_reconciles_legacy_builder_summary_blocked_to_controller_blocked(
     assert revised['requirementsAccepted'] is True
 
 
-def test_run_stops_on_existing_recoverable_agent_wait_until_retry(tmp_path: Path) -> None:
+def test_run_auto_resumes_existing_recoverable_agent_wait(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
-    workspace = tmp_path / 'workspace'
-    workspace.mkdir()
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
     controller.init_state(
         {
             'task_id': 'delivery',
             'currentUnitId': 'unit-01',
-            'currentStep': 'REQUIREMENTS_DRAFT',
-            'lastVerifiedStep': 'TARGET_ACCEPTANCE',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
             'status': 'active',
             'requestedOutcome': 'usable-system',
             'feasibleOutcome': 'usable-system',
-            'workspacePath': str(workspace),
-            'agentRunner': 'subprocess',
-            'agentCommand': 'false',
             'humanGatesRequired': True,
-            'requirementsAccepted': False,
-            'requirementsDraftGenerated': False,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'scopeApproved': True,
             'recoverableAgentWait': {
-                'stage': 'REQUIREMENTS_DRAFT',
-                'action': 'run_requirements_drafter',
+                'stage': 'EXECUTE_UNIT',
+                'action': 'run_builder',
                 'runner_status': 'timeout',
                 'message': 'agent timed out',
             },
@@ -6612,14 +6735,78 @@ def test_run_stops_on_existing_recoverable_agent_wait_until_retry(tmp_path: Path
         force=True,
     )
 
-    result = run_rrc('run', '--state-dir', str(state_dir))
+    result = run_rrc('run', '--state-dir', str(state_dir), '--dry-run')
 
     assert result.returncode == 0, result.stderr
-    assert 'waygate retry' in result.stdout
-    assert 'currentStep=REQUIREMENTS_DRAFT' in result.stdout
+    assert 'currentStep=REFINE_UNIT' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
-    assert state['recoverableAgentWait']['runner_status'] == 'timeout'
+    assert 'recoverableAgentWait' not in state
     assert state['status'] == 'active'
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    resumed = [event for event in events if event['type'] == 'agent_wait_auto_resumed']
+    assert resumed
+    assert resumed[-1]['payload']['stage'] == 'EXECUTE_UNIT'
+    assert resumed[-1]['payload']['action'] == 'run_builder'
+    assert resumed[-1]['payload']['trigger'] == 'run_once'
+
+
+def test_go_auto_resumes_existing_recoverable_agent_wait(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'scopeApproved': True,
+            'recoverableAgentWait': {
+                'stage': 'EXECUTE_UNIT',
+                'action': 'run_builder',
+                'runner_status': 'timeout',
+                'message': 'agent timed out',
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc(
+        'go',
+        '--state-dir',
+        str(state_dir),
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '1',
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'REFINE_UNIT'
+    assert 'recoverableAgentWait' not in state
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    resumed = [event for event in events if event['type'] == 'agent_wait_auto_resumed']
+    assert resumed
+    assert resumed[-1]['payload']['trigger'] == 'drive'
 
 
 def test_requirements_draft_does_not_recover_done_and_body_older_than_timeout(

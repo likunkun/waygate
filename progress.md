@@ -1,5 +1,22 @@
 # 进度日志
 
+## 会话：2026-05-26
+
+### Recoverable wait 恢复入口收敛到 go/run/drive/start
+- **状态：** implementation verified; full regression passed.
+- 用户决策：不再保留用户可见 `waygate retry`；timeout/idle 后退出即可，下一次 `go` 或其他执行命令读取 `session.json` 继续同一阶段。
+- 已实现 `recoverableAgentWait` 自动消费：`run_once`、`run_until_done`、`drive/start/go` 在进入执行时读取 active recoverable wait，记录 `agent_wait_auto_resumed`，清除等待标记，保留 Requirements / Unit Plan approval hash 和 artifacts，并继续当前 stage。
+- 显式 `blocked` 边界保持独立：即使旧 state 同时残留 `recoverableAgentWait`，`run`、`run --until-done` 和 `go` 也不会清除 blocked；guidance 优先显示 `unblock` / `revise`，不会误提示已恢复 timeout/idle。环境类 `unblock` 成功后会清理 stale wait。
+- 已移除 `workflow_controller.cli` 和 legacy `workflow_controller.rrc_controller` CLI 中的 `retry` 子命令；`waygate retry --help` 现在由 argparse 返回 invalid choice。
+- 正式文档与使用说明已同步：`docs/workflow/recoverable-agent-timeout-policy.md`、`docs/workflow/stop-guidance-and-unblock-policy.md`、`docs/workflow.md`、`docs/workflow.zh-CN.md`、`USAGE.md`、`USAGE.zh-CN.md` 和 `docs/README.md`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'recoverable_agent_wait or retry_command_is_removed or explicit_blocked_state or unblock or blocked_guidance'` -> `16 passed, 202 deselected`
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'unblock or annotation_runtime'` -> `2 passed, 37 deselected`
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`
+  - `rg -n 'waygate retry|retry only handles|agent_wait_retry_requested' workflow_controller docs README.md USAGE.md USAGE.zh-CN.md --glob '!docs/superpowers/**' --glob '!docs/workflow/recoverable-wait-go-resume-design.md' --glob '!workflow_controller/tests/**'` -> no matches
+  - `git diff --check` -> passed
+  - `python3 -m pytest workflow_controller/tests -q` -> `653 passed in 77.96s`
+
 ## 会话：2026-05-25
 
 ### Unit Plan Evidence Closure Gap

@@ -2230,7 +2230,7 @@ class RalphRefinerController:
     def run_once(self) -> dict[str, Any]:
         state = self.store.load_state()
         if state.get('recoverableAgentWait'):
-            return state
+            state = self._auto_resume_recoverable_agent_wait(state, trigger='run_once')
         try:
             return self._run_once()
         except RecoverableAgentWait as exc:
@@ -2240,22 +2240,30 @@ class RalphRefinerController:
             self._save_state(state)
             return state
 
-    def retry_recoverable_agent_wait(self) -> dict[str, Any]:
-        state = self.store.load_state()
+    def _auto_resume_recoverable_agent_wait(
+        self,
+        state: dict[str, Any],
+        *,
+        trigger: str,
+    ) -> dict[str, Any]:
+        if state.get('status') == 'blocked':
+            return state
         wait = state.pop('recoverableAgentWait', None)
-        if not wait:
-            raise ValueError(
-                'retry only handles timeout/idle recoverableAgentWait. '
-                f'Run `waygate status --state-dir {_quote_for_shell(str(self.state_dir))}` for blocked guidance.'
-            )
+        if not isinstance(wait, dict):
+            return state
         state['status'] = 'active'
         state['blockedReason'] = None
-        self.store.append_event('agent_wait_retry_requested', {
+        self.store.append_event('agent_wait_auto_resumed', {
             'task_id': state.get('task_id'),
             'unit_id': state.get('currentUnitId'),
-            'stage': wait.get('stage') if isinstance(wait, dict) else None,
-            'action': wait.get('action') if isinstance(wait, dict) else None,
-            'runner_status': wait.get('runner_status') if isinstance(wait, dict) else None,
+            'trigger': trigger,
+            'stage': wait.get('stage'),
+            'action': wait.get('action'),
+            'runner_status': wait.get('runner_status'),
+            'message': wait.get('message'),
+            'summary_path': wait.get('summary_path'),
+            'run_dir': wait.get('run_dir'),
+            'done_path': wait.get('done_path'),
         })
         self._save_state(state)
         return state
@@ -2265,12 +2273,12 @@ class RalphRefinerController:
         if not reason:
             raise ValueError('unblock requires --reason describing the external condition that was fixed')
         state = self.get_status()
-        if state.get('recoverableAgentWait'):
-            raise ValueError(
-                'This workflow is in timeout/idle recoverable wait, not blocked. '
-                f'Use `waygate retry --state-dir {_quote_for_shell(str(self.state_dir))}`.'
-            )
         if state.get('status') != 'blocked':
+            if state.get('recoverableAgentWait'):
+                raise ValueError(
+                    'This workflow is in timeout/idle recoverable wait, not blocked. '
+                    f'Use `waygate go --state-dir {_quote_for_shell(str(self.state_dir))}`.'
+                )
             raise ValueError('Workflow is not blocked; there is nothing to unblock')
         blocked_reason = str(state.get('blockedReason') or '').strip()
         category = _blocked_category(state)
@@ -2282,6 +2290,7 @@ class RalphRefinerController:
         previous_context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
         state['status'] = 'active'
         state['blockedReason'] = None
+        state.pop('recoverableAgentWait', None)
         _remember_ignored_builder_blocked_context(state, previous_context, reason='unblock')
         state.pop('blockedContext', None)
         self.store.append_event('blocked_state_unblocked', {
@@ -2995,7 +3004,7 @@ class RalphRefinerController:
     ) -> dict[str, Any]:
         state = self.get_status()
         if state.get('recoverableAgentWait'):
-            return state
+            state = self._auto_resume_recoverable_agent_wait(state, trigger='run_until_done')
         steps = 0
         no_progress_steps = 0
         while state.get('status') not in {'done', 'blocked', 'failed'} and steps < max_steps:
@@ -3053,12 +3062,9 @@ class RalphRefinerController:
         state = self.get_status()
         if print_agent_target:
             self._print_agent_target_resolution(state, output_func)
-        if state.get('recoverableAgentWait'):
-            output_func(_format_recoverable_wait_message(state))
-            guidance = format_stop_guidance(state, state_dir=self.state_dir, color_enabled=color_enabled)
-            if guidance:
-                output_func(guidance)
-            return state
+        if state.get('status') != 'blocked' and state.get('recoverableAgentWait'):
+            state = self._auto_resume_recoverable_agent_wait(state, trigger='drive')
+            output_func('[继续] 已读取上次 timeout/idle 状态，继续同一阶段。')
         while state.get('status') not in {'done', 'blocked', 'failed'}:
             if verbose:
                 self._print_drive_progress(state, output_func)
@@ -3908,7 +3914,7 @@ def _format_recoverable_wait_message(state: dict[str, Any]) -> str:
     suffix = f' 记录：{summary_path}' if summary_path else ''
     return (
         f'[等待] Agent 暂未完成（阶段：{stage}，下一步：{ACTION_LABELS.get(action, action)}，'
-        f'runner={status}）。下次运行会停在同一阶段；如需重新派发，执行 `waygate retry`。{suffix}'
+        f'runner={status}）。下次运行 `waygate go` 会读取状态并继续同一阶段。{suffix}'
     )
 
 
@@ -4323,7 +4329,7 @@ def format_stop_guidance(
     stop_kind: str | None = None,
     detail: str | None = None,
 ) -> str:
-    if isinstance(state.get('recoverableAgentWait'), dict):
+    if state.get('status') != 'blocked' and isinstance(state.get('recoverableAgentWait'), dict):
         wait = state['recoverableAgentWait']
         action = wait.get('action') or state.get('nextAction') or compute_next_allowed_action(state) or '-'
         return '\n'.join(
@@ -4331,11 +4337,11 @@ def format_stop_guidance(
                 _guidance_line('原因', 'Agent 等待超时或 idle，属于可恢复等待。', label_style='red', color_enabled=color_enabled),
                 _guidance_line(
                     '下一步',
-                    f'确认是否重新派发同一阶段（阶段：{wait.get("stage") or state.get("currentStep") or "-"}，下一步：{ACTION_LABELS.get(action, action)}）。retry 只用于 timeout/idle。',
+                    f'重新运行 go 继续同一阶段（阶段：{wait.get("stage") or state.get("currentStep") or "-"}，下一步：{ACTION_LABELS.get(action, action)}）。',
                     label_style='yellow',
                     color_enabled=color_enabled,
                 ),
-                _guidance_command_line(_command_with_state('retry', state_dir), color_enabled=color_enabled),
+                _guidance_command_line(_command_with_state('go', state_dir), color_enabled=color_enabled),
             ]
         )
 
@@ -4370,7 +4376,7 @@ def format_stop_guidance(
                 [
                     _guidance_line(
                         '下一步',
-                        '先修复环境、凭据、端口、服务或外部依赖；修好后解除阻塞继续同一阶段。不要用 retry 处理显式 blocked。',
+                        '先修复环境、凭据、端口、服务或外部依赖；修好后解除阻塞继续同一阶段。不要用 go 自动清除显式 blocked。',
                         label_style='yellow',
                         color_enabled=color_enabled,
                     ),
@@ -4403,7 +4409,7 @@ def format_stop_guidance(
                 [
                     _guidance_line(
                         '下一步',
-                        '这是 Unit Plan/执行计划约束问题，不能用 retry 或 unblock 清除。',
+                        '这是 Unit Plan/执行计划约束问题，不能用 go 或 unblock 清除。',
                         label_style='yellow',
                         color_enabled=color_enabled,
                     ),
@@ -4418,7 +4424,7 @@ def format_stop_guidance(
                 [
                     _guidance_line(
                         '下一步',
-                        '这是 Requirements/Acceptance Criteria 合同问题，不能用 retry 或 unblock 清除。',
+                        '这是 Requirements/Acceptance Criteria 合同问题，不能用 go 或 unblock 清除。',
                         label_style='yellow',
                         color_enabled=color_enabled,
                     ),
@@ -4442,7 +4448,7 @@ def format_stop_guidance(
                 [
                     _guidance_line(
                         '下一步',
-                        '先判断阻塞属于环境修复还是正式合同返工；不要盲目 retry。',
+                        '先判断阻塞属于环境修复还是正式合同返工；不要盲目重新运行 go。',
                         label_style='yellow',
                         color_enabled=color_enabled,
                     ),
@@ -6564,13 +6570,6 @@ def parse_args() -> argparse.Namespace:
     status_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
     status_parser.add_argument('--auto-approve', action='store_true', help='Reflect auto-approve mode in status/runtime decisions')
 
-    retry_parser = subparsers.add_parser(
-        'retry',
-        help='Clear a recoverable agent wait and leave the workflow ready to run the same stage again',
-        allow_abbrev=False,
-    )
-    retry_parser.add_argument('--state-dir', default='.plan-ralph', help='Directory containing session.json and artifacts/')
-
     unblock_parser = subparsers.add_parser(
         'unblock',
         help='Clear an environment/external dependency blocked state after the condition is fixed',
@@ -6807,16 +6806,6 @@ def main() -> None:
         guidance = format_stop_guidance(state, state_dir=Path(args.state_dir))
         if guidance:
             print(guidance)
-        return
-
-    if args.command == 'retry':
-        try:
-            state = controller.retry_recoverable_agent_wait()
-        except Exception as exc:
-            print(f'error: {exc}', file=sys.stderr)
-            raise SystemExit(1) from None
-        next_action = state.get('nextAction') or compute_next_allowed_action(state)
-        print(f'status=retry-ready currentStep={state.get("currentStep")} nextAction={next_action}')
         return
 
     if args.command == 'unblock':

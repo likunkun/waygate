@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-05-26 Recoverable wait 恢复入口收敛
+
+- `go/run/drive/start` 已经表达“继续推进 workflow”，因此 timeout/idle recoverable wait 不需要独立的用户可见 `retry` 命令。恢复入口统一后，用户只需重新运行执行命令，controller 从 `session.json` 消费 `recoverableAgentWait` 并继续同一阶段。
+- `recoverableAgentWait` 仍是审计事实：记录上次 runner silence 的 stage、action、runner status、artifact/run 路径；下一次执行命令消费它时写入 `agent_wait_auto_resumed`。旧的 `agent_wait_retry_requested` 不再作为用户动作事件产生。
+- 显式 `blocked` 的优先级高于 stale recoverable wait。若 state 同时存在 `status=blocked` 和旧 `recoverableAgentWait`，执行命令不能自动清除 blocked，也不能打印 recoverable resume guidance；环境/外部依赖类问题仍走 `unblock`，合同问题仍走 `revise` 或 Final Acceptance rejection route。
+- 环境类 `unblock` 成功时可以清理 stale `recoverableAgentWait`，因为人工已经声明外部条件修复完成；但 `unblock` 拒绝的合同类 blocked 不应被静默改写。
+
 ## 2026-05-25 Unit Plan AC 证据闭环预检
 
 - `verification_assist` 是辅助验证形态，不能在 Unit Plan 阶段静态替代 Final Scope Audit 可计数的 AC coverage；它可能产出 `needs_human_review`，而 Final Scope Audit 只接受 `passed` 或带有效 manual evidence 的 `manual` evidence row。

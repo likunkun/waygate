@@ -90,6 +90,8 @@ waygate go V0.6.1 --annotation-agent codex
 waygate go V0.6.1 --annotation-agent unit-plan=codex
 ```
 
+If a previous agent dispatch stopped with timeout or idle-without-DONE, rerun `waygate go ...` with the same target or `--state-dir`. Waygate reads `recoverableAgentWait` from `session.json`, records an automatic resume event, and continues the same stage. Explicit `blocked` states are different: fix the external condition and use `unblock`, or use `revise` when the approved contract must change.
+
 ## Prototype Review Bundle
 
 For UI/UX or Web-system requirements, the Requirements drafter must write `artifacts/requirements-draft/prototype-manifest.json`. Waygate validates it, copies local image/HTML prototypes into `artifacts/requirements-draft/prototypes/`, and renders `plannotator-review.md` plus `plannotator-review.html`. Plannotator annotates the approval file `approvals/requirements-and-acceptance.md`; the HTML bundle is exposed as an auxiliary rendered prototype preview URL during the current review session.
