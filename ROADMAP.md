@@ -249,6 +249,21 @@ Delivered work:
 - Preserve approval semantics: annotation agents and agent-assisted verification may focus human review on risks, but they cannot approve, skip, or bypass controller gates.
 - Document the long-lived workflow rules in `docs/workflow/external-spec-intake-and-annotation-policy.md` and the module boundaries in `docs/architecture/external-spec-intake-and-annotation-architecture.md`.
 
+### V0.6.1a - Blocked Assist
+
+Goal: add a controlled diagnostic conversation layer for explicit `status=blocked` workflows without giving the agent state mutation authority.
+
+Status: implemented in package `0.6.1a`.
+
+Delivered work:
+
+- Add an interactive Blocked Assist menu for `go`, `drive`, and `start`, while keeping `status` read-only.
+- Persist `blockedAssist` state pointers and write assist summaries under `artifacts/blocked-assist/<run-id>/blocked-assist-summary.json`.
+- Require non-empty human-confirmed `human_reason` before continuing, revising Unit Plan, changing Requirements, or routing Final Acceptance.
+- Keep agent output as diagnostic context only: assist summaries can suggest routes, but cannot automatically unblock, revise gates, or approve workflow state.
+- Reuse existing unblock semantics only for environment, external dependency, annotation runtime, and final-acceptance blocked cases; contract blockers must enter formal revision routes.
+- Document the policy under `docs/workflow/blocked-assist-policy.md` and package it with the Debian docs.
+
 ### V0.6.2 - Strict Test Presence
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.

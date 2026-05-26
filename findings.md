@@ -7,6 +7,14 @@
 - 显式 `blocked` 的优先级高于 stale recoverable wait。若 state 同时存在 `status=blocked` 和旧 `recoverableAgentWait`，执行命令不能自动清除 blocked，也不能打印 recoverable resume guidance；环境/外部依赖类问题仍走 `unblock`，合同问题仍走 `revise` 或 Final Acceptance rejection route。
 - 环境类 `unblock` 成功时可以清理 stale `recoverableAgentWait`，因为人工已经声明外部条件修复完成；但 `unblock` 拒绝的合同类 blocked 不应被静默改写。
 
+## 2026-05-26 Blocked Assist 对话恢复边界
+
+- `status=blocked` 可以需要诊断对话，但诊断 Agent 不能拥有状态变更权。Assist summary 只能作为 route 建议和 human_reason 草稿；最终 continue、Unit Plan、Requirements、Final Acceptance 或 keep blocked 都必须由 controller 菜单和人工确认选择。
+- 进入任何会改变 state 或 gate 的 blocked 恢复路线时，非空 `human_reason` 是事实源。它需要进入 Unit Plan revision feedback、Requirements change request / revision feedback 或 Final Acceptance rejection feedback；不能只记录 Agent summary。
+- continue 语义必须继续复用 `unblock_blocked_workflow()`，并保持当前 unblock 白名单：environment、external dependency、annotation runtime、final acceptance blocked。Unit Plan / Requirements / Final Acceptance 合同类 blocked 即使被 assist 判断为“已解决”，也不能直接继续，必须走正式返工路线。
+- `status` 是只读检查入口。它可以提示 interactive `drive/start/go` 有 Blocked Assist 菜单，但不能在 status 命令中打开菜单、启动 Agent 或修改 `blockedAssist`。
+- Assist artifact 和事件只能记录必要路径、分类和脱敏原因；prompt 和 summary 必须避免写入 token、数据库 URL、密码或环境变量值。
+
 ## 2026-05-25 Unit Plan AC 证据闭环预检
 
 - `verification_assist` 是辅助验证形态，不能在 Unit Plan 阶段静态替代 Final Scope Audit 可计数的 AC coverage；它可能产出 `needs_human_review`，而 Final Scope Audit 只接受 `passed` 或带有效 manual evidence 的 `manual` evidence row。

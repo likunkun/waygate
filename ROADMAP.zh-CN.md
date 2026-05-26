@@ -249,6 +249,21 @@
 - 保持人工审批语义不变：标注 Agent 和 agent-assisted verification 只能帮助人聚焦风险，不能批准、跳过或绕过 controller gate。
 - 将长期流程规则沉淀到 `docs/workflow/external-spec-intake-and-annotation-policy.md`，将模块边界沉淀到 `docs/architecture/external-spec-intake-and-annotation-architecture.md`。
 
+### V0.6.1a - Blocked Assist
+
+目标：为显式 `status=blocked` workflow 增加受控诊断对话层，但不赋予 Agent 修改状态的权限。
+
+状态：已在 package `0.6.1a` 中实现。
+
+已交付：
+
+- 为 `go`、`drive` 和 `start` 增加交互式 Blocked Assist 菜单，同时保持 `status` 只读。
+- 持久化 `blockedAssist` 状态指针，并在 `artifacts/blocked-assist/<run-id>/blocked-assist-summary.json` 写入 assist summary。
+- 继续、Unit Plan 返工、Requirements 变更或 Final Acceptance 路由前，都要求非空且经人工确认的 `human_reason`。
+- Agent 输出只作为诊断上下文：assist summary 可以建议路线，但不能自动 unblock、修改 gate 或批准 workflow state。
+- 继续复用既有 unblock 语义，但只允许 environment、external dependency、annotation runtime 和 final-acceptance blocked；合同类 blocker 必须进入正式返工路线。
+- 将流程规则沉淀到 `docs/workflow/blocked-assist-policy.md`，并纳入 Debian 文档包。
+
 ### V0.6.2 - Strict Test Presence
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。

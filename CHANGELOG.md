@@ -2,8 +2,9 @@
 
 All notable project changes should be recorded here.
 
-## 0.6.1
+## 0.6.1a
 
+- Added Blocked Assist for controlled diagnosis of `status=blocked` workflows, with summary artifacts, human-confirmed `human_reason`, and explicit controller-selected recovery routes.
 - Added supported OpenSpec/OpenAPI and Spec Kit intake paths with normalized requirements, source maps, validation reports, and clear unsupported/deferred errors.
 - Added non-approving role-based annotation and verification-assist configuration for Requirements, Unit Plan, and Final Acceptance gates.
 - Added `--annotation-agent` CLI options on `init`, `start`, `go`, `drive`, and `run` so operators can enable risk-only annotation agents without editing `session.json`.

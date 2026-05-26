@@ -2,8 +2,9 @@
 
 重要项目变更应记录在这里。
 
-## 0.6.1
+## 0.6.1a
 
+- 新增 Blocked Assist：为 `status=blocked` workflow 提供受控诊断对话、summary artifact、人工确认的 `human_reason`，并由 controller 显式选择恢复路线。
 - 新增受支持的 OpenSpec/OpenAPI 和 Spec Kit intake 路径，生成 normalized requirements、source maps、validation reports，并对 unsupported/deferred 格式给出清晰错误。
 - 新增 Requirements、Unit Plan、Final Acceptance gate 前的非批准型、按 role 配置的 annotation 和 verification-assist 能力。
 - `init`、`start`、`go`、`drive`、`run` 新增 `--annotation-agent` 系列 CLI 参数，允许操作者启用风险标注 Agent，无需手改 `session.json`。

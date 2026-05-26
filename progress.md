@@ -2,6 +2,24 @@
 
 ## 会话：2026-05-26
 
+### Blocked Assist 对话恢复层
+- **状态：** implementation verified; full regression passed; packaged as `0.6.1a`.
+- 已为显式 `status=blocked` 增加交互式 Blocked Assist 菜单，仅接入 `drive/start/go` 的共享 `drive()` 路径；`status` 仍只读，只提示可用诊断入口。
+- Assist agent 只能诊断、提问、建议 route 并写 `artifacts/blocked-assist/<run-id>/blocked-assist-summary.json`；controller 在 `session.json` 记录 `blockedAssist` 指针，并记录 `blocked_assist_started/completed/failed/reclassified/resolution_selected` 事件。
+- 已实现人工原因边界：continue、Unit Plan 返工、Requirements 变更和 Final Acceptance route 都需要非空 `human_reason`；Agent summary 只作为上下文，不能自动解除阻塞。
+- continue 继续复用既有 `unblock_blocked_workflow()`，仅允许 environment / external dependency / annotation runtime / final acceptance blocked；Unit Plan 和 Requirements 合同类 blocked 必须走正式返工路线。
+- 正式 workflow 文档与 USAGE 已同步：`docs/workflow/blocked-assist-policy.md`、`docs/workflow/stop-guidance-and-unblock-policy.md`、`docs/workflow.md`、`docs/workflow.zh-CN.md`、`USAGE.md`、`USAGE.zh-CN.md` 和 `docs/README.md`。
+- 用户指定版本为 `0.6.1a` 后，已同步 `workflow_controller.__version__`、双语安装示例、双语 CHANGELOG 和 ROADMAP / task plan 记录，并生成 `dist/waygate_0.6.1a_all.deb`。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`
+  - `git diff --check` -> passed
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.1a_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.1a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.1a / all / python3`
+  - 解包后 `waygate --version` -> `waygate 0.6.1a`
+  - 包内容包含 `workflow_controller/rrc_controller.py`、`docs/workflow/blocked-assist-policy.md` 和 `USAGE.md`
+  - `python -m pytest workflow_controller/tests -q` -> failed because this shell has no `python` executable (`zsh:1: command not found: python`); `python3` is the verified interpreter.
+  - `python3 -m pytest workflow_controller/tests -q` -> `659 passed`
+
 ### Recoverable wait 恢复入口收敛到 go/run/drive/start
 - **状态：** implementation verified; full regression passed.
 - 用户决策：不再保留用户可见 `waygate retry`；timeout/idle 后退出即可，下一次 `go` 或其他执行命令读取 `session.json` 继续同一阶段。

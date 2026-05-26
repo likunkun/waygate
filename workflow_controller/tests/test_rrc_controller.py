@@ -6148,6 +6148,439 @@ def test_unblock_requires_reason(tmp_path: Path) -> None:
     assert '--reason' in result.stderr
 
 
+def test_status_blocked_mentions_assist_without_interactive_menu(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    result = run_rrc('status', '--state-dir', str(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert 'blocked assist' in result.stdout.lower()
+    assert '[blocked assist]' not in result.stdout
+    assert '操作：' not in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert 'blockedAssist' not in state
+
+
+def test_drive_blocked_assist_dry_run_writes_summary_without_unblocking(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True, dry_run=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Missing PRODUCTION_API_BASE_URL for production_readonly verification.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    outputs: list[str] = []
+    choices = iter(['d', 'k'])
+
+    state = controller.drive(
+        input_func=lambda _prompt: next(choices),
+        output_func=outputs.append,
+        timestamp_output=False,
+        print_agent_target=False,
+    )
+
+    assert state['status'] == 'blocked'
+    saved = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assist = saved['blockedAssist']
+    assert assist['status'] == 'completed'
+    assert assist['original_category'] == 'environment'
+    summary_path = Path(assist['summary_path'])
+    assert summary_path.exists()
+    summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    assert summary['diagnosed_category'] == 'environment'
+    assert set(summary) >= {
+        'diagnosed_category',
+        'resolved_claim',
+        'human_actions_taken',
+        'recommended_route',
+        'route_reason',
+        'evidence_refs',
+        'remaining_risks',
+        'safe_to_continue_reason',
+    }
+    events = [json.loads(line) for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
+    assert any(event['type'] == 'blocked_assist_started' for event in events)
+    assert any(event['type'] == 'blocked_assist_completed' for event in events)
+    assert any(
+        event['type'] == 'blocked_assist_resolution_selected'
+        and event['payload']['selected_route'] == 'keep_blocked'
+        for event in events
+    )
+    assert any('Blocked Assist' in line for line in outputs)
+
+
+def test_drive_blocked_assist_continue_requires_human_reason_and_unblocks_environment(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    outputs: list[str] = []
+    choices = iter(['c', '', 'exported production readonly URL'])
+
+    state = controller.drive(
+        input_func=lambda _prompt: next(choices),
+        output_func=outputs.append,
+        timestamp_output=False,
+        print_agent_target=False,
+    )
+
+    assert state['status'] == 'active'
+    assert state.get('blockedReason') is None
+    assert any('human_reason 不能为空' in line for line in outputs)
+    events = [json.loads(line) for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
+    assert any(event['type'] == 'blocked_state_unblocked' for event in events)
+    selected = [event for event in events if event['type'] == 'blocked_assist_resolution_selected']
+    assert selected[-1]['payload']['selected_route'] == 'continue'
+    assert selected[-1]['payload']['human_reason'] == 'exported production readonly URL'
+
+
+def test_drive_blocked_assist_continue_rejects_unit_plan_contract_blocker(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Approved Unit Plan requires a missing CLI Proxy API contract.',
+            'blockedContext': {'category': 'unit_plan_contract', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    outputs: list[str] = []
+    choices = iter(['c', 'I changed the API contract outside the controller', 'k'])
+
+    state = controller.drive(
+        input_func=lambda _prompt: next(choices),
+        output_func=outputs.append,
+        timestamp_output=False,
+        print_agent_target=False,
+    )
+
+    assert state['status'] == 'blocked'
+    assert state['blockedContext']['category'] == 'unit_plan_contract'
+    assert any('合同类 blocked 不能直接继续' in line for line in outputs)
+    assert any('Unit Plan' in line for line in outputs)
+
+
+def test_drive_blocked_assist_unit_plan_rework_requires_human_reason_and_injects_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    blocker = 'Builder is blocked because the approved Unit Plan uses an impossible fixture.'
+    assist_summary = state_dir / 'artifacts' / 'blocked-assist' / 'assist-run' / 'blocked-assist-summary.json'
+    assist_summary.parent.mkdir(parents=True, exist_ok=True)
+    assist_summary.write_text(
+        json.dumps(
+            {
+                'diagnosed_category': 'unit_plan_contract',
+                'resolved_claim': False,
+                'human_actions_taken': [],
+                'recommended_route': 'unit_plan',
+                'route_reason': 'Plan fixture is impossible.',
+                'evidence_refs': ['artifacts/unit-01/builder-summary.json'],
+                'remaining_risks': ['Needs a real fixture.'],
+                'safe_to_continue_reason': '',
+            }
+        ),
+        encoding='utf-8',
+    )
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': blocker,
+            'blockedContext': {'category': 'unit_plan_contract', 'source': 'builder_agent'},
+            'blockedAssist': {
+                'status': 'completed',
+                'run_id': 'assist-run',
+                'original_category': 'unit_plan_contract',
+                'original_reason': blocker,
+                'summary_path': str(assist_summary),
+                'recommended_route': 'unit_plan',
+            },
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'autoApprove': True,
+            'agentRunner': 'tmux-claude',
+            'workspacePath': str(workspace),
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req-approved',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:unit-approved',
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements\n\n- AC-1: Delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Human Confirmation\n\n'
+        'Status: approved\n'
+        'Confirmed by: human\n'
+        'Content hash: sha256:unit-approved\n',
+        encoding='utf-8',
+    )
+    unit_dir = state_dir / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / 'builder-summary.json').write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {'status': 'blocked', 'summary': blocker, 'run_id': 'builder-run'},
+            }
+        ),
+        encoding='utf-8',
+    )
+    planner_prompts: list[str] = []
+
+    def fake_run_agent_backend(request):
+        planner_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_unit_plan_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+    outputs: list[str] = []
+    choices = iter(['u', '', 'Replace the impossible fixture with a seeded local fixture.'])
+
+    state = controller.drive(
+        input_func=lambda _prompt: next(choices),
+        output_func=outputs.append,
+        timestamp_output=False,
+        print_agent_target=False,
+    )
+
+    assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
+    assert planner_prompts
+    prompt = planner_prompts[0]
+    assert 'Replace the impossible fixture with a seeded local fixture.' in prompt
+    assert str(assist_summary) in prompt
+    assert 'Agent summary is context only; the human reason is authoritative.' in prompt
+    assert any('human_reason 不能为空' in line for line in outputs)
+    events = [json.loads(line) for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
+    selected = [event for event in events if event['type'] == 'blocked_assist_resolution_selected']
+    assert selected[-1]['payload']['selected_route'] == 'unit_plan'
+    assert selected[-1]['payload']['human_reason'] == 'Replace the impossible fixture with a seeded local fixture.'
+    assert selected[-1]['payload']['assist_summary_path'] == str(assist_summary)
+
+
+def test_drive_blocked_assist_requirements_change_requires_human_reason_and_writes_change_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    blocker = 'Approved Requirements require a remote-only API that does not exist.'
+    assist_summary = state_dir / 'artifacts' / 'blocked-assist' / 'assist-run' / 'blocked-assist-summary.json'
+    assist_summary.parent.mkdir(parents=True, exist_ok=True)
+    assist_summary.write_text(
+        json.dumps(
+            {
+                'diagnosed_category': 'requirements_contract',
+                'resolved_claim': False,
+                'human_actions_taken': [],
+                'recommended_route': 'requirements',
+                'route_reason': 'The approved AC names a nonexistent API contract.',
+                'evidence_refs': ['approvals/requirements-and-acceptance.md'],
+                'remaining_risks': ['Unit Plan must be regenerated after Requirements approval.'],
+                'safe_to_continue_reason': '',
+            }
+        ),
+        encoding='utf-8',
+    )
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': blocker,
+            'blockedContext': {'category': 'requirements_contract', 'source': 'builder_agent'},
+            'blockedAssist': {
+                'status': 'completed',
+                'run_id': 'assist-run',
+                'summary_path': str(assist_summary),
+                'recommended_route': 'requirements',
+            },
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'autoApprove': True,
+            'agentRunner': 'tmux-claude',
+            'workspacePath': str(workspace),
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req-approved',
+            'requirementsAcceptedBy': 'human',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': 'sha256:unit-approved',
+            'unitPlanAcceptedBy': 'human',
+            'unitPlanDraftGenerated': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## 1. Requirements\n'
+        '- Delivery must call the remote-only API.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Human Confirmation\n\n'
+        'Status: approved\n'
+        'Confirmed by: human\n'
+        'Content hash: sha256:unit-approved\n',
+        encoding='utf-8',
+    )
+    prompts: list[str] = []
+
+    def fake_run_agent_backend(request):
+        prompts.append(request.prompt_path.read_text(encoding='utf-8'))
+        (request.artifact_dir / 'requirements-body.md').write_text(
+            '# 需求与验收确认\n\n'
+            '## 1. 需求\n'
+            '- Delivery may use the local API contract.\n\n'
+            '## 2. 用户旅程\n'
+            '- User completes delivery through the local API.\n\n'
+            '## 3. 验收标准\n'
+            '- AC-01 [verification: integration]: local API delivery succeeds.\n\n'
+            '## 4. 需求可追溯矩阵（Requirements Traceability Matrix）\n'
+            '| AO | AC | Status | Verification Layer | Evidence/Reason |\n'
+            '| --- | --- | --- | --- | --- |\n\n'
+            '## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）\n'
+            '| AC | Product Design Ref | Technical Architecture Ref | Notes |\n'
+            '| --- | --- | --- | --- |\n'
+            '| AC-01 | ## 7. 产品设计概要 | ## 8. 架构概要 | traced |\n\n'
+            '## 5. 测试策略（Test Strategy）\n'
+            '- Run integration tests for local API delivery.\n\n'
+            '## 6. 范围外\n'
+            '- Remote-only API behavior.\n\n'
+            '## 7. 产品设计概要\n'
+            '- Delivery UI shows the local API result.\n\n'
+            '## 8. 架构概要\n'
+            '- Delivery service calls the local API contract.\n\n'
+            '## 9. 人工审阅清单\n'
+            '- [ ] Review local API contract change.\n',
+            encoding='utf-8',
+        )
+        return _fake_agent_result(request)
+
+    monkeypatch.setitem(run_requirements_drafter.__globals__, 'run_agent_backend', fake_run_agent_backend)
+    outputs: list[str] = []
+    choices = iter(['r', '', 'Replace the remote-only API requirement with the local API contract.'])
+
+    state = controller.drive(
+        input_func=lambda _prompt: next(choices),
+        output_func=outputs.append,
+        timestamp_output=False,
+        print_agent_target=False,
+    )
+
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert prompts
+    prompt = prompts[0]
+    assert 'Replace the remote-only API requirement with the local API contract.' in prompt
+    assert str(assist_summary) in prompt
+    assert any('human_reason 不能为空' in line for line in outputs)
+    saved = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert saved['requirementsAccepted'] is False
+    assert saved['unitPlanAccepted'] is False
+    change_requests = [
+        json.loads(line)
+        for line in (state_dir / 'change_requests.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert change_requests[-1]['status'] == 'pending_requirements_approval'
+    assert 'Replace the remote-only API requirement' in change_requests[-1]['reason']
+    assert str(assist_summary) in change_requests[-1]['reason']
+
+
 def test_run_does_not_auto_clear_explicit_blocked_state(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
