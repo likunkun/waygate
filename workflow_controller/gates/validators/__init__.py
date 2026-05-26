@@ -1612,7 +1612,12 @@ def _requirements_e2e_command_is_specific(value: str) -> bool:
         or re.search(r'\.(?:spec|test)\.(?:ts|tsx|js|jsx|py)\b', value)
         or re.search(r'\s--(?:grep|project|config|headed|browser)\b', value)
     )
-    return has_command and has_specific_target
+    command_text = value.replace('`', '').strip()
+    has_shell_script_command = bool(
+        re.search(r'^(?:bash|sh)\s+[^\s`|;&]+\.sh(?:\s|$)', command_text)
+        or re.search(r'^(?:\./|/|[^\s`|;&]+/)[^\s`|;&]*\.sh(?:\s|$)', command_text)
+    )
+    return (has_command and has_specific_target) or has_shell_script_command
 
 
 def _requirements_e2e_mock_policy_allows_core_api_mock(value: str) -> bool:
