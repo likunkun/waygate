@@ -77,7 +77,7 @@ Builder 会收到 prompt 文件，并只处理一个 unit。tmux 或 subprocess 
 
 完成信号不是最终证明。Controller 仍会校验 run ID、artifacts 和后续 verifier evidence。
 
-如果 agent 派发后超时，或 pane 已 idle 但没有写 DONE，Waygate 会记录可恢复等待，而不是阻塞或回滚。Workflow 保持在同一阶段，`status=active`，不写 `blockedReason`，并在 `session.json` 记录 `recoverableAgentWait`；自动驱动会停止，直到人工执行 `waygate retry`。这不是 Requirements 或 Unit Plan 合同返工，因此 `waygate revise` 仍只用于真实的 Requirements / Unit Plan rework。完整策略已登记在 [docs/workflow/recoverable-agent-timeout-policy.md](workflow/recoverable-agent-timeout-policy.md)。
+如果 agent 派发后超时，或 pane 已 idle 但没有写 DONE，Waygate 会记录可恢复等待，而不是阻塞或回滚。Workflow 保持在同一阶段，`status=active`，不写 `blockedReason`，并在 `session.json` 记录 `recoverableAgentWait`；当前自动循环会停止。下一次运行 `waygate go` / `run` / `drive` / `start` 会读取该状态、记录自动恢复事件、清除等待标记，并继续同一阶段。这不是 Requirements 或 Unit Plan 合同返工，因此 `waygate revise` 仍只用于真实的 Requirements / Unit Plan rework。完整策略已登记在 [docs/workflow/recoverable-agent-timeout-policy.md](workflow/recoverable-agent-timeout-policy.md)。
 
 如果上一轮 controller Verifier 失败于某条具体命令，下一轮 Builder prompt 会包含 `Controller Verification Failure Protocol`。Builder 第一动作必须在 controller cwd 下复跑同一条 exact command，不能先改 grep、换 cwd、拆命令或跑相邻测试。DONE 前，Builder 必须在 `done_payload.controller_failure_resolution` 记录 failed command、复现结果、root cause 或 mismatch analysis、修复摘要、同命令复跑 exit code 和完整 approved verification list 运行结果。缺少或命令不匹配会在进入 Refiner 前阻塞；最终验收事实源仍是 controller Verifier。
 

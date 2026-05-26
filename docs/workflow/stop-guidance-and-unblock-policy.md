@@ -8,15 +8,17 @@ currentStep=<step> status=<status> nextAction=<action> projectTargetVersion=<tar
 
 Additional guidance is printed after that line by `status`, `run`, `drive`, `start`, and `go` when the workflow stops at a recoverable agent wait, human gate, blocked state, max-step/no-progress stop, or active state with no next action.
 
-## Retry Boundary
+## Recoverable Wait Boundary
 
-`waygate retry --state-dir <state-dir>` is only for `recoverableAgentWait`: runner `timeout`, idle-without-DONE, or equivalent pending agent silence. It clears `recoverableAgentWait`, keeps approvals and artifacts intact, and lets the same stage compute its next action again.
+`recoverableAgentWait` is only for runner `timeout`, idle-without-DONE, or equivalent pending agent silence. It keeps approvals and artifacts intact and records why the current automatic loop stopped.
 
-`retry` must not clear explicit `blocked` states. When no recoverable wait exists, `retry` tells the operator to run `waygate status --state-dir <state-dir>` for the blocked guidance.
+The next `waygate go --state-dir <state-dir>` invocation, or another execution command such as `run`, `drive`, or `start`, consumes `recoverableAgentWait`, appends an `agent_wait_auto_resumed` event, and lets the same stage compute its next action again.
+
+Execution commands must not clear explicit `blocked` states. A blocked workflow still needs `waygate unblock` for environment/external dependency blockers or a formal `waygate revise` / Final Acceptance rejection route for contract changes.
 
 ## Blocked Boundary
 
-Explicit agent or controller `blocked` means the workflow needs a reasoned route, not blind retry.
+Explicit agent or controller `blocked` means the workflow needs a reasoned route, not blind rerun.
 
 - Environment or external dependency blockers include missing `PRODUCTION_WEB_BASE_URL`, `PRODUCTION_API_BASE_URL`, Docker, Compose, Playwright/browser runtime, ports, services, credentials, permissions, database/API access, or other external conditions.
 - Unit Plan blockers mean approved planning, sequencing, verification commands, evidence policy, or execution constraints are not executable as written.

@@ -119,6 +119,13 @@
 - 同一 controller 进程中同一 semantic key 连续超过 `requirementsAutoRevisionMax` 仍应 block，防止单次 go 内无限打回；但进程退出、人工 `waygate revise --gate requirements`、下一次 `waygate go` 都应从 0 重新计数，避免旧计数污染新一轮。
 - `requirements_draft_auto_revision_requested` / `requirements_draft_auto_revision_blocked` event 是审计历史，只记录当时的 `attempt` / `total_attempt` / reason key，不参与后续控制流预算。
 
+## 2026-05-26 Recoverable wait 恢复入口收敛
+
+- `go/run/drive/start` 已经表达“继续推进 workflow”，因此 timeout/idle recoverable wait 不需要独立的用户可见 `retry` 命令。恢复入口统一后，用户只需重新运行执行命令，controller 从 `session.json` 消费 `recoverableAgentWait` 并继续同一阶段。
+- `recoverableAgentWait` 仍是审计事实：记录上次 runner silence 的 stage、action、runner status、artifact/run 路径；下一次执行命令消费它时写入 `agent_wait_auto_resumed`。旧的 `agent_wait_retry_requested` 不再作为用户动作事件产生。
+- 显式 `blocked` 的优先级高于 stale recoverable wait。若 state 同时存在 `status=blocked` 和旧 `recoverableAgentWait`，执行命令不能自动清除 blocked，也不能打印 recoverable resume guidance；环境/外部依赖类问题仍走 `unblock`，合同问题仍走 `revise` 或 Final Acceptance rejection route。
+- 环境类 `unblock` 成功时可以清理 stale `recoverableAgentWait`，因为人工已经声明外部条件修复完成；但 `unblock` 拒绝的合同类 blocked 不应被静默改写。
+
 ## 2026-05-26 Auto-created Claude pane staged Requirements 首次派发
 
 - 旧 auto-created Claude pane 首次派发保护只覆盖 legacy `REQUIREMENTS_DRAFT`，没有覆盖 V0.6.2 staged Requirements 默认入口 `REQUIREMENTS_SCOPE_DRAFT`。因此新建或 stale 后重建的 `tmux-claude` pane 会在首次 Scope checkpoint dispatch 前收到 Claude 默认清输入序列 `C-c` / `C-u`。

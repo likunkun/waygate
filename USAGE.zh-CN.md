@@ -92,6 +92,8 @@ waygate go V0.6.1 --annotation-agent codex
 waygate go V0.6.1 --annotation-agent unit-plan=codex
 ```
 
+如果上一轮 agent 派发因 timeout 或 idle-without-DONE 停止，使用同一个 target 或 `--state-dir` 再运行 `waygate go ...`。Waygate 会从 `session.json` 读取 `recoverableAgentWait`，记录自动恢复事件，并继续同一阶段。显式 `blocked` 状态不同：外部条件修好后用 `unblock`，批准合同需要变更时用 `revise`。
+
 ## Prototype Review Bundle
 
 对 UI/UX 或 Web 系统需求，Requirements drafter 必须写出 `artifacts/requirements-draft/prototype-manifest.json`。Waygate 会校验 manifest，把本地图片/HTML 原型复制到 `artifacts/requirements-draft/prototypes/`，并渲染 `plannotator-review.md` 与 `plannotator-review.html`。Plannotator 审批/批注的主文件是 `approvals/requirements-and-acceptance.md`；HTML bundle 只作为当前 review session 中的原型渲染辅助预览 URL。

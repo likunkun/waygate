@@ -346,6 +346,15 @@
 
 ## 会话：2026-05-26
 
+### Recoverable wait 恢复入口收敛到 go/run/drive/start
+- **状态：** implementation verified; full regression passed.
+- 用户决策：不再保留用户可见 `waygate retry`；timeout/idle 后退出即可，下一次 `go` 或其他执行命令读取 `session.json` 继续同一阶段。
+- 已实现 `recoverableAgentWait` 自动消费：`run_once`、`run_until_done`、`drive/start/go` 在进入执行时读取 active recoverable wait，记录 `agent_wait_auto_resumed`，清除等待标记，保留 Requirements / Unit Plan approval hash 和 artifacts，并继续当前 stage。
+- 显式 `blocked` 边界保持独立：即使旧 state 同时残留 `recoverableAgentWait`，`run`、`run --until-done` 和 `go` 也不会清除 blocked；guidance 优先显示 `unblock` / `revise`，不会误提示已恢复 timeout/idle。环境类 `unblock` 成功后会清理 stale wait。
+- 已移除 `workflow_controller.cli` 和 legacy `workflow_controller.rrc_controller` CLI 中的 `retry` 子命令；`waygate retry --help` 现在由 argparse 返回 invalid choice。
+- 正式文档与使用说明已同步：`docs/workflow/recoverable-agent-timeout-policy.md`、`docs/workflow/stop-guidance-and-unblock-policy.md`、`docs/workflow.md`、`docs/workflow.zh-CN.md`、`USAGE.md`、`USAGE.zh-CN.md` 和 `docs/README.md`。
+- 历史验证：focused controller / annotation / packaging checks、`git diff --check` 和当时全量 `workflow_controller/tests` 通过。
+
 ### Auto-created Claude pane staged Requirements 首次派发修复
 - **状态：** implementation verified; focused/full regression passed; Debian package rebuilt.
 - 现场 7 号窗口证据：auto-created Claude pane 首次 Requirements dispatch 前 controller 发送清输入序列；`C-c` 已成功作用于刚创建的 Claude pane，随后 `C-u` 返回 `can't find pane`，说明清输入阶段可能让新建 pane 退出或失效。

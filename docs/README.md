@@ -33,8 +33,8 @@
 | 正式维护文档 | `docs/architecture/staged-requirements-package-architecture.md` | V0.6.2 / V0.6.2a / V0.6.2b `requirements_package.py`、`requirements_surface.py`、checkpoint prompt renderer、stage runner、controller orchestration、controller process-level prototype preview、gate generator/validator、Unit Plan prompt inheritance 和 Infrastructure / Execution Context Matrix 模块边界。 |
 | 正式维护文档 | `docs/workflow/requirements-e2e-review-policy.md` | V0.6.3 Strict Test Presence 中的真实 E2E / 浏览器/API/service 验收前置审阅规则；V0.6.0m Unit Plan golden path 必须是真实 `layer=e2e`。 |
 | 正式维护文档 | `docs/workflow/recoverable-wait-go-resume-design.md` | 2026-05-26 设计：移除用户可见 `retry`，由 `go/run/drive/start` 自动消费 timeout/idle recoverable wait，同时保持 blocked 的 `unblock` / `revise` 边界。 |
-| 正式维护文档 | `docs/workflow/recoverable-agent-timeout-policy.md` | Agent 超时、idle-without-DONE 和 `waygate retry` 的可恢复等待策略；说明 transient runner silence 不走 `waygate revise`。 |
-| 正式维护文档 | `docs/workflow/stop-guidance-and-unblock-policy.md` | Waygate 停止状态原因化 guidance、`retry` 与显式 `blocked` 的边界、环境类 `unblock` 和 Builder blocked reconciliation 规则。 |
+| 正式维护文档 | `docs/workflow/recoverable-agent-timeout-policy.md` | Agent 超时、idle-without-DONE 和 `go/run/drive/start` 自动恢复 recoverable wait 的策略；说明 transient runner silence 不走 `waygate revise`。 |
+| 正式维护文档 | `docs/workflow/stop-guidance-and-unblock-policy.md` | Waygate 停止状态原因化 guidance、recoverable wait 与显式 `blocked` 的边界、环境类 `unblock` 和 Builder blocked reconciliation 规则。 |
 | 正式维护文档 | `docs/workflow/final-acceptance-guided-walkthrough-policy.md` | Final Acceptance 前的启动准备阶段、Agent 提供的 `final_acceptance_walkthrough.inspection` / `launch` 合同、人工观察记录审阅上下文和 Golden Path 人工走查 gate 规则。 |
 | 正式维护文档 | `docs/workflow/prototype-fidelity-policy.md` | UI/Web 原型一致性 fidelity、视觉证据、Verifier marker 和终验阻断规则。 |
 | 正式维护文档 | `docs/workflow/ui-ux-skill-policy.md` | V0.6.0k UI/Web/prototype 工作必须使用 `ui-ux-pro-max`，`frontend-design` 只能作为辅助视觉探索或润色。 |

@@ -111,8 +111,9 @@
 - [x] verification_env 机制：unit/state 环境变量统一注入 verifier
 - [x] Unit Plan approval 预检：拒绝明显缺环境的验证计划
 - [x] timeout/idle 诊断：区分 idle、无输出、wrong run、invalid done
-- [x] Agent timeout/idle 可恢复等待：`timeout` / `agent_idle_without_done` 保持当前阶段 active，记录 `recoverableAgentWait`，通过 `waygate retry` 恢复，不再把 transient runner silence 当作 Requirements / Unit Plan revise。
-- [x] Waygate 停止状态原因化引导：recoverable wait、human gate、blocked、max steps、no progress 和 no next action 均输出原因/下一步/命令；`retry` 限定 timeout/idle，环境类 blocked 通过 `unblock` 恢复，Builder blocked artifact reconciliation 为官方 blocked state。
+- [x] Agent timeout/idle 可恢复等待：`timeout` / `agent_idle_without_done` 保持当前阶段 active，记录 `recoverableAgentWait`，下次 `go/run/drive/start` 自动恢复，不再把 transient runner silence 当作 Requirements / Unit Plan revise。
+- [x] Waygate 停止状态原因化引导：recoverable wait、human gate、blocked、max steps、no progress 和 no next action 均输出原因/下一步/命令；recoverable wait 限定 timeout/idle，环境类 blocked 通过 `unblock` 恢复，Builder blocked artifact reconciliation 为官方 blocked state。
+- [x] Recoverable wait 恢复入口收敛：移除用户可见 `retry`，`go/run/drive/start` 自动消费 timeout/idle `recoverableAgentWait`；显式 `blocked` 即使残留旧 wait 也仍需 `unblock` / `revise`。
 - [x] Unit Plan AC 证据闭环预检：approved Requirements AC 必须有 exact command 或 explicit manual evidence final-valid candidate，`verification_assist` 只能作为辅助，不能静态替代 Final Scope Audit coverage。
 - [x] 完整测试通过
 - **状态：** complete
