@@ -100,6 +100,7 @@
 - [x] V0.6.2 Final Acceptance 已批准：完成 Requirements Scope、Product Design Brief、Technical Architecture Brief、Requirements Test Strategy Brief 四段 checkpoint、final Requirements gate assembly、Unit Plan artifact path/hash/status 继承、Infrastructure / Execution Context Matrix 迁移、文档登记和 focused/full regression 闭环；目标 `Complete V0.6.2 development acceptance using current planning progress` 已 covered，单元 `v0-6-2-u1-package-foundation`、`v0-6-2-u2-checkpoint-prompts-runner`、`v0-6-2-u3-package-assembly-validation`、`v0-6-2-u4-docs-regression` 已 passes=true；原 Strict Test Presence / TC1-TC7 已移入 V0.6.3，并与 Per-Role Runner Configuration 合并。
 - [x] V0.6.2a Staged Requirements 目标产品视角修复：新增 `requirementsSurfaceClassification`，修正 staged prompt 合同、Requirements preflight 和 staged revision routing，避免 Product Design / Architecture 设计 Waygate/controller 自身流程；后续补齐 combined AO/E2E/prototype preflight reason 优先回 Scope、required Product Design prototype manifest prompt/stage validation；全量 `workflow_controller/tests` 通过 `682 passed`，版本保持 `0.6.2a` 并重新打包。
 - [x] V0.6.2b Product Design 后常驻原型预览：Product Design checkpoint 校验通过后生成 review bundle 并启动 controller 进程级 preview server；final assembly 刷新 approval metadata 并复用端口；Requirements Plannotator review 复用常驻服务，Close 后不关闭；端口占用自动递增；全量 `workflow_controller/tests` 通过 `758 passed`，版本更新为 `0.6.2b` 并重新打包。
+- [x] Blocked Assist 已并入当前 V0.6.2b 分支：为 `status=blocked` 增加受控诊断对话层、人工确认 `human_reason` 和正式恢复路线边界，版本保持 `0.6.2b`。
 - **状态：** complete
 
 ### 阶段 7：控制器可靠性增强

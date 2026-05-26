@@ -4,6 +4,7 @@
 
 ## 0.6.2b
 
+- 新增 Blocked Assist：为 `status=blocked` workflow 提供受控诊断对话、summary artifact、人工确认的 `human_reason`，并由 controller 显式选择恢复路线。
 - 将 Requirements 原型预览从 Plannotator 临时服务提升为 controller 进程级常驻预览服务。
 - Product Design checkpoint 校验通过后立即生成 Plannotator review HTML/manifest；final approval gate 尚未装配时使用 Scope checkpoint 作为 requirements reference。
 - Architecture、Test Strategy、final Requirements assembly、Requirements 人工评审和 Plannotator 辅助审阅期间复用同一个 preview URL。

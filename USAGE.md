@@ -92,7 +92,7 @@ waygate go V0.6.1 --annotation-agent codex
 waygate go V0.6.1 --annotation-agent unit-plan=codex
 ```
 
-If a previous agent dispatch stopped with timeout or idle-without-DONE, rerun `waygate go ...` with the same target or `--state-dir`. Waygate reads `recoverableAgentWait` from `session.json`, records an automatic resume event, and continues the same stage. Explicit `blocked` states are different: fix the external condition and use `unblock`, or use `revise` when the approved contract must change.
+If a previous agent dispatch stopped with timeout or idle-without-DONE, rerun `waygate go ...` with the same target or `--state-dir`. Waygate reads `recoverableAgentWait` from `session.json`, records an automatic resume event, and continues the same stage. Explicit `blocked` states are different: interactive `go`, `drive`, and `start` can open Blocked Assist for diagnosis, but only a human-selected route changes state. Use `unblock` after an external condition is fixed, or use `revise` / Final Acceptance rejection routing when the approved contract must change.
 
 ## Prototype Review Bundle
 
@@ -207,6 +207,8 @@ Ask the agent to revise a requirements or unit-plan gate after feedback is writt
 ```bash
 waygate revise --state-dir .rrc-controller-v1.0 --gate unit-plan
 ```
+
+For blocked recovery, the interactive menu requires a non-empty human reason before routing to Unit Plan or Requirements rework. The Blocked Assist summary is context only; it is not a substitute for the human reason.
 
 ### `reject`
 

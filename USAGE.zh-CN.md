@@ -92,7 +92,7 @@ waygate go V0.6.1 --annotation-agent codex
 waygate go V0.6.1 --annotation-agent unit-plan=codex
 ```
 
-如果上一轮 agent 派发因 timeout 或 idle-without-DONE 停止，使用同一个 target 或 `--state-dir` 再运行 `waygate go ...`。Waygate 会从 `session.json` 读取 `recoverableAgentWait`，记录自动恢复事件，并继续同一阶段。显式 `blocked` 状态不同：外部条件修好后用 `unblock`，批准合同需要变更时用 `revise`。
+如果上一轮 agent 派发因 timeout 或 idle-without-DONE 停止，使用同一个 target 或 `--state-dir` 再运行 `waygate go ...`。Waygate 会从 `session.json` 读取 `recoverableAgentWait`，记录自动恢复事件，并继续同一阶段。显式 `blocked` 状态不同：交互式 `go`、`drive`、`start` 可以打开 Blocked Assist 做诊断，但只有人工选择的 route 会改变状态。外部条件修好后用 `unblock`；批准合同需要变更时用 `revise` 或 Final Acceptance rejection route。
 
 ## Prototype Review Bundle
 
@@ -207,6 +207,8 @@ waygate approve --state-dir .rrc-controller-v1.0 --gate final-acceptance
 ```bash
 waygate revise --state-dir .rrc-controller-v1.0 --gate unit-plan
 ```
+
+blocked 恢复菜单进入 Unit Plan 或 Requirements 返工前，会要求填写非空人工原因。Blocked Assist summary 只能作为上下文，不能替代人工确认的 `human_reason`。
 
 ### `reject`
 

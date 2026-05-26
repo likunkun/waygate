@@ -4,6 +4,7 @@ All notable project changes should be recorded here.
 
 ## 0.6.2b
 
+- Added Blocked Assist for controlled diagnosis of `status=blocked` workflows, with summary artifacts, human-confirmed `human_reason`, and explicit controller-selected recovery routes.
 - Promoted the Requirements prototype preview from a temporary Plannotator-only server to a controller process-level preview service.
 - Product Design checkpoints now generate the Plannotator review HTML/manifest after successful validation, using the Scope checkpoint as the requirements reference before the final approval gate exists.
 - Reuse the same preview URL through Architecture, Test Strategy, final Requirements assembly, Requirements human review, and Plannotator-assisted review.

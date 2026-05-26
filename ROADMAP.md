@@ -288,6 +288,7 @@ Status: patch release implemented in package `0.6.2b`.
 Delivered work:
 
 - Generate `plannotator-review.html` and `prototype-review-manifest.json` immediately after Product Design checkpoint validation passes.
+- Add an optional Blocked Assist dialogue for explicit `status=blocked` workflows, with summary artifacts, human-confirmed `human_reason`, and controller-selected recovery routes.
 - Use the Scope checkpoint as the requirements reference before the final Requirements approval gate is assembled.
 - Start one controller process-level prototype preview server and reuse its URL through Architecture, Test Strategy, final assembly, Requirements human review, and Plannotator-assisted review.
 - Rebuild the review bundle after final Requirements assembly so the manifest records the real approval gate path while keeping the current preview port.

@@ -288,6 +288,7 @@
 已交付：
 
 - Product Design checkpoint 校验通过后立即生成 `plannotator-review.html` 和 `prototype-review-manifest.json`。
+- 为显式 `status=blocked` workflow 增加可选 Blocked Assist 对话层，写入 summary artifact，要求人工确认 `human_reason`，并由 controller 菜单选择恢复路线。
 - final Requirements approval gate 尚未装配时，使用 Scope checkpoint 作为 requirements reference。
 - 启动一个随 controller 进程常驻的 prototype preview server，Architecture、Test Strategy、final assembly、Requirements 人工评审和 Plannotator 辅助审阅期间复用同一 URL。
 - final Requirements assembly 后重新生成 review bundle，让 manifest 记录真实 approval gate path，同时保留当前 preview port。

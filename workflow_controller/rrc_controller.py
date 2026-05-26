@@ -123,6 +123,7 @@ from workflow_controller.rrc_real_runtime import (
     build_state_from_target_acceptance,
     render_target_acceptance_prompt,
 )
+from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
 from workflow_controller.state_machine.actions import compute_next_allowed_action
 from workflow_controller.state_machine.store import StateStore
 from workflow_controller.state_machine.transitions import (
@@ -1216,7 +1217,7 @@ class RalphRefinerController:
         if gate == 'requirements':
             return self._revise_requirements_gate(change_reason=reason)
         if gate == 'unit-plan':
-            return self._revise_unit_plan_gate()
+            return self._revise_unit_plan_gate(human_reason=reason)
         raise ValueError(f'Unsupported gate revision: {gate}')
 
     def _revision_feedback_for_gate(self, gate: str, gate_path: Path) -> str:
@@ -1775,7 +1776,12 @@ class RalphRefinerController:
         state['pendingRequirementChangeRequestIds'] = []
         self._save_state(state)
 
-    def reject_final_acceptance_gate(self) -> Path:
+    def reject_final_acceptance_gate(
+        self,
+        *,
+        human_reason: str | None = None,
+        assist_summary_path: str | None = None,
+    ) -> Path:
         state = self.store.load_state()
         if state.get('currentStep') != 'WAITING_FINAL_ACCEPTANCE':
             raise ValueError('Final acceptance can only be rejected at WAITING_FINAL_ACCEPTANCE')
@@ -1788,6 +1794,16 @@ class RalphRefinerController:
             gate_path,
         )
         rejection_feedback, rejection_annotations = self._revision_feedback_and_annotations_for_gate('final-acceptance', gate_path)
+        rejection_feedback = _prepend_blocked_assist_resolution_feedback(
+            rejection_feedback,
+            human_reason=human_reason,
+            assist_summary_path=assist_summary_path,
+        )
+        submitted_feedback = _prepend_blocked_assist_resolution_feedback(
+            submitted_feedback,
+            human_reason=human_reason,
+            assist_summary_path=assist_summary_path,
+        )
         obligation_feedback = _final_acceptance_rejection_obligation_feedback(
             gate_content=gate_content,
             submitted_feedback=submitted_feedback,
@@ -2162,7 +2178,13 @@ class RalphRefinerController:
         self._save_state(state)
         return gate_path
 
-    def _revise_unit_plan_gate(self, *, controller_validation_only: bool = False) -> Path:
+    def _revise_unit_plan_gate(
+        self,
+        *,
+        controller_validation_only: bool = False,
+        human_reason: str | None = None,
+        assist_summary_path: str | None = None,
+    ) -> Path:
         state = self.store.load_state()
         current_step = state.get('currentStep')
         builder_blocked_feedback: str | None = None
@@ -2197,6 +2219,11 @@ class RalphRefinerController:
             )
         if final_scope_audit_feedback:
             revision_feedback = final_scope_audit_feedback.rstrip() + '\n\n' + revision_feedback
+        revision_feedback = _prepend_blocked_assist_resolution_feedback(
+            revision_feedback,
+            human_reason=human_reason,
+            assist_summary_path=assist_summary_path,
+        )
         state['unitPlanRevisionFeedback'] = revision_feedback
         state['unitPlanRevisionCount'] = int(state.get('unitPlanRevisionCount') or 0) + 1
         if not controller_validation_only:
@@ -2870,6 +2897,259 @@ class RalphRefinerController:
         })
         self._save_state(state)
         return state
+
+    def _run_blocked_assist_dialogue(
+        self,
+        state: dict[str, Any],
+        *,
+        output_func: Callable[[str], None],
+    ) -> dict[str, Any]:
+        state = self.get_status()
+        if state.get('status') != 'blocked':
+            output_func('[Blocked Assist] 当前 workflow 不是 blocked 状态。')
+            return state
+
+        original_reason = str(state.get('blockedReason') or '').strip()
+        original_category = _blocked_category(state)
+        run_id = _blocked_assist_run_id()
+        assist_dir = self.artifacts_dir / 'blocked-assist' / run_id
+        assist_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = assist_dir / 'blocked-assist-summary.json'
+        prompt_path = assist_dir / 'blocked-assist-prompt.md'
+        prompt_path.write_text(
+            _render_blocked_assist_prompt(
+                state,
+                state_dir=self.state_dir,
+                artifacts_dir=self.artifacts_dir,
+                summary_path=summary_path,
+                original_category=original_category,
+                original_reason=original_reason,
+            ),
+            encoding='utf-8',
+        )
+
+        pointer = {
+            'status': 'started',
+            'run_id': run_id,
+            'original_category': original_category,
+            'original_reason': _redact_sensitive_text(original_reason),
+            'summary_path': str(summary_path),
+            'prompt_path': str(prompt_path),
+            'started_at': datetime.now(timezone.utc).isoformat(),
+        }
+        state['blockedAssist'] = pointer
+        self.store.append_event('blocked_assist_started', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'run_id': run_id,
+            'original_category': original_category,
+            'original_reason': _redact_sensitive_text(original_reason),
+            'prompt_path': str(prompt_path),
+            'summary_path': str(summary_path),
+        })
+        self._save_state(state)
+        output_func(f'[Blocked Assist] 已启动诊断对话：{prompt_path}')
+
+        if self.dry_run:
+            _write_blocked_assist_dry_run_summary(
+                summary_path,
+                diagnosed_category=original_category,
+                evidence_refs=_blocked_assist_evidence_refs(state, self.artifacts_dir),
+            )
+            result_status = 'done'
+            returncode = 0
+            runner_run_dir = str(assist_dir)
+            done_path = None
+        else:
+            workspace_path = (
+                state.get('executionWorkspacePath')
+                or state.get('workspacePath')
+                or str(self.workspace_dir or Path.cwd())
+            )
+            runner = make_runner(state, role='blocked_assist')
+            try:
+                result = run_agent_backend(RunnerRequest(
+                    backend=runner.backend,
+                    workspace_dir=Path(workspace_path),
+                    prompt_path=prompt_path,
+                    artifact_dir=assist_dir / 'runner',
+                    unit_id='blocked-assist',
+                    agent_command=runner.agent_command,
+                    tmux_target=runner.tmux_target,
+                    role='blocked_assist',
+                    env=runner.env,
+                    timeout_seconds=int(state.get('blockedAssistTimeoutSeconds') or 1800),
+                ))
+            except Exception as exc:
+                self._mark_blocked_assist_failed(
+                    run_id=run_id,
+                    summary_path=summary_path,
+                    prompt_path=prompt_path,
+                    reason=str(exc),
+                    runner_status='failed',
+                    returncode=None,
+                    run_dir=None,
+                    done_path=None,
+                )
+                output_func(f'[Blocked Assist] 诊断启动失败：{exc}')
+                return self.get_status()
+
+            result_status = str(result.status or '').strip()
+            returncode = int(result.returncode)
+            runner_run_dir = str(result.run_dir)
+            done_path = str(result.done_path) if result.done_path else None
+            if result.returncode != 0:
+                self._mark_blocked_assist_failed(
+                    run_id=run_id,
+                    summary_path=summary_path,
+                    prompt_path=prompt_path,
+                    reason=result.stderr.strip() or f'blocked assist runner status={result_status}',
+                    runner_status=result_status,
+                    returncode=result.returncode,
+                    run_dir=runner_run_dir,
+                    done_path=done_path,
+                )
+                output_func('[Blocked Assist] 诊断未完成，workflow 保持 blocked。')
+                return self.get_status()
+
+        if not summary_path.exists():
+            self._mark_blocked_assist_failed(
+                run_id=run_id,
+                summary_path=summary_path,
+                prompt_path=prompt_path,
+                reason=f'blocked assist did not write summary: {summary_path}',
+                runner_status=result_status,
+                returncode=returncode,
+                run_dir=runner_run_dir,
+                done_path=done_path,
+            )
+            output_func('[Blocked Assist] 缺少 summary artifact，workflow 保持 blocked。')
+            return self.get_status()
+
+        try:
+            summary = _normalize_blocked_assist_summary(summary_path)
+        except Exception as exc:
+            self._mark_blocked_assist_failed(
+                run_id=run_id,
+                summary_path=summary_path,
+                prompt_path=prompt_path,
+                reason=str(exc),
+                runner_status=result_status,
+                returncode=returncode,
+                run_dir=runner_run_dir,
+                done_path=done_path,
+            )
+            output_func(f'[Blocked Assist] summary 无效：{exc}')
+            return self.get_status()
+
+        state = self.store.load_state()
+        pointer = dict(state.get('blockedAssist') if isinstance(state.get('blockedAssist'), dict) else {})
+        pointer.update({
+            'status': 'completed',
+            'run_id': run_id,
+            'original_category': original_category,
+            'original_reason': _redact_sensitive_text(original_reason),
+            'summary_path': str(summary_path),
+            'prompt_path': str(prompt_path),
+            'recommended_route': summary.get('recommended_route'),
+            'diagnosed_category': summary.get('diagnosed_category'),
+            'runner_status': result_status,
+            'returncode': returncode,
+            'runner_run_dir': runner_run_dir,
+            'done_path': done_path,
+            'completed_at': datetime.now(timezone.utc).isoformat(),
+        })
+        state['blockedAssist'] = pointer
+        diagnosed_category = str(summary.get('diagnosed_category') or '').strip()
+        if diagnosed_category and diagnosed_category != original_category:
+            self.store.append_event('blocked_assist_reclassified', {
+                'task_id': state.get('task_id'),
+                'unit_id': state.get('currentUnitId'),
+                'run_id': run_id,
+                'original_category': original_category,
+                'diagnosed_category': diagnosed_category,
+                'summary_path': str(summary_path),
+            })
+        self.store.append_event('blocked_assist_completed', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'run_id': run_id,
+            'original_category': original_category,
+            'diagnosed_category': diagnosed_category,
+            'recommended_route': summary.get('recommended_route'),
+            'summary_path': str(summary_path),
+            'runner_status': result_status,
+        })
+        self._save_state(state)
+        output_func(f'[Blocked Assist] summary 已写入：{summary_path}')
+        return state
+
+    def _mark_blocked_assist_failed(
+        self,
+        *,
+        run_id: str,
+        summary_path: Path,
+        prompt_path: Path,
+        reason: str,
+        runner_status: str,
+        returncode: int | None,
+        run_dir: str | None,
+        done_path: str | None,
+    ) -> None:
+        state = self.store.load_state()
+        pointer = dict(state.get('blockedAssist') if isinstance(state.get('blockedAssist'), dict) else {})
+        pointer.update({
+            'status': 'failed',
+            'run_id': run_id,
+            'summary_path': str(summary_path),
+            'prompt_path': str(prompt_path),
+            'failure_reason': _redact_sensitive_text(reason),
+            'runner_status': runner_status,
+            'returncode': returncode,
+            'runner_run_dir': run_dir,
+            'done_path': done_path,
+            'failed_at': datetime.now(timezone.utc).isoformat(),
+        })
+        state['blockedAssist'] = pointer
+        self.store.append_event('blocked_assist_failed', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'run_id': run_id,
+            'summary_path': str(summary_path),
+            'prompt_path': str(prompt_path),
+            'reason': _redact_sensitive_text(reason),
+            'runner_status': runner_status,
+            'returncode': returncode,
+            'runner_run_dir': run_dir,
+            'done_path': done_path,
+        })
+        self._save_state(state)
+
+    def _blocked_assist_summary_path(self, state: dict[str, Any] | None = None) -> str | None:
+        state = state or self.store.load_state()
+        assist = state.get('blockedAssist')
+        if not isinstance(assist, dict):
+            return None
+        value = str(assist.get('summary_path') or '').strip()
+        return value or None
+
+    def _append_blocked_assist_resolution_event(
+        self,
+        state: dict[str, Any],
+        *,
+        selected_route: str,
+        human_reason: str | None = None,
+        assist_summary_path: str | None = None,
+    ) -> None:
+        self.store.append_event('blocked_assist_resolution_selected', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'selected_route': selected_route,
+            'human_reason': _redact_sensitive_text(human_reason or ''),
+            'assist_summary_path': assist_summary_path or self._blocked_assist_summary_path(state),
+            'blocked_category': _blocked_category(state),
+            'blocked_reason': _redact_sensitive_text(str(state.get('blockedReason') or '')),
+        })
 
     def _record_recoverable_agent_wait(
         self,
@@ -3805,12 +4085,171 @@ class RalphRefinerController:
             guidance = format_stop_guidance(state, state_dir=self.state_dir, color_enabled=color_enabled)
             if guidance:
                 output_func(guidance)
+            state = self._handle_drive_blocked_state(
+                state,
+                actor=actor,
+                input_func=input_func,
+                output_func=output_func,
+                color_enabled=color_enabled,
+            )
         else:
             output_func(f"[停止] 工作流状态：{state.get('status')}。")
             guidance = format_stop_guidance(state, state_dir=self.state_dir, color_enabled=color_enabled)
             if guidance:
                 output_func(guidance)
         self._drive_color_enabled = False
+        return state
+
+    def _handle_drive_blocked_state(
+        self,
+        state: dict[str, Any],
+        *,
+        actor: str,
+        input_func: Callable[[str], str],
+        output_func: Callable[[str], None],
+        color_enabled: bool,
+    ) -> dict[str, Any]:
+        if input_func is input and not sys.stdin.isatty():
+            return state
+        while state.get('status') == 'blocked':
+            category = _blocked_category(state)
+            assist = state.get('blockedAssist') if isinstance(state.get('blockedAssist'), dict) else {}
+            recommended_route = str(assist.get('recommended_route') or '').strip()
+            output_func('[Blocked Assist] blocked 诊断菜单')
+            if recommended_route:
+                output_func(f'  上次建议路线：{recommended_route}')
+            output_func('  操作：')
+            output_func('    d  开启/继续 blocked assist 对话')
+            output_func('    c  已解决，继续同一阶段')
+            output_func('    u  进入 Unit Plan 返工')
+            output_func('    r  进入 Requirements 变更')
+            if _blocked_final_acceptance_route_available(state):
+                output_func('    f  进入 Final Acceptance rejection route')
+            output_func('    k  保持 blocked')
+            output_func('    q  退出')
+            try:
+                choice = input_func('blocked> ').strip().lower()
+            except (EOFError, StopIteration):
+                output_func('[退出] 未收到 blocked 菜单输入，workflow 保持 blocked。')
+                return self.get_status()
+
+            if choice in {'d', 'assist', 'diagnose', 'dialogue', 'dialog'}:
+                state = self._run_blocked_assist_dialogue(state, output_func=output_func)
+                continue
+
+            if choice in {'c', 'continue', 'unblock', 'resolved', 'resume'}:
+                reason = _prompt_required_human_reason(input_func, output_func)
+                if reason is None:
+                    return self.get_status()
+                state = self.get_status()
+                category = _blocked_category(state)
+                if not _blocked_category_allows_unblock(category):
+                    output_func('[Blocked Assist] 合同类 blocked 不能直接继续；请选择 Unit Plan、Requirements 或 Final Acceptance 正式路线。')
+                    output_func(_blocked_rework_hint(state, self.state_dir))
+                    continue
+                self._append_blocked_assist_resolution_event(
+                    state,
+                    selected_route='continue',
+                    human_reason=reason,
+                )
+                try:
+                    state = self.unblock_blocked_workflow(reason=reason)
+                except Exception as exc:
+                    output_func(f'[Blocked Assist] 无法继续：{exc}')
+                    continue
+                output_func('[Blocked Assist] 已按人工确认解除 blocked，继续同一阶段。')
+                return state
+
+            if choice in {'u', 'unit', 'unit-plan', 'unit_plan', 'plan'}:
+                reason = _prompt_required_human_reason(input_func, output_func)
+                if reason is None:
+                    return self.get_status()
+                state = self.get_status()
+                assist_summary_path = self._blocked_assist_summary_path(state)
+                self._append_blocked_assist_resolution_event(
+                    state,
+                    selected_route='unit_plan',
+                    human_reason=reason,
+                    assist_summary_path=assist_summary_path,
+                )
+                try:
+                    self._revise_unit_plan_gate(
+                        human_reason=reason,
+                        assist_summary_path=assist_summary_path,
+                    )
+                except Exception as exc:
+                    output_func(f'[Blocked Assist] 无法进入 Unit Plan 返工：{exc}')
+                    continue
+                output_func('[Blocked Assist] 已进入 Unit Plan 返工。')
+                return self.get_status()
+
+            if choice in {'r', 'requirements', 'req', 'requirement'}:
+                reason = _prompt_required_human_reason(input_func, output_func)
+                if reason is None:
+                    return self.get_status()
+                state = self.get_status()
+                assist_summary_path = self._blocked_assist_summary_path(state)
+                self._append_blocked_assist_resolution_event(
+                    state,
+                    selected_route='requirements',
+                    human_reason=reason,
+                    assist_summary_path=assist_summary_path,
+                )
+                try:
+                    self._revise_requirements_gate(change_reason=_blocked_assist_change_reason(reason, assist_summary_path))
+                except Exception as exc:
+                    output_func(f'[Blocked Assist] 无法进入 Requirements 变更：{exc}')
+                    continue
+                output_func('[Blocked Assist] 已进入 Requirements 变更。')
+                return self.get_status()
+
+            if choice in {'f', 'final', 'final-acceptance', 'final_acceptance'} and _blocked_final_acceptance_route_available(state):
+                reason = _prompt_required_human_reason(input_func, output_func)
+                if reason is None:
+                    return self.get_status()
+                state = self.get_status()
+                gate_path = ensure_final_acceptance_gate(state, self.approvals_dir, self.artifacts_dir)
+                if not _ensure_final_acceptance_rejection_route_from_prompt(
+                    gate_path,
+                    input_func,
+                    output_func,
+                ):
+                    return self.get_status()
+                state = self.get_status()
+                assist_summary_path = self._blocked_assist_summary_path(state)
+                route = _final_acceptance_rejection_route(gate_path.read_text(encoding='utf-8'))
+                self._append_blocked_assist_resolution_event(
+                    state,
+                    selected_route=f'final_acceptance:{route}',
+                    human_reason=reason,
+                    assist_summary_path=assist_summary_path,
+                )
+                try:
+                    self.reject_final_acceptance_gate(
+                        human_reason=reason,
+                        assist_summary_path=assist_summary_path,
+                    )
+                except Exception as exc:
+                    output_func(f'[Blocked Assist] 无法进入 Final Acceptance 路由：{exc}')
+                    continue
+                message = FINAL_ACCEPTANCE_REJECTION_ROUTE_MESSAGES.get(
+                    str(self.store.load_state().get('finalAcceptanceRejectionRoute')),
+                    '最终验收未通过，已按人工路由处理。',
+                )
+                output_func(f'[Blocked Assist] {message}')
+                return self.get_status()
+
+            if choice in {'k', 'keep', 'blocked', 'hold'}:
+                state = self.get_status()
+                self._append_blocked_assist_resolution_event(state, selected_route='keep_blocked')
+                output_func('[Blocked Assist] workflow 保持 blocked。')
+                return state
+
+            if choice in {'q', 'quit', 'exit'}:
+                output_func('[退出] workflow 保持 blocked。')
+                return self.get_status()
+
+            output_func('[提示] 请输入 d / c / u / r / f / k / q。')
         return state
 
     def _print_drive_progress(
@@ -5173,6 +5612,18 @@ def _blocked_rework_hint(state: dict[str, Any], state_dir: Path | str | None) ->
     return f'{unit_plan_cmd} Or {requirements_cmd}'
 
 
+def _blocked_assist_guidance_line(state_dir: Path | str | None, *, color_enabled: bool) -> str:
+    return _guidance_line(
+        '可选诊断',
+        _highlight_inline_guidance_commands(
+            f'运行交互式 `waygate drive --state-dir {_state_dir_arg(state_dir)}`（或 start/go）打开 blocked assist 菜单；Agent 只能诊断并写 summary，不能自动解除阻塞。',
+            color_enabled=color_enabled,
+        ),
+        label_style='dim',
+        color_enabled=color_enabled,
+    )
+
+
 def format_stop_guidance(
     state: dict[str, Any],
     *,
@@ -5216,6 +5667,7 @@ def format_stop_guidance(
                 color_enabled=color_enabled,
             )
         ]
+        lines.append(_blocked_assist_guidance_line(state_dir, color_enabled=color_enabled))
         if category == 'requirements_stage_validation':
             stage = str(context.get('stage') or '').strip()
             display_stage = 'Product Design' if stage == 'product_design' else stage.replace('_', ' ').title()
@@ -5769,6 +6221,264 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         if isinstance(value, dict):
             records.append(value)
     return records
+
+
+BLOCKED_ASSIST_SUMMARY_FIELDS = (
+    'diagnosed_category',
+    'resolved_claim',
+    'human_actions_taken',
+    'recommended_route',
+    'route_reason',
+    'evidence_refs',
+    'remaining_risks',
+    'safe_to_continue_reason',
+)
+BLOCKED_ASSIST_ROUTES = {
+    'continue',
+    'unit_plan',
+    'requirements',
+    'final_acceptance',
+    'implementation',
+    'defect_fix',
+    'keep_blocked',
+}
+
+
+def _blocked_assist_run_id() -> str:
+    return 'blocked-assist-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+
+
+def _blocked_assist_evidence_refs(state: dict[str, Any], artifacts_dir: Path) -> list[str]:
+    refs = ['session.json', 'events.jsonl']
+    context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
+    summary_path = str(context.get('summary_path') or '').strip()
+    if summary_path:
+        refs.append(summary_path)
+    current_unit_id = str(state.get('currentUnitId') or '').strip()
+    if current_unit_id:
+        unit_dir = artifacts_dir / current_unit_id
+        for name in (
+            'builder-summary.json',
+            'verification.json',
+            'review-summary.json',
+            'refinement-summary.json',
+        ):
+            path = unit_dir / name
+            if path.exists():
+                refs.append(str(path))
+    final_scope = artifacts_dir / 'final-scope-audit' / 'scope-audit.json'
+    if final_scope.exists():
+        refs.append(str(final_scope))
+    return list(dict.fromkeys(refs))
+
+
+def _render_blocked_assist_prompt(
+    state: dict[str, Any],
+    *,
+    state_dir: Path,
+    artifacts_dir: Path,
+    summary_path: Path,
+    original_category: str,
+    original_reason: str,
+) -> str:
+    context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
+    evidence_refs = _blocked_assist_evidence_refs(state, artifacts_dir)
+    evidence_lines = '\n'.join(f'- `{ref}`' for ref in evidence_refs) or '- none'
+    safe_state = {
+        'task_id': state.get('task_id'),
+        'currentUnitId': state.get('currentUnitId'),
+        'currentStep': state.get('currentStep'),
+        'status': state.get('status'),
+        'requestedOutcome': state.get('requestedOutcome'),
+        'feasibleOutcome': state.get('feasibleOutcome'),
+        'finalAcceptanceRejectionRoute': state.get('finalAcceptanceRejectionRoute'),
+        'pendingAnnotationBeforeHumanGate': state.get('pendingAnnotationBeforeHumanGate'),
+    }
+    return (
+        '# Blocked Assist Diagnostic Prompt\n\n'
+        '## Role\n'
+        '- You are a diagnostic assistant for a Waygate `status=blocked` workflow.\n'
+        '- You may read `session.json`, `events.jsonl`, and artifacts to understand the blocker.\n'
+        '- You may ask the human focused troubleshooting questions in this agent pane.\n'
+        '- You may suggest checks, environment fixes, evidence to inspect, and the safest controller route.\n\n'
+        '## Hard Limits\n'
+        '- Do not modify Requirements, Unit Plan, Final Acceptance, approval files, source code, tests, or gate status.\n'
+        '- Do not run destructive commands or edit project files.\n'
+        '- Do not approve, unblock, revise, reject, or otherwise change Waygate state.\n'
+        '- Agent summary is context only. The controller will require a human-confirmed `human_reason` before any continue or rework route.\n'
+        '- Do not write environment variable values, tokens, credentials, database URLs, API keys, or other secrets in artifacts or logs. Mention key names only.\n\n'
+        '## Blocked State\n'
+        f'- State dir: `{state_dir}`\n'
+        f'- Artifacts dir: `{artifacts_dir}`\n'
+        f'- Original category: `{original_category}`\n'
+        f'- Original blocked reason: {_redact_sensitive_text(original_reason) or "not provided"}\n'
+        f'- Blocked context: `{json.dumps(_redact_sensitive_value(context), ensure_ascii=False, sort_keys=True)}`\n'
+        f'- Safe state snapshot: `{json.dumps(_redact_sensitive_value(safe_state), ensure_ascii=False, sort_keys=True)}`\n\n'
+        '## Evidence Refs\n'
+        f'{evidence_lines}\n\n'
+        '## Route Semantics\n'
+        '- `continue`: only for environment, external dependency, annotation runtime, or Final Acceptance blocked conditions after human repair.\n'
+        '- `unit_plan`: use when the approved Unit Plan, verification commands, fixtures, scope, sequencing, or evidence plan must change.\n'
+        '- `requirements`: use when approved Requirements, ACs, journeys, out-of-scope, or product contract must change.\n'
+        '- `final_acceptance`: use when the Final Acceptance gate must be rejected through an explicit route.\n'
+        '- `keep_blocked`: use when more human action or external state is needed.\n\n'
+        '## Required Output\n'
+        f'Write JSON to `{summary_path}` with exactly these human-review fields:\n'
+        '```json\n'
+        '{\n'
+        '  "diagnosed_category": "environment|external_dependency|annotation_runtime|unit_plan_contract|requirements_contract|final_acceptance_blocked|final_acceptance_contract|blocked",\n'
+        '  "resolved_claim": false,\n'
+        '  "human_actions_taken": ["what the human says they changed or checked"],\n'
+        '  "recommended_route": "continue|unit_plan|requirements|final_acceptance|implementation|defect_fix|keep_blocked",\n'
+        '  "route_reason": "why this route is appropriate",\n'
+        '  "evidence_refs": ["paths or commands inspected, no secret values"],\n'
+        '  "remaining_risks": ["risks still requiring human review"],\n'
+        '  "safe_to_continue_reason": "required only if recommended_route is continue"\n'
+        '}\n'
+        '```\n'
+        'After writing the summary, write DONE_FILE with status `done`.\n'
+    )
+
+
+def _write_blocked_assist_dry_run_summary(
+    summary_path: Path,
+    *,
+    diagnosed_category: str,
+    evidence_refs: list[str],
+) -> None:
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        'diagnosed_category': diagnosed_category,
+        'resolved_claim': False,
+        'human_actions_taken': [],
+        'recommended_route': 'keep_blocked',
+        'route_reason': 'dry-run diagnostic summary; no human repair claim was evaluated',
+        'evidence_refs': evidence_refs,
+        'remaining_risks': ['Human must confirm the actual repair route before state changes.'],
+        'safe_to_continue_reason': '',
+    }
+    summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
+def _normalize_blocked_assist_summary(summary_path: Path) -> dict[str, Any]:
+    try:
+        parsed = json.loads(summary_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f'blocked assist summary is not valid JSON: {summary_path}') from exc
+    if not isinstance(parsed, dict):
+        raise ValueError('blocked assist summary must be a JSON object')
+    parsed = _redact_sensitive_value(parsed)
+    diagnosed_category = str(parsed.get('diagnosed_category') or parsed.get('category') or 'blocked').strip()
+    recommended_route = str(parsed.get('recommended_route') or parsed.get('route') or 'keep_blocked').strip()
+    if recommended_route not in BLOCKED_ASSIST_ROUTES:
+        recommended_route = 'keep_blocked'
+    payload = {
+        'diagnosed_category': diagnosed_category or 'blocked',
+        'resolved_claim': bool(parsed.get('resolved_claim') or parsed.get('resolved') or False),
+        'human_actions_taken': _string_list(parsed.get('human_actions_taken') or parsed.get('humanActionsTaken')),
+        'recommended_route': recommended_route,
+        'route_reason': str(parsed.get('route_reason') or parsed.get('routeReason') or '').strip(),
+        'evidence_refs': _string_list(parsed.get('evidence_refs') or parsed.get('evidenceRefs')),
+        'remaining_risks': _string_list(parsed.get('remaining_risks') or parsed.get('remainingRisks')),
+        'safe_to_continue_reason': str(
+            parsed.get('safe_to_continue_reason')
+            or parsed.get('safeToContinueReason')
+            or ''
+        ).strip(),
+    }
+    summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    return payload
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [_redact_sensitive_text(str(item).strip()) for item in value if str(item).strip()]
+    if value is None:
+        return []
+    text = str(value).strip()
+    return [_redact_sensitive_text(text)] if text else []
+
+
+def _redact_sensitive_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _redact_sensitive_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_sensitive_value(item) for item in value]
+    if isinstance(value, str):
+        return _redact_sensitive_text(value)
+    return value
+
+
+def _redact_sensitive_text(text: str) -> str:
+    redacted = str(text or '')
+    for key, value in os.environ.items():
+        key_upper = key.upper()
+        if not value or len(value) < 4:
+            continue
+        if not any(token in key_upper for token in ('TOKEN', 'SECRET', 'PASSWORD', 'PASS', 'DATABASE_URL', 'API_KEY', 'CREDENTIAL', 'AUTH')):
+            continue
+        redacted = redacted.replace(value, f'<redacted:{key}>')
+    redacted = re.sub(
+        r'(?i)\b(postgres|postgresql|mysql|mongodb|redis)://[^\s`"\']+',
+        lambda match: f'{match.group(1)}://<redacted>',
+        redacted,
+    )
+    redacted = re.sub(r'(?i)\b(token|api[_-]?key|password|secret)=([^\s`"\']+)', r'\1=<redacted>', redacted)
+    return redacted
+
+
+def _prepend_blocked_assist_resolution_feedback(
+    feedback: str,
+    *,
+    human_reason: str | None,
+    assist_summary_path: str | None,
+) -> str:
+    human_reason = (human_reason or '').strip()
+    assist_summary_path = (assist_summary_path or '').strip()
+    if not human_reason and not assist_summary_path:
+        return feedback
+    lines = [
+        '## Blocked Assist Human Resolution',
+        '',
+        'Agent summary is context only; the human reason is authoritative.',
+    ]
+    if human_reason:
+        lines.extend(['', f'Human reason: {_redact_sensitive_text(human_reason)}'])
+    if assist_summary_path:
+        lines.extend(['', f'Blocked assist summary: {assist_summary_path}'])
+    if feedback.strip():
+        lines.extend(['', '## Existing Gate Feedback', '', feedback.strip()])
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _blocked_assist_change_reason(human_reason: str, assist_summary_path: str | None) -> str:
+    return _prepend_blocked_assist_resolution_feedback(
+        '',
+        human_reason=human_reason,
+        assist_summary_path=assist_summary_path,
+    ).strip()
+
+
+def _prompt_required_human_reason(
+    input_func: Callable[[str], str],
+    output_func: Callable[[str], None],
+) -> str | None:
+    while True:
+        try:
+            reason = input_func('human_reason> ').strip()
+        except (EOFError, StopIteration):
+            output_func('[Blocked Assist] 未收到 human_reason，workflow 保持 blocked。')
+            return None
+        if reason:
+            return reason
+        output_func('[Blocked Assist] human_reason 不能为空。')
+
+
+def _blocked_final_acceptance_route_available(state: dict[str, Any]) -> bool:
+    return (
+        state.get('currentStep') == 'WAITING_FINAL_ACCEPTANCE'
+        or _blocked_category(state) in {'final_acceptance_blocked', 'final_acceptance_contract'}
+    )
 
 
 def _change_request_impacts(
