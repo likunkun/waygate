@@ -30,6 +30,7 @@
 | 正式维护文档 | `docs/workflow/unit-plan-evidence-row-preflight-policy.md` | Unit Plan evidence-row 前置校验规则：自动化 test case command 必须精确匹配 `verification_commands`，`verification_assist` 例外，Final Scope Audit 缺 AC evidence row 时回到 Unit Plan revise。 |
 | 正式维护文档 | `docs/architecture/external-spec-intake-and-annotation-architecture.md` | V0.6.1 OpenSpec / Spec Kit import contract、annotation_agents.py、prompt template registry、runner adapter、verification-assist case runner 和 verification.json schema 模块边界。 |
 | 正式维护文档 | `docs/workflow/requirements-e2e-review-policy.md` | V0.6.2 Requirements 阶段真实 E2E / 浏览器/API/service 验收前置审阅矩阵；V0.6.0m Unit Plan golden path 必须是真实 `layer=e2e`。 |
+| 正式维护文档 | `docs/workflow/recoverable-wait-go-resume-design.md` | 2026-05-26 设计：移除用户可见 `retry`，由 `go/run/drive/start` 自动消费 timeout/idle recoverable wait，同时保持 blocked 的 `unblock` / `revise` 边界。 |
 | 正式维护文档 | `docs/workflow/recoverable-agent-timeout-policy.md` | Agent 超时、idle-without-DONE 和 `waygate retry` 的可恢复等待策略；说明 transient runner silence 不走 `waygate revise`。 |
 | 正式维护文档 | `docs/workflow/stop-guidance-and-unblock-policy.md` | Waygate 停止状态原因化 guidance、`retry` 与显式 `blocked` 的边界、环境类 `unblock` 和 Builder blocked reconciliation 规则。 |
 | 正式维护文档 | `docs/workflow/final-acceptance-guided-walkthrough-policy.md` | Final Acceptance 前的启动准备阶段、Agent 提供的 `final_acceptance_walkthrough.inspection` / `launch` 合同、人工观察记录审阅上下文和 Golden Path 人工走查 gate 规则。 |
