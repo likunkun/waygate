@@ -8,9 +8,11 @@ import sys
 from pathlib import Path
 
 from workflow_controller.rrc_controller import RalphRefinerController
+from workflow_controller.gates import parsers as gate_parsers
 from workflow_controller.gates.parsers import (
     approve_gate_file,
     extract_unit_plan_state_patch,
+    run_plannotator_gate_review,
     write_gate_file,
 )
 from workflow_controller.gates.generators import (
@@ -86,6 +88,49 @@ def _make_target_workspace(tmp_path: Path) -> tuple[Path, Path]:
 """,
     )
     return workspace, plan_path
+
+
+def test_plannotator_review_uses_absolute_gate_path_with_relative_state_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    state_dir = Path('.rrc-controller-v2')
+    gate_path = state_dir / 'approvals' / 'final-acceptance.md'
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text('# Final Acceptance\n', encoding='utf-8')
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 12345
+
+        def __init__(self, command, *, cwd, text, stdout, stderr, env):
+            captured['command'] = command
+            captured['cwd'] = cwd
+            captured['text'] = text
+            captured['env'] = env
+
+        def poll(self):
+            return 0
+
+    fake_plannotator = tmp_path / 'fake-plannotator'
+    fake_plannotator.write_text('#!/bin/sh\n', encoding='utf-8')
+    fake_plannotator.chmod(0o755)
+    monkeypatch.setattr(gate_parsers.subprocess, 'Popen', FakeProcess)
+
+    run_plannotator_gate_review(
+        gate='final-acceptance',
+        label='最终验收',
+        gate_path=gate_path,
+        state_dir=state_dir,
+        command=str(fake_plannotator),
+        timeout_seconds=1,
+    )
+
+    command = captured['command']
+    assert isinstance(command, list)
+    assert command[2] == str(gate_path.resolve())
+    assert captured['cwd'] == str(gate_path.parent)
 
 
 def test_unit_plan_prompt_allows_covered_legacy_units_outside_executable_units(tmp_path: Path) -> None:
