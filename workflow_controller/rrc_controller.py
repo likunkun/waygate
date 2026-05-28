@@ -73,6 +73,7 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_infrastructure_execution_context_matrix,
     validate_unit_plan_prototype_conformance,
     validate_unit_plan_real_e2e_evidence_policy,
+    validate_unit_plan_script_entry_commands,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_assist_contract,
@@ -697,6 +698,7 @@ class RalphRefinerController:
             state=candidate_state,
         )
         validate_unit_plan_final_acceptance_walkthrough(candidate_state)
+        validate_unit_plan_script_entry_commands(candidate_state)
         return candidate_state
 
     def _unit_plan_gate_invalid_reason(self, state: dict[str, Any], gate_path: Path) -> str | None:

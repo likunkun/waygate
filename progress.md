@@ -18,6 +18,13 @@
 
 ## 会话：2026-05-28
 
+### Unit Plan 命令脚本入口限制
+- **状态：** implementation verified; broad regression passed on source branch; current V0.6.2b cherry-pick will be verified in this branch.
+- 用户决策：不再兼容 Unit Plan Markdown 表格中的管道符解析；所有可执行验证命令都必须先写入 `scripts/verify/` 下的脚本文件，再通过脚本入口执行。
+- 已新增 Unit Plan command policy validator，检查 `verification_commands[]` 与 test case `command`，只接受 `bash scripts/verify/<case>.sh`、`sh scripts/verify/<case>.sh`、`python3 scripts/verify/<case>.py`、`python scripts/verify/<case>.py` 或 `./scripts/verify/<case>.sh` 形态。
+- 已接入 Unit Plan 人工确认前 preflight 与 Unit Plan approval 后持久化前校验；Requirements 确认阶段不解析命令，因为可执行命令来自 Unit Plan `Controller State Patch`。
+- 已同步 `docs/workflow/unit-plan-evidence-row-preflight-policy.md` 与 `docs/README.md`。
+
 ### 7号窗口 Requirements Auto-Rework 后续整改
 - **状态：** implementation verified; focused/full regression passed; package rebuilt; user-level `waygate` synced; live V2.1 recovered to Requirements human gate.
 - 修复：Journey contract parser 接受无 `Title` 列的 Journey 表，并以 Journey ID 作为 title 兜底；新增 `Acceptance contract`、`Path / assertion focus` 等 steps 表头别名；assembled final gate 中同一 Journey ID 的兼容重复表行会合并为一条合同记录，优先保留更完整 steps、AC、Unit、Test Case 和 command 信息。

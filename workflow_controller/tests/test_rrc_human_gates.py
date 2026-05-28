@@ -2225,7 +2225,7 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
           "name": "Implementation",
           "passes": false,
       "scope": ["Implement the delivery path"],
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     },
     {
       "id": "unit-b",
@@ -2241,7 +2241,7 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
           "environment_kind": "local_real",
           "real_entrypoint": "/delivery",
           "fixture": "tests/fixtures/delivery.json",
-          "command": "pytest tests/e2e/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery-e2e.sh",
           "expected": "Delivery normal flow completes with confirmation"
         }
           ],
@@ -2253,7 +2253,7 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
               "expected_observations": ["Delivery normal flow completes with confirmation"]
             }
           },
-          "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+          "verification_commands": ["bash scripts/verify/test-delivery-e2e.sh"]
         }
       ]
     }
@@ -2271,7 +2271,7 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
     assert state['unitPlanAccepted'] is True
     assert state['currentUnitId'] == 'unit-a'
     assert [unit['id'] for unit in state['units']] == ['unit-a', 'unit-b']
-    assert state['units'][0]['verification_commands'] == ['pytest tests/test_delivery.py -q']
+    assert state['units'][0]['verification_commands'] == ['bash scripts/verify/test-delivery.sh']
     assert state['objectiveCoverage'] == [
         {'objective': 'Delivery objective', 'units': ['unit-a', 'unit-b'], 'status': 'partial'},
     ]
@@ -2325,7 +2325,7 @@ def test_unit_plan_patch_can_preserve_completed_existing_units_in_coverage(tmp_p
       "name": "Implementation",
       "passes": false,
       "scope": ["Implement the delivery path"],
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }
   ]
 }
@@ -2395,7 +2395,7 @@ def test_unit_plan_patch_allows_partial_rollup_to_reference_completed_existing_u
       "name": "Remaining unit",
       "passes": false,
       "scope": ["Finish remaining work"],
-      "verification_commands": ["pytest tests/test_remaining.py -q"]
+      "verification_commands": ["bash scripts/verify/test-remaining.sh"]
     }
   ]
 }
@@ -2528,7 +2528,7 @@ def test_unit_plan_patch_can_reopen_covered_objective_with_defect_fix_unit(tmp_p
       "name": "Final acceptance i18n defect fix",
       "passes": false,
       "scope": ["Fix final acceptance i18n gaps"],
-      "verification_commands": ["pytest tests/test_i18n.py -q"]
+      "verification_commands": ["bash scripts/verify/test-i18n.sh"]
     }
   ]
 }
@@ -2601,7 +2601,7 @@ def test_unit_plan_approval_with_preapproved_scope_advances_to_builder_ready_sta
       "name": "Remaining unit",
       "passes": false,
       "scope": ["Finish remaining work"],
-      "verification_commands": ["pytest tests/test_remaining.py -q"]
+      "verification_commands": ["bash scripts/verify/test-remaining.sh"]
     }
   ]
 }
@@ -3015,7 +3015,7 @@ def test_unit_plan_approval_accepts_closure_unit_with_golden_path(tmp_path: Path
 """,
     )
     approve_gate_file(requirements_path, actor='tester')
-    command = 'DATABASE_URL=file:test.db pnpm exec playwright test tests/e2e/delivery.spec.ts'
+    command = 'bash scripts/verify/delivery-e2e.sh'
     unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
     write_gate_file(
         unit_plan_path,
@@ -3321,7 +3321,7 @@ def test_unit_plan_approval_accepts_explicit_test_case_matrix_for_static_and_man
       "id": "unit-logo",
       "name": "Logo delivery",
       "passes": false,
-      "verification_commands": ["pnpm exec tsc --noEmit"],
+          "verification_commands": ["bash scripts/verify/static-check.sh"],
       "test_cases": [
         {
           "id": "logo-home-visible",
