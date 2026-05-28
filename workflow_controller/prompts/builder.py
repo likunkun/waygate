@@ -105,7 +105,9 @@ Original target prompt/context: {original_prompt_path}
 Builder rules:
 - Implement the shortest verifiable path for the current unit only.
 - Follow the Unit Plan scope, non-goals, done_when, and verification_commands.
-- 先读取 Unit Plan Test Case Matrix；在实现功能前，创建或更新 command 指向的测试文件。
+- 先读取 Unit Plan Test Case Matrix；在实现功能前，创建或更新 command 指向的 `scripts/verify/` 脚本，以及脚本内部调用的测试文件。
+- Unit Plan 中的 `command` / `verification_commands` 只允许是脚本入口。
+- 脚本内部可以运行 pytest、Playwright、环境准备或多步 shell；不要把直接 pytest/Playwright 命令、`bash -lc`、`python -c`、管道或内联 shell 写回 Unit Plan。
 - 读取 Unit Plan Document Deliverables Matrix；`Required For Acceptance = true` 的文档动作必须在本 unit 中落到对应 `docs/*` 或登记入口，纯代码小修则保持 Unit Plan 中的“不需要正式文档变更”说明。
 - 当本 unit 涉及 UI、Web、可点击原型、prototype evidence 或生产 UI 一致性验证时，使用 `ui-ux-pro-max` skill；`frontend-design` 不能替代既有产品 UI/原型一致性工作，只能辅助全新视觉探索或局部润色。
 - UI/Web/prototype 实现和验证必须覆盖交互、可访问性、布局、遮挡检查，并基于真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境。
@@ -119,7 +121,7 @@ E2E unit rules (applies when workflow_validation_level is "closure"):
 - Use the `webapp-testing` skill to generate Playwright test files with real data assertions.
 - Use the real application entrypoint and real fixture/setup data from the test case; do not replace runtime behavior with mocked UI-only checks unless the Unit Plan explicitly scopes it that way.
 - Every test function must map to one AC and assert the specific value described in that AC's `expected` field (e.g. array ordering, field values, counts, status changes, error text, exported content) — not just that the page renders, a button exists, there is no console error, or the response is 200.
-- `verification_commands` must run the Playwright test suite (e.g. `npx playwright test`); the unit is done only when this command exits 0.
+- `verification_commands` must be `scripts/verify/` script entrypoints that run the real Playwright/pytest/API/service checks internally; the unit is done only when every script exits 0.
 - 如果数据准备、服务启动或验证命令无法运行，写 BLOCKED 并说明精确阻塞原因；不要伪造通过证据，也不要用截图结论标记 done。
 - Do not use screenshots as the sole acceptance evidence. Screenshots may supplement but cannot replace programmatic assertions.
 - For prototype conformance test cases, run the real production entrypoint and real click path from `user_steps`; do not satisfy the case with container-visible, route-loaded, or text-visible assertions only.
