@@ -1,5 +1,11 @@
 # 发现与决策
 
+## 2026-05-28 Unit Plan 命令脚本入口限制
+
+- Unit Plan 的 `verification_commands[]` 和 test case `command` 是 verifier 之后实际执行命令的事实源，因此命令格式限制必须落在 controller validator 中，不能只靠 prompt 或人工说明。
+- 不再把 Markdown 表格管道符解析作为当前修复方向。统一要求把完整验证逻辑写入 `scripts/verify/` 下的 `.sh` 或 `.py` 脚本，Unit Plan 中只保留脚本入口命令，避免 inline shell、管道、`bash -c` / `bash -lc`、`python -c` 和直接工具调用绕过流程规则。
+- Requirements 确认阶段不需要解析命令。Requirements 负责需求和验收准则，真正的可执行命令在 Unit Plan `Controller State Patch` 中出现，并在 Unit Plan 人工确认前与 approval 后两处执行 deterministic preflight。
+
 ## 2026-05-26 Recoverable wait 恢复入口收敛
 
 - `go/run/drive/start` 已经表达“继续推进 workflow”，因此 timeout/idle recoverable wait 不需要独立的用户可见 `retry` 命令。恢复入口统一后，用户只需重新运行执行命令，controller 从 `session.json` 消费 `recoverableAgentWait` 并继续同一阶段。

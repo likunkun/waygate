@@ -90,12 +90,12 @@ def _base_state(tmp_path: Path, *, step: str, role: str, artifact_name: str) -> 
                         'uses_core_api_mock': False,
                         'golden_path': False,
                         'fixture': 'tmp fixture',
-                        'command': 'python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k prompt_common',
+                        'command': 'bash scripts/verify/tc-ac-1.sh',
                         'expected': 'Delivery behavior works with AO-001 coverage',
                     }
                 ],
                 'verification_commands': [
-                    'python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k prompt_common',
+                    'bash scripts/verify/tc-ac-1.sh',
                 ],
             }
         ],
@@ -178,12 +178,12 @@ def _valid_unit_plan_body() -> str:
                         'uses_core_api_mock': False,
                         'golden_path': False,
                         'fixture': 'tmp fixture',
-                        'command': 'python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k prompt_common',
+                        'command': 'bash scripts/verify/tc-ac-1.sh',
                         'expected': 'Delivery behavior works with AO-001 coverage',
                     }
                 ],
                 'verification_commands': [
-                    'python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k prompt_common',
+                    'bash scripts/verify/tc-ac-1.sh',
                 ],
             }
         ],
@@ -193,7 +193,7 @@ def _valid_unit_plan_body() -> str:
         '## Test Case Matrix\n'
         '| Acceptance Criterion | AO | Test Case | Journey | Layer | Environment | Real Entry | Core API Mock | Golden Path | Command/Evidence | Expected Result |\n'
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
-        '| AC-1 | AO-001 | TC-AC-1 | - | integration | local_real | workflow_controller/spec_sources.py | false | false | python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k prompt_common | Delivery behavior works with AO-001 coverage |\n\n'
+        '| AC-1 | AO-001 | TC-AC-1 | - | integration | local_real | workflow_controller/spec_sources.py | false | false | bash scripts/verify/tc-ac-1.sh | Delivery behavior works with AO-001 coverage |\n\n'
         '## Document Deliverables Matrix\n'
         '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |\n'
         '| --- | --- | --- | --- | --- |\n'
@@ -981,7 +981,7 @@ def test_gate_order_runs_annotation_before_human_gate_events_for_requirements_un
             {
                 'passed': True,
                 'commands': [
-                    'python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k prompt_common',
+                    'bash scripts/verify/tc-ac-1.sh',
                 ],
                 'results': [],
                 'evidence_schema_version': 'v0.3.5',
@@ -992,7 +992,7 @@ def test_gate_order_runs_annotation_before_human_gate_events_for_requirements_un
                         'acceptance_criterion': 'AC-1',
                         'acceptance_obligations': ['AO-001'],
                         'layer': 'integration',
-                        'command': 'python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k prompt_common',
+                        'command': 'bash scripts/verify/tc-ac-1.sh',
                         'manual_evidence': '',
                         'expected': 'Delivery behavior works with AO-001 coverage',
                         'status': 'passed',

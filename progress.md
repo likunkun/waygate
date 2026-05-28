@@ -1,5 +1,22 @@
 # 进度日志
 
+## 会话：2026-05-28
+
+### Unit Plan 命令脚本入口限制
+- **状态：** implementation verified; broad regression passed except existing Python 3.10 collection blocker in `test_rrc_controller.py`.
+- 用户决策：不再兼容 Unit Plan Markdown 表格中的管道符解析；所有可执行验证命令都必须先写入 `scripts/verify/` 下的脚本文件，再通过脚本入口执行。
+- 已新增 Unit Plan command policy validator，检查 `verification_commands[]` 与 test case `command`，只接受 `bash scripts/verify/<case>.sh`、`sh scripts/verify/<case>.sh`、`python3 scripts/verify/<case>.py`、`python scripts/verify/<case>.py` 或 `./scripts/verify/<case>.sh` 形态。
+- 已接入 Unit Plan 人工确认前 preflight 与 Unit Plan approval 后持久化前校验；Requirements 确认阶段不解析命令，因为可执行命令来自 Unit Plan `Controller State Patch`。
+- 已同步 `docs/workflow/unit-plan-evidence-row-preflight-policy.md` 与 `docs/README.md`。
+- 已完成验证：
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest workflow_controller/tests/test_unit_plan_command_policy.py -q` -> `7 passed`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest workflow_controller/tests/test_unit_plan_command_policy.py workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_rrc_e2e.py workflow_controller/tests/test_rrc_real_runtime.py workflow_controller/tests/test_v061_annotation_agents.py -q` -> `143 passed`
+  - 沙箱外 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest workflow_controller/tests --ignore=workflow_controller/tests/test_rrc_controller.py -q` -> `443 passed`
+  - `python3 -m py_compile ...` 修改过的 Python 文件 -> passed
+  - `git diff --check` -> passed
+  - 标准 `python -m pytest workflow_controller/tests -q` 当前环境失败：`python` 命令不存在。
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest workflow_controller/tests -q` 当前环境失败在既有 `workflow_controller/tests/test_rrc_controller.py:11120`：Python 3.10 不支持该 f-string expression 中的 backslash。
+
 ## 会话：2026-05-26
 
 ### Blocked Assist 对话恢复层

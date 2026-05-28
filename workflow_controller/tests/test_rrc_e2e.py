@@ -133,12 +133,12 @@ if sys.argv[1:2] == ["paste-buffer"]:
                             "environment_kind": "local_real",
                             "real_entrypoint": "CLI verifier command in workspace",
                             "fixture": "workspace delivery artifact",
-                            "command": "python -c \\"from pathlib import Path; assert Path('delivery.txt').read_text(encoding='utf-8') == 'ready\\\\n'; print('delivery verified')\\"",
+                            "command": "bash scripts/verify/delivery.sh",
                             "expected": "delivery.txt contains ready newline",
                         }
                     ],
                     "verification_commands": [
-                        "python -c \\"from pathlib import Path; assert Path('delivery.txt').read_text(encoding='utf-8') == 'ready\\\\n'; print('delivery verified')\\""
+                        "bash scripts/verify/delivery.sh"
                     ],
                 }
             ],
@@ -181,6 +181,18 @@ if sys.argv[1:2] == ["paste-buffer"]:
         )
         raise SystemExit(0)
     Path("delivery.txt").write_text("ready\\n", encoding="utf-8")
+    verify_script = Path("scripts/verify/delivery.sh")
+    verify_script.parent.mkdir(parents=True, exist_ok=True)
+    verify_script.write_text(
+        "#!/usr/bin/env bash\\n"
+        "set -euo pipefail\\n"
+        "python3 - <<'PY'\\n"
+        "from pathlib import Path\\n"
+        "assert Path('delivery.txt').read_text(encoding='utf-8') == 'ready\\\\n'\\n"
+        "print('delivery verified')\\n"
+        "PY\\n",
+        encoding="utf-8",
+    )
     Path(os.environ["RRC_RUN_DONE_FILE"]).write_text(
         json.dumps({"status": "done", "summary": "delivery artifact created", "run_id": os.environ["RRC_RUN_ID"]}),
         encoding="utf-8",

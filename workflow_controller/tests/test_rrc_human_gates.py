@@ -22,7 +22,7 @@ from workflow_controller.gates.generators import (
 )
 from workflow_controller.prompts.builder import _render_builder_execution_prompt
 from workflow_controller.prompts.requirements import _render_requirements_draft_prompt
-from workflow_controller.prompts.unit_plan import _render_unit_plan_draft_prompt
+from workflow_controller.prompts.unit_plan import _render_test_strategist_prompt, _render_unit_plan_draft_prompt
 from workflow_controller.prototype_review import validate_final_prototype_conformance
 from workflow_controller.steps.builder import prepare_builder_prompt
 
@@ -279,6 +279,12 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
 
     requirements_prompt = _render_requirements_draft_prompt(state, tmp_path / 'requirements-body.md')
     unit_plan_prompt = _render_unit_plan_draft_prompt(state, requirements_path, tmp_path / 'unit-plan-body.md')
+    test_strategist_prompt = _render_test_strategist_prompt(
+        state=state,
+        requirements_path=requirements_path,
+        unit_plan_body_path=tmp_path / 'unit-plan-body.md',
+        draft_dir=tmp_path / 'unit-plan-draft',
+    )
     builder_prompt = _render_builder_execution_prompt(
         state=state,
         requirements_path=requirements_path,
@@ -309,6 +315,7 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '固定测试数据或 fixture' in requirements_prompt
     assert '可断言的期望值' in requirements_prompt
     assert '不能用截图或人工观察替代断言' in requirements_prompt
+    assert 'Unit Plan 阶段必须把所有自动化执行命令落成 `scripts/verify/` 下的脚本入口' in requirements_prompt
     assert 'Agent-side requirements clarification' in requirements_prompt
     assert '写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题' in requirements_prompt
     assert '当前 tmux agent pane' in requirements_prompt
@@ -322,12 +329,22 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图' in unit_plan_prompt
     assert '`golden_path: true` 必须同时声明 `layer: "e2e"`' in unit_plan_prompt
     assert 'API-only 或 service-only 项目的 golden path 可以使用 pytest/API/service E2E' in unit_plan_prompt
+    assert '`command` 必须是 `scripts/verify/` 下的脚本入口' in unit_plan_prompt
+    assert '`verification_commands` 只能列脚本入口' in unit_plan_prompt
+    assert 'bash scripts/verify/<case>.sh' in unit_plan_prompt
+    assert 'python3 scripts/verify/<case>.py' in unit_plan_prompt
+    assert '不要在 Unit Plan 中写 `pytest ...`、`playwright test ...`、`bash -lc`、`python -c`、管道或内联 shell' in unit_plan_prompt
+    assert '`verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`）' not in unit_plan_prompt
     assert '测试命令退出码为 0 且断言覆盖 AC' in unit_plan_prompt
     assert '对不适合 E2E 的 AC' in unit_plan_prompt
+    assert 'script entrypoint under scripts/verify' in test_strategist_prompt
+    assert 'Do not suggest direct `pytest ...`, `playwright test ...`, `python -c`, `bash -lc`, pipes, or inline shell as Unit Plan commands' in test_strategist_prompt
     requirements_body = render_requirements_gate_body(state)
     unit_plan_body = render_unit_plan_gate_body(state)
 
-    assert 'command 指向的测试文件' in builder_prompt
+    assert 'command 指向的 `scripts/verify/` 脚本' in builder_prompt
+    assert '脚本内部可以运行 pytest、Playwright、环境准备或多步 shell' in builder_prompt
+    assert '`verification_commands` must run the Playwright test suite (e.g. `npx playwright test`)' not in builder_prompt
     assert '覆盖了哪些 AC' in builder_prompt
     assert '不要伪造通过证据' in builder_prompt
     assert '稳定 AC ID' in requirements_body
@@ -2036,7 +2053,7 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
           "name": "Implementation",
           "passes": false,
       "scope": ["Implement the delivery path"],
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     },
     {
       "id": "unit-b",
@@ -2052,7 +2069,7 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
           "environment_kind": "local_real",
           "real_entrypoint": "/delivery",
           "fixture": "tests/fixtures/delivery.json",
-          "command": "pytest tests/e2e/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery-e2e.sh",
           "expected": "Delivery normal flow completes with confirmation"
         }
           ],
@@ -2064,7 +2081,7 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
               "expected_observations": ["Delivery normal flow completes with confirmation"]
             }
           },
-          "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+          "verification_commands": ["bash scripts/verify/test-delivery-e2e.sh"]
         }
       ]
     }
@@ -2082,7 +2099,7 @@ def test_unit_plan_approval_applies_controller_state_patch(tmp_path: Path) -> No
     assert state['unitPlanAccepted'] is True
     assert state['currentUnitId'] == 'unit-a'
     assert [unit['id'] for unit in state['units']] == ['unit-a', 'unit-b']
-    assert state['units'][0]['verification_commands'] == ['pytest tests/test_delivery.py -q']
+    assert state['units'][0]['verification_commands'] == ['bash scripts/verify/test-delivery.sh']
     assert state['objectiveCoverage'] == [
         {'objective': 'Delivery objective', 'units': ['unit-a', 'unit-b'], 'status': 'partial'},
     ]
@@ -2136,7 +2153,7 @@ def test_unit_plan_patch_can_preserve_completed_existing_units_in_coverage(tmp_p
       "name": "Implementation",
       "passes": false,
       "scope": ["Implement the delivery path"],
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }
   ]
 }
@@ -2206,7 +2223,7 @@ def test_unit_plan_patch_allows_partial_rollup_to_reference_completed_existing_u
       "name": "Remaining unit",
       "passes": false,
       "scope": ["Finish remaining work"],
-      "verification_commands": ["pytest tests/test_remaining.py -q"]
+      "verification_commands": ["bash scripts/verify/test-remaining.sh"]
     }
   ]
 }
@@ -2339,7 +2356,7 @@ def test_unit_plan_patch_can_reopen_covered_objective_with_defect_fix_unit(tmp_p
       "name": "Final acceptance i18n defect fix",
       "passes": false,
       "scope": ["Fix final acceptance i18n gaps"],
-      "verification_commands": ["pytest tests/test_i18n.py -q"]
+      "verification_commands": ["bash scripts/verify/test-i18n.sh"]
     }
   ]
 }
@@ -2412,7 +2429,7 @@ def test_unit_plan_approval_with_preapproved_scope_advances_to_builder_ready_sta
       "name": "Remaining unit",
       "passes": false,
       "scope": ["Finish remaining work"],
-      "verification_commands": ["pytest tests/test_remaining.py -q"]
+      "verification_commands": ["bash scripts/verify/test-remaining.sh"]
     }
   ]
 }
@@ -2826,7 +2843,7 @@ def test_unit_plan_approval_accepts_closure_unit_with_golden_path(tmp_path: Path
 """,
     )
     approve_gate_file(requirements_path, actor='tester')
-    command = 'DATABASE_URL=file:test.db pnpm exec playwright test tests/e2e/delivery.spec.ts'
+    command = 'bash scripts/verify/delivery-e2e.sh'
     unit_plan_path = state_dir / 'approvals' / 'unit-plan.md'
     write_gate_file(
         unit_plan_path,
@@ -3132,7 +3149,7 @@ def test_unit_plan_approval_accepts_explicit_test_case_matrix_for_static_and_man
       "id": "unit-logo",
       "name": "Logo delivery",
       "passes": false,
-      "verification_commands": ["pnpm exec tsc --noEmit"],
+          "verification_commands": ["bash scripts/verify/static-check.sh"],
       "test_cases": [
         {
           "id": "logo-home-visible",

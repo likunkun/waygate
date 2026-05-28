@@ -81,6 +81,12 @@ UI/UX skill policy:
 - `frontend-design` 只能作为全新视觉探索或局部视觉润色的可选辅助，不能替代既有产品 UI/原型一致性工作。
 - 计划中的 UI/Web/prototype 验证必须覆盖交互、可访问性、布局、遮挡检查，并映射到真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境。
 
+Verification command script-entry policy:
+- `command` 必须是 `scripts/verify/` 下的脚本入口，例如 `bash scripts/verify/<case>.sh`、`sh scripts/verify/<case>.sh`、`python3 scripts/verify/<case>.py`、`python scripts/verify/<case>.py` 或 `./scripts/verify/<case>.sh`。
+- `verification_commands` 只能列脚本入口；每个自动化 test case 的 `command` 必须与其中一个脚本入口精确匹配。
+- 脚本内部可以运行 pytest、Playwright、环境准备或多步 shell；Unit Plan 只声明脚本入口和脚本应覆盖的 AC/断言。
+- 不要在 Unit Plan 中写 `pytest ...`、`playwright test ...`、`bash -lc`、`python -c`、管道或内联 shell；把这些内容写入 `scripts/verify/<case>.sh` 或 `scripts/verify/<case>.py`。
+
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
 - 必须沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图；除非创建 Requirements change request 并重新通过 Requirements gate，否则 Unit Plan 不得弱化这些前置审阅结论。
@@ -90,12 +96,12 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - Verifier 会从 test cases 生成 `verification.json` 的 `evidence_rows`；因此每个 test case 的 AC、AO、layer、command/evidence、expected 和 `golden_path` 必须可直接审计。
 - 每个浏览器或运行时测试用例必须声明或可推导 `environment_kind`：真实本地 E2E 使用 `local_real`，只读生产验收使用 `production_readonly`；只有 `component_mock` / `contract_mock` / `visual` 辅助测试可以设置 `allows_mock: true` 和 `mocked_routes`。
 - `layer=e2e`、`golden_path: true`、`prototype_conformance`、Journey closure 或 Web 系统验收测试不得 mock/stub 核心业务 API。包含 `page.route("**/api/...")`、`route.fulfill()`、mock API server、fixture-only server 或 `route_common(page, ...)` 的浏览器测试只能作为非 E2E 辅助证据，不能覆盖 AC/Journey/golden path/prototype surface。
-- `golden_path: true` 必须同时声明 `layer: "e2e"`、`environment_kind: "local_real"` 或 `"production_readonly"`、`entrypoint` 或 `real_entrypoint`、真实 fixture/setup 或 test data、可执行 `command`、强 `expected` 断言，并且 `command` 必须出现在 `verification_commands`。
+- `golden_path: true` 必须同时声明 `layer: "e2e"`、`environment_kind: "local_real"` 或 `"production_readonly"`、`entrypoint` 或 `real_entrypoint`、真实 fixture/setup 或 test data、脚本入口 `command`、强 `expected` 断言，并且 `command` 必须出现在 `verification_commands`。
 - 真实 E2E 测试必须写 `entrypoint` 或 `real_entrypoint`（真实页面/route/URL/CLI/API/service 入口），并使用真实服务/API 与真实测试数据准备；截图只能作为补充 artifact，不能替代 DOM/API/行为断言。API-only 或 service-only 项目的 golden path 可以使用 pytest/API/service E2E，不要求浏览器。
 - 至少一个 E2E test case 必须标记 `golden_path: true`，表示人工最终验收前必须先跑通的核心正常流程。
 - closure/Web/UI unit 必须在 Controller State Patch 的对应 unit 中写 `final_acceptance_walkthrough.inspection`，由 Agent 提供人工可见系统走查入口；Controller 不猜入口。字段必须包含 `surface_kind: "browser" | "api" | "cli" | "artifact"`、`entrypoint`、`manual_steps[]` 和 `expected_observations[]`。`manual_steps` 必须是真实系统操作，不得只写 `pytest`、`playwright test`、golden path command 或其他测试命令。
 - closure unit 如需最终人工走查启动真实应用，必须同时写 `final_acceptance_walkthrough.launch`：`mode` 只能是 `agent_start` / `manual_only` / `not_required`；`agent_start` 必须写完整 `command`，并至少写一个 `ready_url` / `ready_command` / `ready_output_contains`；`manual_only` 必须写 `manual_launch_instructions`；`env_keys` 只能保存环境变量名，不能保存 secret 值。
-- `verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`），并包含实际执行这些 E2E 测试和 golden path 的命令；不接受"截图留证"或人工步骤作为完成条件。
+- `verification_commands` 必须是可执行脚本入口，并由脚本实际执行 E2E 测试、golden path、环境准备和断言；不接受"截图留证"或人工步骤作为完成条件。
 - `done_when` 必须是"测试命令退出码为 0 且断言覆盖 AC"，不接受"截图已上传"、"人工确认"或"浏览器路径已验证"。
 - 每个测试用例必须追溯到一条 AC，并在 `expected` 字段中描述可断言的具体值（如字段值、数组长度、排序关系），不接受"页面正常渲染"、"无报错"或"截图留存"作为唯一断言。
 - 如果 Requirements 的 prototype manifest 包含 `surface_contracts`，每个 `required: true` surface 的每个 `implementation_targets[]` 必须至少有一个真实生产 UI 一致性测试；相邻弹窗、抽屉或面板的测试不能代替当前 surface。
@@ -154,7 +160,7 @@ controller state 中的已知单元：
 Acceptance Criterion -> Test Case -> Journey -> Layer -> Environment -> Real Entry -> Core API Mock -> Golden Path -> Command/Evidence -> Expected Result
 
 缺陷修复模式下，每条验收标准和每个最终验收缺陷都必须至少有一个具体测试用例或明确人工证据。typecheck/lint/tsc 等静态检查可以出现，但不能单独算作行为覆盖。
-E2E 层的测试用例必须有可执行 `command`（Playwright/pytest 命令），并声明 `fixture` 或测试数据准备方式；`evidence` 字段留空；`expected` 必须描述具体可断言的值，不接受"页面渲染成功"、"无报错"或"截图留存"。
+E2E 层的测试用例必须有可执行 `command`（`scripts/verify/` 脚本入口），并声明 `fixture` 或测试数据准备方式；`evidence` 字段留空；`expected` 必须描述具体可断言的值，不接受"页面渲染成功"、"无报错"或"截图留存"。
 如果测试用例覆盖 Journey，在表格中写出 Journey id，并在 Controller State Patch 的对应 `test_cases[]` JSON 对象中写 `covers_journeys` 或 `journey_ids`。
 
 ## 文档交付矩阵（Document Deliverables Matrix）
@@ -220,7 +226,7 @@ Area -> Target Path -> Action -> Required For Acceptance -> Evidence / Reason
           "uses_core_api_mock": false,
           "golden_path": true,
           "fixture": "<test data or setup path for runtime tests>",
-          "command": "<verification command if automated>",
+          "command": "bash scripts/verify/<case>.sh",
           "evidence": "<manual evidence if not automated>",
           "expected": "<observable expected result>",
           "prototype_conformance": ["<prototype id from requirements prototype manifest when applicable>"],
@@ -240,7 +246,7 @@ Area -> Target Path -> Action -> Required For Acceptance -> Evidence / Reason
           }}
         }}
       ],
-      "verification_commands": ["<command>"],
+      "verification_commands": ["bash scripts/verify/<case>.sh"],
       "verification_env": {{"DATABASE_URL": "<test database url if required>"}}
     }}
   ],
@@ -296,7 +302,7 @@ CRITICAL: test-strategy.json MUST use this exact top-level schema or the control
         {{
           "id": "TC-X-Y-a",
           "layer": "unit|functional|integration|e2e|manual",
-          "command": "the exact shell command to run",
+          "command": "script entrypoint under scripts/verify, e.g. bash scripts/verify/<case>.sh",
           "evidence": "manual evidence description (use instead of command for manual cases)",
           "expected": "expected result"
         }}
@@ -334,6 +340,8 @@ Constraints:
 - Static checks such as lint, typecheck, eslint, prettier, biome, or tsc cannot be the only coverage for an acceptance criterion.
 - Prefer user-visible or behavior-visible verification when the requirement has observable runtime behavior.
 - For E2E or closure coverage, derive test cases directly from AC IDs and include executable commands plus concrete assertions over real fixture data.
+- Unit Plan commands must be script entrypoints under scripts/verify. Do not suggest direct `pytest ...`, `playwright test ...`, `python -c`, `bash -lc`, pipes, or inline shell as Unit Plan commands.
+- Put the direct pytest, Playwright, environment setup, or multi-step shell commands inside the referenced scripts instead.
 - Do not use screenshots, page-load checks, or manual observation as the only E2E evidence.
 - E2E or closure tests cannot rely only on a fake runner, mock-only flow, or stubbed API-only flow.
 - If a proposed E2E or closure test does not use a real application entrypoint, real fixture or setup data, and concrete expected assertions, report a gap.
@@ -346,8 +354,8 @@ verification requirements:
 - Severity guidance: Critical when an AC is marked e2e or closure but has only fake/mock/stubbed/page-load/screenshot evidence.
 - Severity guidance: Major when an E2E command exists but fixture, real entrypoint, or expected assertion is unclear.
 - Severity guidance: Minor when the command is executable but artifact or evidence references are unclear.
-- For every gap, include a "suggested_fix" field with a concrete, actionable instruction for the Planner: specify which AC needs what kind of test, what layer (unit/integration/e2e/manual), and an example command or evidence format.
-- In "suggested_fix", name the real test that should replace fake/mock-only evidence, such as a Playwright or pytest command, the fixture data/setup it should create, and the specific expected assertion it must check.
+- For every gap, include a "suggested_fix" field with a concrete, actionable instruction for the Planner: specify which AC needs what kind of test, what layer (unit/integration/e2e/manual), and an example scripts/verify entrypoint or evidence format.
+- In "suggested_fix", name the script entrypoint and the real test it should run internally, such as Playwright or pytest with fixture data/setup, and the specific expected assertion it must check.
 - Summarize review readiness in unit-plan-review-package.json.
 """
 

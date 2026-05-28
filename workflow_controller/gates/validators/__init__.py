@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -799,6 +800,93 @@ def validate_unit_plan_evidence_row_preflight(state: dict[str, Any]) -> None:
                 )
     if issues:
         raise ValueError('unit plan evidence row preflight is incomplete: ' + '; '.join(issues))
+
+
+def validate_unit_plan_script_entry_commands(state: dict[str, Any]) -> None:
+    issues: list[str] = []
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict) or bool(unit.get('passes')):
+            continue
+        unit_id = str(unit.get('id') or 'unknown-unit')
+        for label, command in _unit_commands_for_script_policy(unit):
+            if _command_is_script_entrypoint(command):
+                continue
+            issues.append(
+                f'unit {unit_id} {label} must be a script entrypoint under scripts/verify; '
+                'write the command into a script file and execute it as '
+                '`bash scripts/verify/<case>.sh`, `sh scripts/verify/<case>.sh`, '
+                '`python3 scripts/verify/<case>.py`, `python scripts/verify/<case>.py`, '
+                'or `./scripts/verify/<case>.sh`'
+            )
+    if issues:
+        raise ValueError('unit plan command policy is invalid: ' + '; '.join(issues))
+
+
+def _unit_commands_for_script_policy(unit: dict[str, Any]) -> list[tuple[str, str]]:
+    labels_by_command: dict[str, list[str]] = {}
+
+    for case in _unit_test_cases(unit):
+        if not isinstance(case, dict):
+            continue
+        command = str(case.get('command') or '').strip()
+        if not command:
+            continue
+        case_id = str(case.get('id') or case.get('name') or 'unknown-test')
+        labels_by_command.setdefault(command, []).append(f'test case {case_id} command')
+
+    for command in unit.get('verification_commands') or []:
+        normalized = str(command or '').strip()
+        if not normalized:
+            continue
+        labels_by_command.setdefault(normalized, []).append('verification_commands[] entry')
+
+    return [
+        (' and '.join(labels), command)
+        for command, labels in labels_by_command.items()
+    ]
+
+
+def _command_is_script_entrypoint(command: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+
+    if len(tokens) == 1:
+        script = tokens[0]
+        return _script_path_is_allowed(script, suffix='.sh', allow_direct=True)
+
+    if len(tokens) != 2:
+        return False
+
+    runner, script = tokens
+    if runner in {'bash', 'sh'}:
+        return _script_path_is_allowed(script, suffix='.sh', allow_direct=False)
+    if runner in {'python', 'python3'}:
+        return _script_path_is_allowed(script, suffix='.py', allow_direct=False)
+    return False
+
+
+def _script_path_is_allowed(script: str, *, suffix: str, allow_direct: bool) -> bool:
+    if any(part in script for part in ('\x00', '\n', '\r')):
+        return False
+    if script.startswith('./'):
+        normalized = script[2:]
+        direct = True
+    else:
+        normalized = script
+        direct = False
+    if direct and not allow_direct:
+        return False
+    if not normalized.startswith('scripts/verify/'):
+        return False
+    if '/../' in f'/{normalized}' or normalized.endswith('/..'):
+        return False
+    if not normalized.endswith(suffix):
+        return False
+    return bool(re.fullmatch(r'scripts/verify/[A-Za-z0-9._/-]+', normalized))
 
 
 def validate_unit_plan_final_evidence_candidates(

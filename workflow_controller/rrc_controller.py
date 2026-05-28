@@ -67,6 +67,7 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_golden_path,
     validate_unit_plan_prototype_conformance,
     validate_unit_plan_real_e2e_evidence_policy,
+    validate_unit_plan_script_entry_commands,
     validate_unit_plan_test_case_coverage,
     validate_unit_plan_test_strategy,
     validate_unit_plan_verification_assist_contract,
@@ -621,6 +622,7 @@ class RalphRefinerController:
                 state=candidate_state,
             )
             validate_unit_plan_final_acceptance_walkthrough(candidate_state)
+            validate_unit_plan_script_entry_commands(candidate_state)
         except ValueError as exc:
             return f'unit plan gate invalid: {exc}'
         return None
@@ -2806,6 +2808,7 @@ class RalphRefinerController:
                         state=state,
                     )
                     validate_unit_plan_final_acceptance_walkthrough(state)
+                    validate_unit_plan_script_entry_commands(state)
                 except ValueError as exc:
                     state['unitPlanAccepted'] = False
                     state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
