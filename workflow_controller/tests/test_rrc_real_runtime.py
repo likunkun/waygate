@@ -540,15 +540,15 @@ if sys.argv[1:2] == ["paste-buffer"]:
                         "final_acceptance_walkthrough": {
                             "inspection": {
                                 "surface_kind": "cli",
-                                "entrypoint": "python print verified CLI check",
+                                "entrypoint": "scripted verified CLI check",
                                 "manual_steps": [
-                                    "Run python -c print verified from the workspace shell",
+                                    "Run bash scripts/verify/verified.sh from the workspace shell",
                                     "Confirm stdout contains verified",
                                 ],
                                 "expected_observations": ["stdout prints verified"],
                             }
                         },
-                        "verification_commands": ["python -c \\"print('verified')\\""],
+                        "verification_commands": ["bash scripts/verify/verified.sh"],
                         "test_cases": [
                         {
                             "id": "TC-delivery-golden-path",
@@ -558,7 +558,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
                             "environment_kind": "local_real",
                             "real_entrypoint": "CLI verifier command in workspace",
                             "fixture": "Delivery fixture creates a normal delivery flow.",
-                            "command": "python -c \\"print('verified')\\"",
+                            "command": "bash scripts/verify/verified.sh",
                             "expected": "verification command prints verified for the normal delivery flow",
                         }
                     ],

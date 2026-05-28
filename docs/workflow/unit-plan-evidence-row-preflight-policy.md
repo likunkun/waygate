@@ -6,6 +6,16 @@ This document records the workflow rule that closes the gap between Unit Plan te
 
 Every automated test case in an unfinished unit must declare a `command` that exactly matches one entry in that unit's `verification_commands`.
 
+Every executable command must be a script entrypoint under `scripts/verify/`. Inline shell, direct tool invocations, `bash -c` / `bash -lc`, `python -c`, pipes, chained commands, and ad hoc one-liners are not valid Unit Plan commands. Put the full verification logic into a script file and reference only the script entrypoint, for example:
+
+```bash
+bash scripts/verify/<case>.sh
+sh scripts/verify/<case>.sh
+python3 scripts/verify/<case>.py
+python scripts/verify/<case>.py
+./scripts/verify/<case>.sh
+```
+
 Waygate does not accept substring, fuzzy, or aggregate command coverage for this check. For example, this is invalid:
 
 ```json
@@ -53,6 +63,8 @@ The evidence-row and AC final-evidence-candidate preflights run in two places:
 
 - after Unit Plan draft generation, before annotation and before human review;
 - after Unit Plan human approval, before `unitPlanAccepted` is persisted and before the workflow advances.
+
+The script-entry command policy runs in the same two places. Requirements draft confirmation does not parse or approve executable commands, because executable commands are introduced by Unit Plan `Controller State Patch` data.
 
 This preserves the V0.6.1 approval-ordering rule: human approval is the last step in the phase, and deterministic validation is not deferred until Final Acceptance.
 
