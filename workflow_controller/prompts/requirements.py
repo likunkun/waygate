@@ -255,6 +255,7 @@ UI/原型设计约束：
 - User Steps 必须写打开入口后的具体用户/API/service 操作路径。
 - Fixture / Test Data / Setup 必须写固定测试数据、fixture、seed、迁移、测试账号或 setup 方式。
 - Verification Command 必须是非占位的命令意图、command family 或 runner intent，不能只写 `playwright test`、`pytest` 或“待 Unit Plan 补充”；最终 exact command、test case、fixture 初始化脚本和 evidence row 属于 Unit Plan。
+- Requirements 阶段的 Verification Command 用于审阅测试方法和命令依赖；Unit Plan 阶段必须把所有自动化执行命令落成 `scripts/verify/` 下的脚本入口，实际 Playwright/pytest/API/service 命令写入脚本内部。
 - Environment Kind 只能是 `local_real|production_readonly`（即 `local_real` 或 `production_readonly`）。
 - Required Env / Dependencies 只能写 env key 名称、服务/端口/依赖名称，不得写 token、密码、真实数据库 URL 或私有凭据值。
 - Mock Policy 必须声明核心业务 API 不得 mock/stub；只允许记录外部不可控依赖的测试账号、沙箱或只读策略。
