@@ -1,6 +1,441 @@
 # 进度日志
 
+## 会话：2026-05-29
+
+### V0.6.2b Product Design 后常驻原型预览
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt as `0.6.2b`.
+- 修复：Product Design checkpoint 校验通过后立即生成 `plannotator-review.html` / `prototype-review-manifest.json`，并启动随当前 controller 进程常驻的 prototype preview server；final Requirements gate 尚未装配时使用 Scope checkpoint 作为 requirements reference。
+- 修复：final Requirements assembly 后重新生成 review bundle，补齐真实 `approval_gate_path`，并复用已启动 preview server 的当前端口；Requirements gate 选择 `v` 时复用该服务，Plannotator Close 后不再关闭预览服务。
+- 修复：preview server 端口从 `WAYGATE_PREVIEW_PORT` 或默认 `20001` 起步，端口被占用时递增；代理环境下提示将 display host 加入 `NO_PROXY/no_proxy`。
+- 验证：
+  - RED/GREEN: 新增 focused tests 覆盖 Scope reference bundle、默认端口占用递增、env port 占用递增、Product Design 后启动常驻预览、final assembly 复用端口并刷新 approval metadata、Plannotator Close 后 preview server 仍存活。
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `14 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'prototype or product_design or staged'` -> `79 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'prototype_review or plannotator or staged'` -> `15 passed, 209 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `758 passed in 79.72s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2b_all.deb`。
+
+## 会话：2026-05-28
+
+### 7号窗口 Requirements Auto-Rework 后续整改
+- **状态：** implementation verified; focused/full regression passed; package rebuilt; user-level `waygate` synced; live V2.1 recovered to Requirements human gate.
+- 修复：Journey contract parser 接受无 `Title` 列的 Journey 表，并以 Journey ID 作为 title 兜底；新增 `Acceptance contract`、`Path / assertion focus` 等 steps 表头别名；assembled final gate 中同一 Journey ID 的兼容重复表行会合并为一条合同记录，优先保留更完整 steps、AC、Unit、Test Case 和 command 信息。
+- 修复：Scope / Test Strategy staged prompts 和 controller validation feedback 明确最小可解析 Journey 表头 `Journey / Title / Status / Steps / AC / Verification Layer`；`journey contract required...` 语义路由到 Scope，reason key 为 `scope:journey_contract_required`。
+- 修复：内置 `claude-code` annotation args 改为 `--bare --no-session-persistence -p ... --permission-mode bypassPermissions`，并迁移已有 session 中旧 built-in Claude Code args；annotation runtime unblock 继续只重跑 pending annotation，不触发 Requirements rewrite。
+- 文档：同步 staged Requirements workflow / architecture 和 external spec annotation workflow / architecture，记录 Journey 表头兼容、Scope 路由边界和 Claude Code annotation runtime 参数。
+- 验证：
+  - RED: 新增 focused tests 初始失败，覆盖无 Title Journey 表、contract/focus steps 表头、Journey required 路由、canonical prompt/feedback、Claude Code 默认参数和 legacy migration。
+  - RED/GREEN: `test_journey_contract_merges_compatible_duplicate_rows_from_assembled_gate` 复现 live V2.1 assembled gate 中 Scope / canonical / Test Strategy 多张 Journey 表导致 duplicate/missing steps 的误判，并验证合并后 `journeys.json` 不写 `_merge_conflicts` 私有字段。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'contract_steps or journey_contract_required_reason or staged_prompts_anchor'` -> `3 passed, 72 deselected`。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'builtin_annotation_backend_templates or legacy_builtin_claude_code or unblock_reruns_legacy_blocked'` -> `4 passed, 41 deselected`。
+  - live V2.1 diagnostic against `/home/lichangkun/code/proxy-collector/.rrc-controller-v2.1/approvals/requirements-and-acceptance.md` -> 10 unique active Journey rows, all with steps and valid `e2e` layer.
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'journey or prototype or auto_revision or product_design'` -> `32 passed, 44 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'journey_contract or requirements_auto_revision or annotation_runtime'` -> `9 passed, 213 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'claude or annotation_agent or unblock'` -> `45 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `750 passed in 79.48s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `command -v waygate && waygate --version` -> `/home/lichangkun/.local/bin/waygate`, `waygate 0.6.2a`；user-level wrapper points `WAYGATE_LIB_DIR` at this worktree. `waygate doctor` reports this intended PATH shadow as a warning because `/usr/bin/waygate` still exists.
+  - Extracted `dist/waygate_0.6.2a_all.deb` and verified packaged code contains `--no-session-persistence`, `path / assertion focus`, `journey_contract_required`, and Journey feedback fields.
+- Live V2.1 recovery:
+  - Deterministic final Requirements preflight now passes; live diagnostic against `approvals/requirements-and-acceptance.md` extracts 10 unique active Journey rows with valid steps/layers.
+  - Normal `waygate drive --max-steps 1` advanced Product Design, Architecture, Test Strategy, and final assembly without manual `session.json` edits.
+  - Claude Code 2.1.152 still returned `API Error: 400 The content[].thinking in the thinking mode must be passed back to the API` for the full annotation prompt even with `--bare --no-session-persistence`; live recovery used the documented backend override path: `waygate unblock ...` then `waygate run --annotation-agent requirements=codex`.
+  - `requirements_annotation` completed with backend `codex`, `requirements-annotations.json` status `completed`, 8 risk items, gate hash `sha256:186864312a6ab6e706c88e15879d6b50fdd211cb3fbca93edfcb5ab38d9f17af`; approval file now contains `## Annotation Agent 风险批注`.
+  - Final live state: `status=active`, `currentStep=WAITING_REQUIREMENTS_ACCEPTANCE`, `blockedReason=None`, `pendingAnnotationBeforeHumanGate=None`, `nextAction=check_requirements_acceptance`.
+
+### Controller Requirements Auto-Rework 整改
+- **状态：** implementation verified; focused/full regression passed; package rebuilt; user-level `waygate` synced.
+- 修复：staged Requirements final preflight 的 controller-validation-only 自动打回现在以 controller validation error 作为路由主依据，不再让旧 final gate 正文里的 Scope/E2E 文本抢走 Product Design 问题；`requirements_staged_revision_routed` event 记录 `reason_key`、`routing_source` 和 `routing_reason`。
+- 修复：controller validation feedback 写入短而精确的 `requirementsRevisionFeedback`，包含原始 reason、归属 stage、reason key、缺失字段和期望输出示例，避免把完整旧 Requirements gate 当作路由依据。
+- 修复：final Requirements preflight 接受通过 `validate_prototype_review_manifest(..., require_clickable=True)` 的 manifest 作为 clickable webpage prototype evidence；Product Design 文本中的 artifact-local clickable HTML、manifest path、page states、click path 和 AC/Journey mapping 也会被识别为文本证据；manifest 缺文件、缺字段、unsupported kind 等严格规则保持阻断。
+- 修复：未批准 Requirements 的同类 final preflight 内容失败超过 `requirementsAutoRevisionMax` 后进入 `blockedContext.category=requirements_contract`，guidance 走 `waygate revise --gate requirements --reason ...`，不允许用普通 `retry` / `unblock` 清除。
+- 文档：同步 `docs/workflow/staged-requirements-package-policy.md` 和 `docs/architecture/staged-requirements-package-architecture.md`，记录 controller-validation routing source、clickable manifest evidence 和 hard-block category 边界。
+- 验证：
+  - RED: 新增 focused tests 初始 `4 failed`，分别复现 valid clickable manifest 被忽略、artifact-local Product Design 文本不被识别、Product Design controller reason 被旧 Scope/E2E gate 文本误路由、同类 Requirements preflight 超预算缺 `requirements_contract` blocked context。
+  - GREEN: 同一 focused tests -> `4 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'prototype or stage_validation or auto_revision or product_design'` -> `37 passed, 36 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or stage_validation'` -> `3 passed, 219 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `73 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py -q` -> `11 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q -k 'docs or package_version or staged_requirements'` -> `7 passed, 3 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `745 passed in 78.15s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `which waygate && waygate --version` -> `/home/lichangkun/.local/bin/waygate`, `waygate 0.6.2a`；user-level wrapper points `WAYGATE_LIB_DIR` at this worktree because system `/usr/lib/waygate` could not be updated without sudo.
+  - Extracted `dist/waygate_0.6.2a_all.deb` and verified packaged code/docs contain `routing_source`, `Original reason:`, `artifact-local clickable html`, and `blockedContext.category=requirements_contract` policy text.
+
+### Staged Test Strategy auto-rework 整改
+- **状态：** implementation verified; focused/full regression passed.
+- 修复：Requirements Test Strategy Brief prompt 明确 `Environment Kind` 只能是 `local_real` / `production_readonly`，并补齐真实入口、具体 user/API/service steps、fixture/setup、核心业务 API 不得 mock/stub、machine-checkable assertions 和截图不能作为唯一断言的 validator 级合同。
+- 修复：未批准 Requirements 的 staged checkpoint validation failure 不再立即 hard block；tmux-backed runner 会自动打回同一 checkpoint，写入 `Controller stage validation feedback` 到 `requirementsRevisionFeedback`，失效当前 stage 及下游 artifact，并记录 `requirements_stage_auto_revision_requested`。连续同类原因超过 `requirementsAutoRevisionMax` 后才进入 `requirements_stage_validation` blocked；已批准 Requirements 仍直接 hard block，不自动改合同。
+- 文档：同步 `docs/workflow/staged-requirements-package-policy.md` 和 `docs/architecture/staged-requirements-package-architecture.md`，记录 stage validation auto-rework、预算边界和 Test Strategy 4.6 prompt/validator 对齐。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'validator_level_4_6_contract or stage_validation_failure_auto_reworks or stage_validation_auto_rework_blocks or stage_validation_does_not_auto_rework'` -> `3 failed, 1 passed`，分别复现 prompt 缺 validator 级要求、stage validation 直接 blocked。
+  - GREEN: 同一命令 -> `4 passed, 66 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'test_strategy_prompt or stage_validation or auto_revision'` -> `25 passed, 45 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or stage_validation'` -> `3 passed, 219 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q -k 'docs or package_version or staged_requirements'` -> `7 passed, 3 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_claude_runner_fails_fast_when_pane_returns_idle_after_dispatch -q` -> `1 passed in 1.20s`（复核一次 full run 中的非复现 tmux idle timing failure）。
+  - `python3 -m pytest workflow_controller/tests -q` -> `742 passed in 78.87s`。
+  - `git diff --check` -> passed。
+
+### Waygate Block / 返工边界补充
+- **状态：** implementation verified; focused/full regression passed.
+- 修复：annotation artifact normalizer 会解析包在 `summary` 字符串中的 JSON，并把嵌套 `summary` / `issues[]` 提升到顶层，保证终端风险数量、Plannotator review block 和 artifact `issues[]` 一致。
+- 修复：Final Scope Audit AO coverage 增加 `coverage_status=covered|uncovered` 和 `ledger_status`，Markdown 使用 coverage status 表达证据覆盖，避免 `AO.status=open` 被误读为未覆盖。
+- 修复：blocked guidance 输出 `类别`，长 `blocker(s)` 列表只展示前 3 条并指向完整 artifact；恢复命令继续按 category 路由到 `unblock`、`revise --gate unit-plan`、`revise --gate requirements` 或 Final Acceptance rejection route。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py::test_annotation_artifact_promotes_json_embedded_in_summary -q` -> failed，`summary` JSON 未提升。
+  - RED: `python3 -m pytest workflow_controller/tests/test_scope_audit.py::test_scope_audit_records_coverage_status_separately_from_ledger_status -q` -> failed，缺少 `ledger_status` / `coverage_status`。
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_blocked_guidance_shows_category_and_compacts_long_blocker_lists -q` -> failed，guidance 未显示 category。
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py::test_annotation_nonapproval_rejects_approval_fields_embedded_in_summary_json -q` -> failed，`summary` JSON 中的 approval-like field 未被拒绝。
+  - GREEN: 上述 4 条测试均通过。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'final_acceptance_rejection or generated_final_rejection or annotation or scope_audit'` -> `7 passed, 215 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_scope_audit.py -q` -> `8 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `66 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `43 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q -k 'docs or package_version'` -> `7 passed, 3 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_agent_runners.py::test_tmux_codex_retries_submit_when_agent_is_not_working_after_submit -q` -> `1 passed`（复核一次 full run 中的非复现 tmux-codex runner sleep 计数失败）。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `41 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `738 passed in 77.63s`。
+  - `git diff --check` -> passed。
+
+## 会话：2026-05-27
+
+### Final Acceptance rejection AO 污染修复与 Classroom V0.4 恢复
+- **状态：** implementation verified; live Classroom V0.4 recovered to `WAITING_FINAL_ACCEPTANCE`.
+- 根因：Final Acceptance rejection 路径曾把完整生成式 final gate 正文作为 `final_acceptance_rejection` feedback 写入 Acceptance Obligation Ledger。用户只选择 rejection route、未写具体返工说明时，证据摘要、文件列表、Final Scope Audit、Journey Matrix、人工走查步骤和默认提示语被拆成 AO-008..AO-089，导致下一轮 Final Scope Audit 误报大量 active must AO 缺 evidence row。
+- 修复：Final Acceptance rejection 只把人工提交的 Plannotator feedback、`## 修改清单` 和非默认 `## 返工说明` 转成 AO；默认说明文字不再生成 AO。新增 legacy cleanup，将旧版本生成式 final gate 内容类 AO 自动标记为 `out_of_scope`，保留审计记录但不再作为 active must AO；若当前 blocker 仅由这些生成式 AO 触发，controller 会重新跑 Final Scope Audit 并清除 blocker。
+- Live V0.4：通过 2 号 tmux controller pane 使用本 worktree `WAYGATE_LIB_DIR` 重新 `waygate go`；状态从 `blocked / FINAL_WALKTHROUGH_PREPARE` 恢复到 `active / WAITING_FINAL_ACCEPTANCE`，`blockedReason=None`，`final_acceptance_rejection` open AO 为 0，旧生成式 final rejection AO 关闭 82 条。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'final_acceptance_rejection_ignores_default_rejection_notes_instruction or status_closes_legacy_generated_final_rejection_obligations'` -> failed，默认 `返工说明` 提示语被写成 AO，旧生成式 final gate AO 仍 active。
+  - GREEN: 同一命令 -> `2 passed, 219 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'final_acceptance_rejection or generated_final_rejection or acceptance_obligation'` -> `8 passed, 213 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `66 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `734 passed in 75.32s`。
+  - `git diff --check` -> passed。
+  - `python3 -m py_compile workflow_controller/acceptance_obligations.py workflow_controller/rrc_controller.py workflow_controller/tests/test_rrc_controller.py` -> passed。
+
+### Unit Plan annotation 中断后的草案恢复修复
+- **状态：** implementation verified; live Classroom V0.4 pending recovery ready via fixed controller.
+- 根因：Unit Plan draft 已生成、`approvals/unit-plan.md` 已通过 controller preflight 后，controller 在进入 `unit_plan_annotation` 前没有先保存 `currentStep=WAITING_UNIT_PLAN_APPROVAL` / `unitPlanDraftGenerated=true`。人工中断 annotation 后，`session.json` 仍停在 `UNIT_PLAN_DRAFT`，下次 `go` 会重派 Unit Plan drafter；drafter 启动时删除旧 `unit-plan-body.md`，若重复派发没有重新写 body，就报 `Unit plan drafter did not write .../unit-plan-body.md`。
+- 修复：`run_unit_plan_drafter` action 在重派 drafter 前先检查已有 `approvals/unit-plan.md`；若 gate 存在、比 Requirements gate 新、无 Unit Plan revision feedback、且通过同一套 Unit Plan validator，则恢复 `artifacts/unit-plan-draft/unit-plan-body.md` / `unit-plan-draft-summary.json` 并继续进入 Unit Plan human gate，不再重派 drafter。Unit Plan preflight 通过后、annotation 运行前先保存 pending human-gate state 和 `pendingAnnotationBeforeHumanGate`，后续中断重启会接回 gate 并重跑/跳过 annotation，而不是回到草案生成。
+- Live V0.4：当前 live state 仍是 `UNIT_PLAN_DRAFT` / `unitPlanDraftGenerated=false`，但已有有效 `approvals/unit-plan.md` 和 `unit_plan_gate_preflight_completed` 历史；使用本 worktree `WAYGATE_LIB_DIR` 重启应走恢复路径，不手改 `session.json`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py::test_unit_plan_draft_reuses_valid_gate_after_annotation_interruption -q` -> failed，旧逻辑错误调用 Unit Plan drafter。
+  - GREEN: 同一测试 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `41 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'unit_plan_draft or unit_plan_gate_preflight or unit_plan_approval or annotation'` -> `23 passed, 195 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `66 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `730 passed in 74.34s`。
+  - `git diff --check` -> passed。
+  - `python3 -m py_compile workflow_controller/rrc_controller.py workflow_controller/annotation_agents.py workflow_controller/tests/test_v061_annotation_agents.py` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+
+### Annotation timeout bytes 输出序列化修复
+- **状态：** implementation verified; live Classroom V0.4 Requirements gate recovered past annotation timeout warning and advanced to Unit Plan draft.
+- 根因：`subprocess.TimeoutExpired.output` / `stderr` 在 Python 3.12 中即使 `text=True` 也可能保持为 `bytes`；annotation timeout warn 路径把这些 bytes 直接写入 failure artifact，`json.dumps()` 因 `Object of type bytes is not JSON serializable` 崩溃，导致已通过 deterministic Requirements preflight 的 live gate 被 runner 运行时问题挡住。
+- 修复：`workflow_controller/annotation_agents.py` 的 `_redact_text()` 统一接受 `str | bytes | None`，先把 bytes 按 replacement error handling 解码为字符串，再做 secret redaction；annotation 和 verification-assist timeout/failure 路径共享该归一化。
+- Live V0.4：使用本 worktree 代码重启 2.0，`requirements_gate_preflight_completed` 继续通过；Requirements annotation 5s timeout 按 `failure_policy=warn` 写入 warning artifact；随后通过 controller 人工 gate approve 路径进入 `UNIT_PLAN_DRAFT`，未手改 `.rrc-controller-v0.4/session.json`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py::test_annotation_config_safety_rejects_invalid_backend_unavailable_timeout_and_redacts_env_values -q` -> failed，复现 `Object of type bytes is not JSON serializable`。
+  - GREEN: 同一测试 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'timeout or annotation_config_safety or failure_policy or requirements_gate_preflight_completed'` -> `5 passed, 35 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `40 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `66 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `729 passed in 75.35s`。
+  - `git diff --check` -> passed。
+  - `python3 -m py_compile workflow_controller/annotation_agents.py workflow_controller/journeys.py workflow_controller/gates/validators/__init__.py workflow_controller/gates/generators/__init__.py workflow_controller/scope_audit.py` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `sudo -n dpkg -i dist/waygate_0.6.2a_all.deb` -> failed，原因是 sudo 需要密码；live 运行继续通过 `WAYGATE_LIB_DIR` 使用本 worktree 修复代码。
+
+### Requirements Journey 表头与 support layer 解析修复
+- **状态：** implementation in progress; focused RED/GREEN passed; live Classroom V0.4 Journey contract diagnostic now recognizes `User steps` and `regression` Journey layer.
+- 根因：Journey contract parser 只接受 `Steps` 表头和 `functional/integration/e2e/manual` Journey layer；Classroom V0.4 Scope 使用合法的 `Journey id`、`User steps`、`Linked AC` 表头和 `J-V04-006 Verification Layer=regression`，因此 final Requirements preflight 误报所有 Journey missing steps，并误报 J-V04-006 missing valid verification layer。
+- 修复：`workflow_controller/journeys.py` 接受 `User steps`、`Journey id`、`Linked AC` 等常见 Journey 表头别名，Journey layer 归一化为 behavioral + support layer；`workflow_controller/gates/validators/__init__.py` 在收集 active e2e Journey 做 4.6 覆盖时也接受同一类表头别名。`static/regression/prerequisite` Journey 是合法非 E2E support layer，只有 `e2e` 触发 4.6 real E2E strictness。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'user_steps_and_support_layers or journey_header_aliases'` -> failed，分别误报 `missing steps / missing valid verification layer` 和 E2E Journey 未映射。
+  - GREEN: 同一命令 -> `2 passed, 63 deselected`。
+  - live Classroom V0.4 diagnostic -> `J-V04-001..005` steps recognized，`J-V04-006 layer=regression`，`journey contract ok`。
+
+### Requirements support layer 解析修复
+- **状态：** implementation verified; focused/full regression passed; live Classroom V0.4 Scope artifact parser diagnostic now recognizes support layers.
+- 根因：Requirements AC layer parser 只接受 `unit`、`functional`、`integration`、`e2e`、`manual` 五类，导致 Classroom V0.4 Scope 中合法的 `static`、`regression`、`prerequisite` 被当作 missing verification layer。现场表现为 final Requirements preflight 报 `AC-V04-008` 至 `AC-V04-013 missing verification layer`。
+- 修复：`_normalize_requirements_verification_layer()` 和 direct inline / leading layer / structured marker regex 接受 Requirements-stage support layers：`static`、`regression`、`prerequisite`（含中文静态、回归、前置）。这些 layer 满足 Requirements 分类完整性，但仍作为非 E2E 处理；只有 `e2e` 触发 4.6 real E2E strictness。
+- Prompt / docs：legacy Requirements gate template、Requirements prompt、staged Scope prompt、staged workflow / architecture 文档均同步说明行为验证层与 Requirements 辅助层边界，避免后续 agent 为过 gate 把支撑 AC 硬改成 `integration` 或 `e2e`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py::test_staged_requirements_preflight_accepts_static_regression_and_prerequisite_layers -q` -> failed，误报 `AC-V04-008`、`AC-V04-009`、`AC-V04-010`、`AC-V04-011`、`AC-V04-013 missing verification layer`。
+  - GREEN: 同一测试 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'static_regression_and_prerequisite or does_not_promote_prerequisite or explanatory_table or explicit_verification_tag'` -> `4 passed, 59 deselected`。
+  - live Classroom V0.4 Scope diagnostic -> `AC-V04-008/009/010/012 static`，`AC-V04-011 regression`，`AC-V04-013 prerequisite`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `63 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `726 passed in 74.81s`。
+
+### Requirements explanatory table AC layer 解析修复
+- **状态：** implementation verified; focused regressions passed; live Classroom V0.4 final gate AC layer conflict no longer reproduces with fixed parser.
+- 根因：上一轮 AC/layer 列感知修复只覆盖了带 `AC id` + `verification layer` 表头的正式表格；普通说明表仍会对单元格执行“发现一个 `[verification: e2e]` 就把该单元格所有 AC 都标成 e2e”的回退逻辑。Classroom V0.4 的 visible-surface / API visible output 说明表在同一说明单元格里写 direct e2e AC 和 integration AC，导致 `AC-V04-003` 至 `AC-V04-007` 被误报为 `['e2e', 'integration']`。
+- 修复：无正式 AC/layer 表头的 Markdown 表格只接受 direct inline AC marker（例如 `AC-... [verification: e2e]`）对应的同一个 AC，不再把 layer marker 扩散到同一单元格或整行里的其他 AC。非表格行也优先按 direct inline marker 配对；多 AC 的行级 layer 只在明确 layer bucket 行首时才扩散。
+- 文档：同步 `docs/workflow/staged-requirements-package-policy.md` 和 `docs/architecture/staged-requirements-package-architecture.md`，明确 explanatory surface / coverage / support tables 不创建跨 AC layer facts。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py::test_package_consistency_does_not_promote_explanatory_table_references_to_e2e -q` -> failed，误报 `AC-09: ['e2e', 'integration']`。
+  - GREEN: 同一测试 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'does_not_promote_prerequisite or explanatory_table or explicit_verification_tag'` -> `3 passed, 59 deselected`。
+  - live Classroom V0.4 final gate parser diagnostic against `/home/lichangkun/code/classroom/.rrc-controller-v0.4/approvals/requirements-and-acceptance.md` -> `no conflicts`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `62 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `725 passed in 74.95s`。
+  - `git diff --check` -> passed。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q -k 'docs or package_version'` -> `7 passed, 3 deselected`。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2a / all / python3`。
+
+### Requirements AC 表格 verification layer 解析修复
+- **状态：** implementation verified; focused regressions passed; live Classroom V0.4 Test Strategy artifact passes fixed stage validation.
+- 根因：`AC` 表格行按整行解析 verification marker；当 `AC-V04-013` 自身 `verification layer=prerequisite`，但 expected/setup 单元格引用 `AC-V04-001 [verification: e2e]` / `AC-V04-002 [verification: e2e]` 时，validator 会把该 prerequisite 行误判为 e2e，并要求 `AC-V04-013` 也写 4.6 E2E row。
+- 修复：AC/layer 解析改为 Markdown 表格列感知；带 `AC id` + `verification layer` 的表格只用 AC 单元格和 layer 单元格建立映射，其他说明单元格里的 AC 引用不再提升当前行 AC 的 layer。非表格和无 layer 表格继续支持 cell-local `[verification: ...]` 标记。
+- Live V0.4：`AC-V04-013` 不再进入 e2e AC 集合；当前 Test Strategy 只需要 `AC-V04-001`、`AC-V04-002`、`AC-V04-014` / `J-V04-001`、`J-V04-002`、`J-V04-005` 的 4.6 row。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py::test_test_strategy_stage_validation_does_not_promote_prerequisite_row_references_to_e2e -q` -> failed，误报 `AC-V04-013 missing Requirements 4.6 E2E review matrix row`。
+  - GREEN: 同一测试 -> `1 passed`。
+  - `PYTHONPATH=/home/lichangkun/works/ai-works/worktrees/workflow-controller-v0.6.2 python3 - <<'PY' ... validate_staged_requirements_stage_output(...) ... PY` against `/home/lichangkun/code/classroom/.rrc-controller-v0.4` -> `stage validation ok`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `61 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+
+### Staged Requirements explicit verification tag parser 修复
+- **状态：** implementation verified; focused/full regression passed.
+- 根因：staged Requirements final preflight 的 conflicting AC layer 检查只处理含 `[verification: ...]` 的行，但 `_requirements_verification_layer_from_line()` 对 Markdown 表格先按自然语言 cell alias 取 layer；当同一行在说明列写 `service/API E2E`、而 AC cell 明确写 `AC-V04-001 [verification: e2e]` 时，`API` 会先被归一成 `functional`，导致同一 AC 被误报为 `['e2e', 'functional']`。
+- 修复：verification layer 解析现在优先读取显式结构化标记（`verification layer=...`、中文验证层、`[verification: ...]`、`(e2e)`），再回退到表格 cell / 行首自然语言 alias；显式 AC layer 不再被 API/browser 等说明文字覆盖。
+- 现场影响：Classroom V0.4 final Requirements preflight 中 `AC-V04-001`、`AC-V04-002`、`AC-V04-014` 的误报属于工具侧解析问题，不应要求删除真实 API/service E2E 说明。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py::test_package_consistency_prefers_explicit_verification_tag_over_api_text -q` -> failed，误报 `AC-08: ['e2e', 'functional']`。
+  - GREEN: 同一测试 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `60 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `723 passed in 82.27s`。
+  - `git diff --check` -> passed。
+
+### Staged Requirements stage-validation recovery 修复
+- **状态：** implementation verified; focused/full regression passed.
+- 根因：stage validation blocker 只允许解除阻塞重跑当前 checkpoint，且 unblock 后没有把上一轮 validator error 明确注入下一次 staged prompt；当真实问题是 AC/Journey/Requirements 合同需要上游 Scope 修订时，`waygate revise --gate requirements` 又会被当前阶段限制拒绝，导致用户只能手工改 artifact 或重建 state。
+- 修复：`requirements_stage_validation` blocker 现在在 `unblock` 时把 controller stage-validation feedback 写入 `requirementsRevisionFeedback`，下一次 checkpoint prompt 会看到具体 validator error；同类 blocker 下也允许 `waygate revise --gate requirements --reason ...`，并用 semantic routing 把 AC/Journey contract change 回到 Scope。终端 guidance 改为默认 unblock 重跑，合同变更时走 Requirements revise。
+- 文档：同步 staged Requirements workflow / architecture 文档，明确 stage validation 的两条恢复路径和 unblock feedback 注入行为。
+- 验证：
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'stage_validation_unblock_injects or revision_allowed_from_staged_stage_validation_blocker'` -> `2 passed`。
+  - `python3 -m py_compile workflow_controller/rrc_controller.py workflow_controller/requirements_revision_routing.py` -> passed。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `59 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q -k 'docs or package_version or staged_requirements'` -> `7 passed, 3 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py -q -k 'unblock or revise_requirements or requirements_stage_validation or staged'` -> `18 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `722 passed in 75.12s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2a / all / python3`。
+  - `sudo -n dpkg -i dist/waygate_0.6.2a_all.deb` -> failed，原因是 sudo 需要密码；系统 `/usr/bin/waygate` 未由本轮安装替换。
+
+### Requirements 4.6 / Unit Plan 职责边界修复
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt.
+- 根因：V0.6.2 staged Requirements 把 Unit Plan 的 exact command / test case / fixture script 职责提前压到 Requirements Test Strategy 4.6，导致只写 command intent 的合法 Test Strategy 被拦截；同时 4.6 row 覆盖要求把 e2e AC 与 active e2e Journey 重复计算，prototype-only artifact review 也可能被误吸进 real E2E command strictness。
+- 修复：4.6 `Verification Command` 改为校验非占位 command intent / command family / runner intent，继续拒绝空值、`待 Unit Plan 补充`、`pytest`、`playwright test` 和无工具/组件/验证意图的“后续测试验证”；错误文案改为 exact command 属于 Unit Plan。
+- 覆盖语义：active e2e Journey 仍必须有 4.6 row；该 Journey row 映射的 e2e AC 不再强制重复独立 row；未被 Journey row 覆盖的 e2e AC 仍需独立 row。
+- prototype 边界：prototype-only artifact review 不再触发 real E2E 4.6 command strictness；它继续通过 Product Design prototype manifest 和 Unit Plan prototype conformance 合同承接。
+- Prompt / docs：Requirements Test Strategy prompt、legacy Requirements prompt、Unit Plan handoff prompt、正式 workflow / architecture 文档已同步，明确 4.6 写命令意图，exact command / test case / fixture 初始化脚本 / evidence row 归 Unit Plan。
+- 验证：
+  - RED: 新增 focused tests 初始失败，表现为 command intent 被拒绝、e2e AC 被要求重复 row、prototype-only review 被当作 E2E 映射缺口、错误文案仍是 concrete executable command。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'command_intent or journey_row_covers or prototype_only_review or staged_prompts_anchor'` -> `4 passed, 53 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q -k 'command_intent or placeholder_or_generic_command_intent'` -> `4 passed, 85 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `57 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `89 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q -k 'requirements_prompt_includes_acceptance_quality_contracts or 4_6 or e2e'` -> `2 passed, 73 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q` -> `6 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q -k 'docs or package_version'` -> `1 passed, 3 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `720 passed in 74.86s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2a / all / python3`。
+
+### Requirements staged checkpoint validation 前移
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt.
+- 根因：final Requirements gate 的 `validate_requirements_acceptance_quality()` 已能拒绝非 canonical E2E/browser 映射，但 Scope、Product Design、Architecture、Test Strategy 四个 staged checkpoint 生成后没有统一 deterministic stage-output validation，导致 `Status=是`、`Verification Layer=real integration + DB assertion`、非固定 `## 4.6` E2E 表和未知 AC/Journey 引用会拖到 final gate 才暴露。
+- 修复：新增 `validate_staged_requirements_stage_output()` 并接入 `run_requirements_package_stage()`；Scope 立即拒绝未映射到 canonical e2e AC / active e2e Journey 的 E2E/browser/prototype review；Product Design manifest 和 surface contracts 必须引用 Scope 已定义 AC/Journey；Architecture 不得引用未知 ID，继承 E2E/browser/prototype handoff 时必须引用 Scope canonical e2e ID；Test Strategy 必须使用固定 `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）` 和固定 11 列覆盖所有 e2e AC / active e2e Journey。
+- Prompt / feedback：Scope prompt 增加 exact `Status=active` / `Verification Layer=e2e` 示例；Test Strategy prompt 增加固定 4.6 表头和 11 列要求；staged prompt 会注入 controller revision feedback，并对 E2E/browser blockers 附带 canonical 示例，避免 agent 继续产出人类可读但机器不认的表。
+- Unit Plan：确认 draft preflight 和 human approval revalidation 继续共用 `_apply_and_validate_unit_plan_gate()`；补回归证明无效 Unit Plan draft 不会进入 annotation 或人工 gate。
+- 已完成 focused 验证：
+  - RED: 新增 staged validation tests 初始因缺少 `validate_staged_requirements_stage_output` import 失败。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_v061_annotation_agents.py -q -k 'stage_validation or e2e_mapping_blocker or auto_revision_routes_declares or unit_plan_draft_preflight_blocks_annotation'` -> `11 passed, 83 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `54 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_v061_annotation_agents.py -q -k 'stage_validation or e2e or unit_plan_approval or requirements_auto_revision or staged or unit_plan_draft_preflight_blocks_annotation'` -> `75 passed, 237 deselected`。
+- 回归验证：
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_rrc_controller.py -q -k 'stage_validation or e2e or unit_plan_approval or requirements_auto_revision or staged'` -> `73 passed, 199 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `713 passed in 81.44s`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q` -> `6 passed`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+
+### Requirements auto-revision counter persistence rollback
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt.
+- 根因：上一轮把 `requirementsAutoRevisionLastReasonKey`、`requirementsAutoRevisionConsecutiveCount` 和 `requirementsAutoRevisionTotalCount` 持久化到 `session.json` 后，旧 controller 进程留下的计数会污染下一次 `waygate go`。当旧 state 中同一 semantic reason 已达到上限时，新一轮 Requirements preflight 会一次就进入 `blocked`，而不是先给新的 Requirements revise/go 完整自动打回预算。
+- 修复：Requirements 自动打回计数改为 `RalphRefinerController` 实例内临时状态；`_auto_revise_invalid_requirements_draft()` 不再从 `session.json` 读取或写回三项计数字段；`_save_state()` 会清理旧 session 中残留的三项字段；人工 `waygate revise --gate requirements` 会重置进程内计数；事件仍记录 `attempt` / `total_attempt` 作为审计历史。
+- 保留边界：同一 controller 进程 / 单次 `waygate go` 内，同一 semantic key 连续超过 `requirementsAutoRevisionMax` 仍会 block；已经 `blocked` 的 workflow 不会被直接 `go` 自动清除，仍需要显式 `revise`、`unblock` 或既有恢复动作。
+- 未修改 live `.rrc-controller-*` state；本 worktree 当前没有 `.rrc-controller-*` state-dir。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'auto_revision'` -> `3 failed, 3 passed`，旧实现表现为读取旧计数直接 block、session 继续保留计数字段、人工 revise 后旧字段仍存在。
+  - GREEN: 同一 auto-revision focused subset -> `6 passed, 39 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or staged'` -> `49 passed, 214 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `703 passed in 81.35s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+
+### Requirements versioned ID parser / false-flag no-UI regression
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt; classroom Requirements recovery rerun reached a real content blocker.
+- 根因：多个 Requirements / prototype / Journey / evidence validator 仍使用旧的 numeric-only `AC-\d+` / `J-\d+` 提取规则，导致 `AC-V04-001` / `J-V04-001` 这类版本化 ID 被当作 unknown 或 unmapped；同时 false-flag no-UI detector 把“不能把 false flag 当作不需要 UI/原型的证据”这类拒绝语句误判成 no-UI basis。
+- 修复：新增共享 `workflow_controller/requirements_ids.py`，统一提取支持字母、数字、下划线和短横线的 AC/Journey ID，并过滤 `AC-ID` 等占位符；prototype manifest、Requirements validator、Journey、evidence policy 和 controller change-request impact 均改用或对齐该规则；`requirements_surface_uses_false_flag_as_no_ui_basis()` 在文本明确否定 false flag 可作为 no-UI 依据时不再误报。
+- Classroom V0.4：已使用本 worktree 代码重新走 Requirements staged revise/go；当前 `.rrc-controller-v0.4/session.json` 仍为 `status=blocked` / `currentStep=WAITING_REQUIREMENTS_ACCEPTANCE`，但旧误报已消失。剩余 blocker 是真实内容缺口：Requirements 声明 E2E/browser review，但没有 `layer=e2e` AC 或 active Journey，且没有 fixed-column `## 4.6` E2E matrix rows。诊断结果：`e2e_ac_ids=[]`、`e2e_journey_ids=[]`、`explicit_e2e=True`、`4.6_rows=0`。
+- 系统安装未完成：`sudo -n dpkg -i dist/waygate_0.6.2a_all.deb` 返回 `sudo: a password is required`。当前 `/usr/bin/waygate --version` 显示 `waygate 0.6.2a`，但本轮无法替换系统包；package artifact 已重新生成。
+- 验证：
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py workflow_controller/tests/test_requirements_staged_package.py -q` -> `54 passed`
+  - `python3 -m pytest workflow_controller/tests -q` -> `701 passed in 80.79s`
+  - `git diff --check` -> passed
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`
+  - `dpkg-deb --field dist/waygate_0.6.2a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2a / all / python3`
+  - `dpkg-deb --contents dist/waygate_0.6.2a_all.deb | rg 'requirements_ids\.py|requirements_revision_routing\.py|requirements_surface\.py'` -> required modules included
+
+### Waygate blocked state human gate control-flow regression
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt.
+- 根因：`drive()` 在 Requirements / Unit Plan 自动打回后没有立即尊重 `blocked/done/failed` terminal state；当 `_auto_revise_invalid_requirements_draft()` 达到上限并写入 `status=blocked` 时，后续 `_pending_gate_info()` 仍按 `currentStep=WAITING_REQUIREMENTS_ACCEPTANCE` 生成人工 gate，`_handle_drive_gate()` 随后发送 tmux “进入人工评审”提醒并展示误导性的 `[人工确认] 需求与验收` 菜单。
+- 修复：新增 terminal status 集合并让 `drive()` 在自动打回后立即停止到 terminal guidance；`_pending_gate_info()` 对 `blocked/done/failed` 返回 `None`；`_handle_drive_gate()` 和 `_send_human_review_tmux_reminder()` 在发送提醒或展示菜单前重新读取/检查 terminal state；Requirements / Unit Plan gate validation refresh 不再覆盖 terminal blocked reason。
+- 已保留 annotation 语义：invalid deterministic preflight blocked 后不运行 annotation；只有 preflight 通过、进入真实人工 gate 前才运行 annotation。
+- 未修改 classroom live state，未手改 `.rrc-controller-v0.4/session.json`，未执行 live recovery。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py::test_drive_staged_requirements_auto_revision_blocked_stops_without_human_gate_or_annotation -q` -> failed，表现为输出包含 `[人工确认] 需求与验收`。
+  - GREEN: 同一测试 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'auto_revision or drive or blocked'` -> `4 passed, 37 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or staged or annotation'` -> `5 passed, 213 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `698 passed in 79.75s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2a / all / python3`。
+
+### Staged Requirements semantic routing / auto-revision persistence
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt.
+- 根因：staged Requirements revision routing 仍以自然语言 reason 的关键词顺序决定 checkpoint；真实 validator 文案 `does not map it to an e2e AC or active e2e Journey` 未被识别为 Scope blocker，随后被同一 reason 中的 prototype/Web/page states 关键词路由到 Product Design。Test-method quality reason 中的 `core API stubs` 也可能因 `API` 被误吸到 Architecture。
+- 另一个根因：`_auto_revise_invalid_requirements_draft()` 的 consecutive/total attempt 计数是函数局部变量；staged route 返回后下一轮 `go` 会从 1 重新计数，导致同一 semantic issue 跨 checkpoint cycle 无限打回。
+- 已新增 `workflow_controller/requirements_revision_routing.py`，用 `RequirementsRevisionIssue`、`classify_requirements_revision_reason()`、`select_requirements_revision_stage()` 和 `requirements_auto_revision_semantic_key()` 统一分类与 key 生成；路由优先级固定为 `scope > product_design > architecture > test_strategy`。
+- 已让 `_staged_requirements_revision_stage_from_feedback()` 调用语义路由，并让 Requirements auto-revision 把 `requirementsAutoRevisionLastReasonKey`、`requirementsAutoRevisionConsecutiveCount`、`requirementsAutoRevisionTotalCount` 写入 `session.json`；同一 semantic key 超过 `requirementsAutoRevisionMax` 时 block，preflight 通过后清理这些内部字段。
+- 已同步 `docs/workflow/staged-requirements-package-policy.md`、`docs/architecture/staged-requirements-package-architecture.md` 和 `findings.md` 的路由/计数边界。
+- 已完成 RED/GREEN focused 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'live_e2e_mapping_reason or unknown_ac_prototype_reason or test_method_quality or persists_semantic_attempts'` -> `4 failed`，分别表现为 Scope blocker 被路由到 Product Design、test-method quality 被路由到 Architecture、staged cycle 计数未持久化。
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision_state_clears_after_valid_preflight'` -> `1 failed`，preflight 通过后旧 auto-revision state 未清理。
+  - GREEN: staged focused -> `4 passed, 36 deselected`；controller clear-state focused -> `1 passed, 217 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'revision or auto_revision or routing'` -> `10 passed, 30 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or staged'` -> `4 passed, 214 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `40 passed`。
+- 回归验证：
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_v061_docs.py -q` -> `46 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `697 passed in 79.36s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2a / all / python3`。
+
+## 会话：2026-05-26
+
+### Auto-created Claude pane staged Requirements 首次派发修复
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt.
+- 现场 7 号窗口证据：auto-created Claude pane 首次 Requirements dispatch 前 controller 发送清输入序列；`C-c` 已成功作用于刚创建的 Claude pane，随后 `C-u` 返回 `can't find pane`，说明清输入阶段可能让新建 pane 退出或失效。
+- 根因：旧修复只在 `currentStep=REQUIREMENTS_DRAFT` 且 `requirementsDraftGenerated=false` 时注入 `WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH=0`；V0.6.2 staged Requirements 新默认入口是 `REQUIREMENTS_SCOPE_DRAFT`，scope artifact 尚未完成时也属于首次 Requirements dispatch，但未命中保护。
+- 修复：`make_runner()` 仅对 `tmux-claude` 且 `tmuxTargetResolution.source=auto-created` 的首次 Requirements dispatch 注入 `WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH=0`、`RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS=2.0` 和 `WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG=1`；legacy `REQUIREMENTS_DRAFT` 保持兼容，staged `REQUIREMENTS_SCOPE_DRAFT` 在 `requirementsPackage.artifacts.scope.status` 未 complete 时覆盖，scope complete 后恢复默认清输入。
+- 未修改 proxy-collector live state，未删除 state-dir；controller 既有 stale auto-created pane 重建逻辑保持不变，本轮只补 runner env 条件。
+- 已完成 RED/GREEN focused 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q -k 'make_runner_disables_initial_clear_for_auto_created_staged_scope_pane or make_runner_keeps_clear_for_completed_staged_scope_artifact or make_runner_does_not_disable_initial_clear_for_tmux_codex or make_runner_disables_initial_clear_for_auto_created_requirements_pane'` -> `1 failed, 3 passed`，staged Scope 未注入 clear-disable env。
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_rrc_go_recreated_staged_scope_pane_dispatch_disables_initial_clear -q` -> failed，recreated staged Scope dispatch 的 fake tmux env 中缺少 clear-disable/watchdog，且 delay 被外部测试 env 保持为 `0`。
+  - GREEN: runner focused -> `4 passed, 37 deselected`。
+  - GREEN: controller staged stale-pane dispatch focused -> `1 passed`。
+- 回归验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q` -> `41 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'tmux or staged or requirements'` -> `57 passed, 160 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `692 passed in 78.87s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+
+### Staged Requirements preflight route / Product Design manifest loop fix
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt.
+- 根因：staged Requirements revision routing 先匹配 prototype/UI 关键词，导致同时包含 AO mapping、E2E AC/Journey mapping 和 prototype manifest 的 combined preflight reason 被错路由到 Product Design；同时 Product Design checkpoint 只在 prompt 中泛化描述原型证据，没有给出 canonical `prototypes[]` manifest schema，stage validation failure 也没有写成清晰的 blocked recovery state。
+- 已修复路由优先级：missing Acceptance Obligation requirements mapping、missing AO coverage、E2E review 未映射到 active E2E AC/Journey 时优先回 `REQUIREMENTS_SCOPE_DRAFT`；纯 prototype/UI/“怎么看”反馈仍回 `REQUIREMENTS_PRODUCT_DESIGN_BRIEF`。
+- 已强化 Product Design checkpoint 合同：当 `requirementsSurfaceClassification.prototype_required=required` 或 `web_system=required` 时，prompt 明确要求写 `artifacts/requirements-draft/prototype-manifest.json`，并内嵌 canonical 顶层 `prototypes[]` JSON skeleton；stage 完成前校验 manifest 存在且包含可访问原型、page states、click path、AC/Journey mapping、implementation targets 和 surface contracts。
+- 现场 2 号窗口暴露后续 path locality 缺口：agent 写出 canonical `prototypes[]` 后仍使用 workspace-relative `docs/prototypes/customer-course-production.html`，而 stage validator 按 manifest 所在的 `artifacts/requirements-draft/` 目录解析路径；已补 prompt 明确本地原型必须生成/复制到 artifact tree 并写 artifact-local 相对路径，validator 缺文件时输出 resolved path 和 `docs/prototypes/...` 专项 guidance。
+- 已拒绝扁平 manifest：顶层 `clickable_prototype_access_method` / `page_states` / `click_path` / `implementation_targets` / `surface_contracts` 不再被接受为最终 shape，错误会明确提示缺少 `prototypes[]`。
+- 已补 stage validation recovery：Product Design stage validation failure 会保持 `currentStep=REQUIREMENTS_PRODUCT_DESIGN_BRIEF`，写入 `blockedReason`、`blockedContext.category=requirements_stage_validation` 和 stage validation artifact；终端 guidance 指向重新运行 Product Design checkpoint，不引导 `waygate revise --gate requirements`。
+- 未操作 classroom live state，未停止 2.0，未修改 `.rrc-controller-v0.4/session.json`，未删除 state-dir，未执行恢复命令。
+- 新包已构建但未安装到 `/usr/lib/waygate`：`sudo -n dpkg -i dist/waygate_0.6.2a_all.deb` 返回 `sudo: a password is required`；因此没有用旧 `/usr/bin/waygate` 执行 classroom recovery。
+- 验证：
+  - RED: 新增 combined AO/E2E/prototype routing 和 Product Design manifest prompt/stage tests 初始失败，表现为错路由到 Product Design、prompt 缺 manifest path、stage 缺失 manifest 未报错。
+  - RED: 新增 canonical `prototypes[]` prompt、flat manifest rejection、Product Design stage validation recovery tests 初始失败，表现为 prompt 缺 schema skeleton、扁平 manifest 报错不清晰、`run_once()` 抛出 `ValueError`。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'canonical_manifest_schema_skeleton or flat_manifest or stage_validation_failure_records_recovery_state'` -> `3 passed, 30 deselected`。
+  - RED/GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'artifact_local or workspace_relative_manifest_path or accepts_docs_path'` -> RED `2 failed, 1 passed`，GREEN `3 passed, 33 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `33 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements or staged'` -> `33 passed, 183 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q` -> `10 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `685 passed in 80.08s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2a / all / python3`。
+  - `sudo -n dpkg -i dist/waygate_0.6.2a_all.deb` -> failed，原因是 sudo 需要密码；live recovery 未执行。
+
+### V0.6.2a Staged Requirements 目标产品视角修复
+- **状态：** implementation verified; focused/full regression passed.
+- 根因：V0.6.2 staged checkpoint prompt 和 preflight 仍容易把 Product Design / Architecture 带回 Waygate/controller 自身流程；同时默认 `currentUnitNeedsUiDesign=false` / `currentUnitIsWebSystem=false` 会掩盖 spec 中的目标产品入口、状态回看和详情页等可见表面。
+- 已新增 `workflow_controller/requirements_surface.py`，从 `--spec`、目标上下文、unit metadata 和人工反馈生成 `requirementsSurfaceClassification`，记录 `product_ui`、`web_system`、`prototype_required`、`visible_surfaces` 和脱敏 `evidence_snippets`；默认 false 只作为 ignored context。
+- 已更新 staged Scope / Product Design / Architecture / Test Strategy prompt：Scope 必须列当前版本目标、非目标、旅程、可见产品表面和后续候选；Product Design 围绕目标产品 UX / 原型 / 审阅入口；Architecture 围绕目标系统交互架构、API、数据流和运行边界；Test Strategy 保持策略层，不提前写 Unit Plan exact commands。
+- 已强化 Requirements preflight：UI/Web/prototype classified required 时继续要求 prototype manifest；unknown classification 必须解释；非 Waygate 目标中 Product Design / Architecture 描述 controller 流程会被判 invalid。
+- 已改善 staged revision route：产品原型/UI/“怎么看”反馈回 Product Design，架构交互/API/数据流反馈回 Architecture，测试策略反馈回 Test Strategy；prototype manifest 自动返工不再强制回 Scope。
+- 已同步正式 workflow / architecture docs、ROADMAP / ROADMAP.zh-CN、CHANGELOG / CHANGELOG.zh-CN、README / README.zh-CN、USAGE / USAGE.zh-CN 和版本号 `0.6.2a`。
+- 验证：
+  - RED: 新增 staged Requirements target-surface tests 初始因 `workflow_controller.requirements_surface` 缺失失败；后续暴露 no-UI basis、revision route 和 legacy generic “browser-visible when UI is touched” 误判问题。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `26 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q` -> `36 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_rrc_e2e.py workflow_controller/tests/test_rrc_real_runtime.py -q -k 'requirements or staged or target_init or unit_plan_approval or go_dry_run_target'` -> `87 passed, 227 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_requirements_staged_package.py -q` -> `117 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `676 passed in 80.29s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2a_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2a_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2a / all / python3`。
+
 ## 会话：2026-05-25
+
+### Staged Requirements 自动打回后重新派发 Scope checkpoint
+- **状态：** implementation verified; focused/full regression passed.
+- 根因：final Requirements gate 预检失败后，staged package revision 已经把 artifact package 标记 stale 并把 state 路由回 `REQUIREMENTS_SCOPE_DRAFT`，但 `_auto_revise_invalid_requirements_draft()` 继续用旧 final gate 做同一轮预检，导致重复打回、blocked，`drive()` 还可能展示旧 final gate 的人工确认菜单。
+- 修复：`_auto_revise_invalid_requirements_draft()` 在 `_revise_requirements_gate(controller_validation_only=True)` 后重新读取 state；如果当前是 `v0.6.2-staged` package 且已离开 `WAITING_REQUIREMENTS_ACCEPTANCE`，立即返回该 state，让下一轮由 `run_requirements_scope_drafter` 重新派发 agent 任务。
+- 新增回归覆盖 staged auto-revision loop 和 `drive()` stale final gate 菜单；legacy Requirements auto-revision 连续同因预算行为保持不变。
+- 验证：
+  - RED: 新增 staged auto-revision / drive 回归初始失败，分别表现为 state 进入 `blocked` 和输出 `[人工确认] 需求与验收`。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'staged_requirements_auto_revision_returns_after_routing_to_scope or drive_staged_requirements_auto_revision'` -> `2 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `19 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or staged'` -> `2 passed, 214 deselected`。
+  - `git diff --check` -> passed。
+  - `python3 -m pytest workflow_controller/tests -q` -> `669 passed in 78.29s`。
+
+### Requirements staged 默认入口与 Unit Plan 批准校验一致性修复
+- **状态：** implementation verified; focused/full regression passed; live V0.4 rerun reached staged checkpoints.
+- 根因：`init_state()` 的 target 初始化分支仍把新 session 设为 legacy `REQUIREMENTS_DRAFT -> run_requirements_drafter`；同时 `check_unit_plan_approval` 的人工批准路径手写 validator 列表，漏掉了已经接入 preflight 的 `Infrastructure / Execution Context Matrix` 和 final evidence candidate 校验。
+- 已修复 target 初始化默认入口：新建 target session 现在从 `REQUIREMENTS_SCOPE_DRAFT` / `run_requirements_scope_drafter` 开始，设置 `stagedRequirementsEnabled=true`，并初始化 `requirementsPackage.version=v0.6.2-staged` 空 artifact package。
+- 已将 Unit Plan preflight 和 approved gate 路径收敛到同一个 `_apply_and_validate_unit_plan_gate()`，保证 state patch 后的 test strategy / coverage / AO / traceability / prototype / docs / infrastructure / env / assist / evidence / final candidate / golden path / real E2E / journey / walkthrough 校验顺序一致。
+- Staged Unit Plan 本地模板现在在 staged Requirements state 下生成 `Infrastructure / Execution Context Matrix`，避免 dry-run/local-template gate 与批准校验合同不一致。
+- 已完成 RED/GREEN 与回归验证：
+  - RED: 新增 target init、`go --dry-run --max-steps 1`、Unit Plan approved assist-only、Unit Plan approved 缺 infrastructure matrix 回归，初始均按预期失败。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_init_with_target_and_workspace_without_ralph_creates_target_acceptance_state workflow_controller/tests/test_rrc_human_gates.py::test_target_init_requires_requirements_acceptance_gate workflow_controller/tests/test_rrc_controller.py::test_rrc_go_dry_run_target_starts_with_requirements_scope_checkpoint workflow_controller/tests/test_rrc_controller.py::test_unit_plan_approval_rejects_assist_only_candidate_after_human_approval workflow_controller/tests/test_rrc_controller.py::test_unit_plan_approval_rejects_missing_infrastructure_matrix_after_human_approval -q` -> `5 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_rrc_controller.py workflow_controller/tests/test_rrc_human_gates.py -q` -> `307 passed`。
+  - `git diff --check` -> passed。
+  - `python3 -m pytest workflow_controller/tests -q` -> `667 passed in 81.43s`。
+- Live V0.4：旧 `/home/lichangkun/code/classroom/.rrc-controller-v0.4` 已备份为 `.rrc-controller-v0.4.legacy-requirements-20260525T213923`；一次 auto-created Claude pane 失败状态已备份为 `.rrc-controller-v0.4.failed-autoclaude-20260525T214256`；随后使用本 worktree 代码和显式 `tmux-codex` target `2.0` 重新运行 V0.4。
+- Live V0.4 证据：新 session 从 `Requirements Scope checkpoint` 开始，生成了 scope / product design / architecture / test strategy 四个 checkpoint，并装配了含 artifact hash rows 的 final Requirements gate。当前目标 Requirements 内容仍未通过 controller preflight，原因是 E2E/browser review 未映射到 e2e AC 或 active Journey，且 UI/Web/prototype 合同触发了 prototype manifest 要求；controller 已按 staged revision route 回到 `REQUIREMENTS_SCOPE_DRAFT`，无后台 Waygate 进程在写该 state-dir。
 
 ### V0.6.2 Final Acceptance 终验同步
 - **状态：** Final Acceptance approved; human-readable status synced.

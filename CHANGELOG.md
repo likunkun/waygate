@@ -2,6 +2,26 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2b
+
+- Promoted the Requirements prototype preview from a temporary Plannotator-only server to a controller process-level preview service.
+- Product Design checkpoints now generate the Plannotator review HTML/manifest after successful validation, using the Scope checkpoint as the requirements reference before the final approval gate exists.
+- Reuse the same preview URL through Architecture, Test Strategy, final Requirements assembly, Requirements human review, and Plannotator-assisted review.
+- Rebuild the review bundle after final Requirements assembly so the manifest records the real approval gate path while keeping the current preview port.
+- Changed preview port binding to start from `WAYGATE_PREVIEW_PORT` or `20001` and increment when the port is occupied.
+- Kept the preview server alive after Plannotator Close and added proxy-environment guidance for `NO_PROXY/no_proxy`.
+
+## 0.6.2a
+
+- Added target surface classification for staged Requirements packages, recording target UI/Web/prototype needs, visible surfaces, and redacted evidence snippets from specs, target context, unit metadata, and feedback.
+- Updated staged Scope, Product Design, Architecture, and Test Strategy prompts so they stay centered on the target product/system instead of Waygate/controller workflow.
+- Preserved Requirements prototype hard gates for classified UI/Web targets, while allowing explicit backend/API/CLI-only targets to declare a no-UI basis.
+- Added preflight rejection for non-Waygate target artifacts whose Product Design or Architecture primarily describes Waygate/controller internals.
+- Improved staged revision routing so UI/prototype feedback returns to Product Design and interaction/API/data-flow feedback returns to Architecture.
+- Routed combined AO mapping or E2E AC/Journey mapping blockers back to Scope before UI/prototype keywords, preventing prototype-related wording from looping through Product Design.
+- Required Product Design checkpoints for classified prototype/Web targets to prompt for and stage-validate `artifacts/requirements-draft/prototype-manifest.json`.
+- Clarified Product Design manifest local path semantics: local prototype paths must resolve from `artifacts/requirements-draft/`, with diagnostics showing the resolved path and guidance for workspace-relative `docs/prototypes/...` mistakes.
+
 ## 0.6.2
 
 - Added the Staged Requirements Package flow: Requirements Scope, Product Design Brief, Technical Architecture Brief, and Requirements Test Strategy Brief now run as focused checkpoints before one final human Requirements approval gate.

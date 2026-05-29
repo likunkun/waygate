@@ -264,6 +264,36 @@ Delivered work:
 - Ensure Unit Plan explicitly consumes staged artifact paths and hashes so scope, ACs, journeys, product design, architecture, prototype, E2E, and risk obligations continue downstream.
 - Document the long-lived workflow rules in `docs/workflow/staged-requirements-package-policy.md` and the module boundaries in `docs/architecture/staged-requirements-package-architecture.md`.
 
+### V0.6.2a - Staged Requirements Target Product Perspective
+
+Goal: keep staged Requirements artifacts centered on the target product or target system instead of Waygate/controller internals.
+
+Status: patch release implemented in package `0.6.2a`.
+
+Delivered work:
+
+- Add `requirementsSurfaceClassification` with `product_ui`, `web_system`, `prototype_required`, `visible_surfaces`, and redacted `evidence_snippets`.
+- Classify target product surfaces from `--spec`, target context, unit metadata, and human feedback, while treating default `currentUnitNeedsUiDesign=false` and `currentUnitIsWebSystem=false` only as ignored context.
+- Update staged Scope, Product Design, Architecture, and Test Strategy prompt contracts so Product Design describes target product UX/prototype/review surfaces, Architecture describes target system interaction/data/API/runtime boundaries, and Test Strategy remains strategy-level before Unit Plan exact cases and commands.
+- Preserve hard Requirements preflight: UI/Web/prototype targets still require a valid prototype manifest, unknown classification must be explained, and backend/API/CLI-only targets must cite explicit no-UI basis.
+- Reject non-Waygate target artifacts when Product Design or Architecture primarily describe Waygate/controller staged package operation rather than the target product/system.
+- Route surface/prototype feedback to Product Design, interaction architecture/API/data-flow feedback to Architecture, and test strategy feedback to Test Strategy without forcing every staged revision back to Scope.
+
+### V0.6.2b - Persistent Prototype Preview After Product Design
+
+Goal: keep Requirements-stage prototype review available as soon as Product Design succeeds, not only during the Plannotator review command.
+
+Status: patch release implemented in package `0.6.2b`.
+
+Delivered work:
+
+- Generate `plannotator-review.html` and `prototype-review-manifest.json` immediately after Product Design checkpoint validation passes.
+- Use the Scope checkpoint as the requirements reference before the final Requirements approval gate is assembled.
+- Start one controller process-level prototype preview server and reuse its URL through Architecture, Test Strategy, final assembly, Requirements human review, and Plannotator-assisted review.
+- Rebuild the review bundle after final Requirements assembly so the manifest records the real approval gate path while keeping the current preview port.
+- Start preview port selection from `WAYGATE_PREVIEW_PORT` or `20001`, incrementing when a port is occupied.
+- Keep the preview server alive after Plannotator Close and close it when the controller process exits.
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.

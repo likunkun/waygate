@@ -2,6 +2,26 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2b
+
+- 将 Requirements 原型预览从 Plannotator 临时服务提升为 controller 进程级常驻预览服务。
+- Product Design checkpoint 校验通过后立即生成 Plannotator review HTML/manifest；final approval gate 尚未装配时使用 Scope checkpoint 作为 requirements reference。
+- Architecture、Test Strategy、final Requirements assembly、Requirements 人工评审和 Plannotator 辅助审阅期间复用同一个 preview URL。
+- final Requirements assembly 后重新生成 review bundle，让 manifest 补齐真实 approval gate path，同时保留当前预览端口。
+- 预览端口从 `WAYGATE_PREVIEW_PORT` 或默认 `20001` 起步，端口被占用时自动递增。
+- Plannotator Close 后不再关闭预览服务，并在代理环境下提示配置 `NO_PROXY/no_proxy`。
+
+## 0.6.2a
+
+- 为 staged Requirements package 新增目标产品表面分类，记录目标 UI/Web/prototype 需求、可见表面，以及来自 spec、目标上下文、unit metadata 和反馈的脱敏证据片段。
+- 更新 staged Scope、Product Design、Architecture 和 Test Strategy prompt，使其围绕目标产品/目标系统，而不是 Waygate/controller 工作流。
+- 保留 UI/Web 目标的 Requirements prototype 硬门禁，同时允许明确的 backend/API/CLI-only 目标声明不需要 UI 的依据。
+- 非 Waygate 目标项目中，如果 Product Design 或 Architecture 主要描述 Waygate/controller 内部流程，preflight 会判 invalid。
+- 改善 staged revision 路由：UI/prototype 反馈回到 Product Design，交互/API/数据流反馈回到 Architecture。
+- AO 映射或 E2E AC/Journey 映射缺口与 prototype 文案同时出现时，优先回到 Scope，避免因 prototype 关键词误入 Product Design 循环。
+- `prototype_required=required` 或 `web_system=required` 时，Product Design checkpoint prompt 和 stage validation 都要求 `artifacts/requirements-draft/prototype-manifest.json`。
+- 明确 Product Design manifest 本地路径语义：本地原型 path 必须从 `artifacts/requirements-draft/` 解析；缺文件诊断会输出 resolved path，并提示 workspace-relative `docs/prototypes/...` 的修复方式。
+
 ## 0.6.2
 
 - 新增 Staged Requirements Package 流程：Requirements Scope、Product Design Brief、Technical Architecture Brief 和 Requirements Test Strategy Brief 作为聚焦 checkpoint 运行，最后仍保留一个人工 Requirements approval gate。

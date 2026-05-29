@@ -49,7 +49,7 @@ Requirements drafter 会生成 Markdown gate，包含：
 人类看到 gate 之前，controller 可以先做预检。缺 AC 映射、缺 verification layer、traceability 格式错误等问题会自动打回 drafter。
 预检也会拒绝 `暂无`、`不清楚` 等空泛基础设施占位、缺少依据的 `未发现` / `没有` 声明，以及 4.9 声称“用户确认”或“已验证”但 4.8 没有对应留痕的内容。
 
-如果 Requirements 声明或隐含真实 E2E / 浏览器验收，人工批准前必须审阅 `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）`。该矩阵把每个 E2E AC 或 active E2E Journey 映射到测试方法、真实入口、用户步骤、fixture/setup、具体命令、环境类型、依赖、mock policy 和预期断言。Controller 会拒绝缺行、泛化命令、非真实入口、`component_mock`/核心 API mock，以及把截图或人工观察当成唯一断言的写法。
+如果 Requirements 声明或隐含真实 E2E / 浏览器验收，人工批准前必须审阅 `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）`。该矩阵把需要独立覆盖的 E2E AC 或 active E2E Journey 映射到测试方法、真实入口、用户步骤、fixture/setup、命令意图、环境类型、依赖、mock policy 和预期断言。Controller 会拒绝缺行、泛化命令意图、非真实入口、`component_mock`/核心 API mock，以及把截图或人工观察当成唯一断言的写法。prototype-only artifact review 通过 prototype manifest 和 Unit Plan prototype conformance 承接，不伪装成真实 E2E。
 
 V0.6.0m 还会在 Unit Plan approval 阶段继承这些 E2E 方法要求：每个 `golden_path: true` test case 必须是 `layer=e2e`，使用 `local_real` 或 `production_readonly`，声明 `entrypoint`/`real_entrypoint`，包含具体 fixture/setup、命令和断言，并且不得 mock 核心业务 API。E2E 不等于只支持浏览器；API-only 和 service-only golden path 可以使用 pytest/API/service E2E 命令。完整规则已登记在 [docs/workflow/requirements-e2e-review-policy.md](workflow/requirements-e2e-review-policy.md)。
 
@@ -68,7 +68,7 @@ Unit Plan 定义 implementation agent 可以做什么。它应包含：
 - `Controller State Patch` JSON 块。
 
 Controller 会在 approval 前校验计划。无效计划不会被标记为 approved。
-如果已批准 Requirements 包含 4.6 E2E 审阅细节，Unit Plan 必须继承已批准的测试方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图；除非先通过 Requirements change request，不能在 Unit Plan 中弱化这些结论。
+如果已批准 Requirements 包含 4.6 E2E 审阅细节，Unit Plan 必须继承已批准的测试方法、真实入口、fixture/setup、命令意图、环境类型、mock policy 和断言意图，并在 Unit Plan 中产出 exact command 和 evidence row；除非先通过 Requirements change request，不能在 Unit Plan 中弱化这些结论。
 Unit Plan 预检自动打回时，`unitPlanAutoRevisionMax` 限制的是同一个 normalized invalid reason 的连续修订次数。不同 invalid reason 视为有效推进并重置连续计数；request event 同时记录当前 reason 的连续 `attempt` 和本轮累计 `total_attempt`。
 
 ## Implementation 阶段

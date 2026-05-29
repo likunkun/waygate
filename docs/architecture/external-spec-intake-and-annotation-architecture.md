@@ -36,6 +36,8 @@ The role-based annotation config supports:
 
 Each role can select `claude-code`, `opencode`, or `codex` as a backend family. The normalized config records command, args, env key allowlist, timeout, artifact path, prompt template, and failure policy. State and artifacts record env keys only, not values.
 
+`annotation_agents.py` owns built-in backend templates and legacy migration. The Codex template is normalized away from the removed `--ask-for-approval never` flag. The Claude Code template includes `--bare` and `--no-session-persistence` so subprocess annotation runs do not inherit stale interactive thinking/session context; persisted sessions with the old built-in Claude args migrate during status/config normalization.
+
 Backend unavailable behavior is explicit. The controller must report the selected backend or command as unavailable instead of silently falling back to another backend family.
 
 ## Prompt Template Registry

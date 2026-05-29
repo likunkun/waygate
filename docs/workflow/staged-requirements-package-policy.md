@@ -12,12 +12,49 @@ The staged package contains four checkpoint artifacts:
 
 | Stage | Artifact Purpose |
 | --- | --- |
-| Requirements Scope | Scope, non-goals, users or operators, journeys, ACs, AO traceability, minimal context, and risks. |
-| Product Design Brief | User experience, review surface, human gate experience, and product behavior implied by the approved scope. |
-| Technical Architecture Brief | Module boundaries, controller state, runner flow, gate assembly, validator behavior, and compatibility notes. |
-| Requirements Test Strategy Brief | Test layers, focused suites, E2E review method when required, mock policy, and verifier evidence expectations. |
+| Requirements Scope | Current-version goals, non-goals, users, target-product journeys, visible product surfaces, ACs, AO traceability, minimal context, risks, and later-version candidates. |
+| Product Design Brief | Target product UX, prototype or review evidence, page/state/entrypoint review method, and product behavior implied by the approved scope. |
+| Technical Architecture Brief | Target system interaction architecture, module boundaries, APIs, data flow, state write/readback behavior, runtime dependencies, and external integrations. |
+| Requirements Test Strategy Brief | Strategy-level test layers, E2E review method when required, command intent, mock policy, risks, and verifier evidence shapes that Unit Plan must later turn into exact test cases and commands. |
 
 Scope must stay focused. It must not ask the drafter to produce the complete product design, architecture, test strategy, or full `## 4.9 目标项目基础设施信息` inventory in the same checkpoint.
+
+## Target Surface Classification
+
+V0.6.2a adds `requirementsSurfaceClassification` to prevent staged checkpoints from designing Waygate/controller itself when Waygate is driving a target product. The classification is derived from `--spec`, target context, unit metadata, and human revision feedback. It records:
+
+- `product_ui`: `required`, `not_required`, or `unknown`;
+- `web_system`: `required`, `not_required`, or `unknown`;
+- `prototype_required`: `required`, `not_required`, or `unknown`;
+- `visible_surfaces`: detected entries such as product entrypoints, pages, dashboards, status review surfaces, detail pages, API/CLI review outputs, or consoles;
+- `evidence_snippets`: short redacted snippets showing why the classification was made.
+
+Default controller flags such as `currentUnitNeedsUiDesign=false` and `currentUnitIsWebSystem=false` are not evidence that the target product has no UI. They can only be recorded as ignored context. A `not_required` classification must cite an explicit backend/API/CLI-only basis.
+
+If `product_ui`, `web_system`, or `prototype_required` is `required`, Requirements preflight still requires a valid prototype manifest when the target UI/Web/prototype contract is active. If the classification is `unknown`, the Scope or Product Design checkpoint must explain the uncertainty or route back for clarification; it must not silently write “no UI”.
+
+When `prototype_required=required` or `web_system=required`, the Product Design checkpoint prompt must require `artifacts/requirements-draft/prototype-manifest.json` and include the canonical top-level `{"prototypes": [...]}` schema skeleton. Local prototype paths are resolved relative to the manifest directory, so agents must generate or copy HTML/image/Markdown prototypes into `artifacts/requirements-draft/` and then reference an artifact-local path such as `prototypes/<prototype-id>/index.html`. Workspace-relative paths such as `docs/prototypes/...` are invalid unless the same file exists under `artifacts/requirements-draft/docs/prototypes/...`. Stage completion validates that the manifest exists and contains a clickable prototype access method, page states, click path, AC/Journey mapping, implementation targets, and surface contracts under `prototypes[]`. Manifest AC/Journey references and surface-contract AC references must already exist in Requirements Scope; Product Design cannot invent new AC or Journey IDs. Flat top-level prototype keys such as `clickable_prototype_access_method`, `page_states`, or `click_path` are invalid as the final manifest shape. Missing or malformed manifest output is a Product Design stage problem and must be surfaced there, not deferred to the final Requirements preflight loop.
+
+The final Requirements preflight accepts a manifest that passes `validate_prototype_review_manifest(..., require_clickable=True)` as clickable webpage prototype evidence. Product Design text can also satisfy the textual evidence check when it names an artifact-local clickable HTML path or URL, manifest path, page states, click path, and AC/Journey mapping. The manifest remains mandatory for active UI/Web/prototype contracts: missing files, missing page states, missing click path, missing AC mapping, unsupported prototype kind, or invalid surface contracts still block approval.
+
+V0.6.2b promotes the prototype review bundle from a temporary Plannotator helper to a controller process-level preview service. After Product Design validation succeeds, the controller generates `plannotator-review.html` and `prototype-review-manifest.json`, starts the preview server, and prints the prototype preview URL. Before final Requirements assembly exists, the bundle uses the Scope checkpoint as the requirements reference. Final assembly regenerates the bundle with the real `approvals/requirements-and-acceptance.md` approval gate metadata, while the already-started preview server keeps the same port. Requirements Plannotator review reuses that server, Plannotator Close does not shut it down, and the controller closes it only when the process exits.
+
+Preview port selection starts at `WAYGATE_PREVIEW_PORT` when set, otherwise `20001`. If the selected port is occupied, the controller increments until it finds a free port. The printed browser URL uses the display host from the existing preview host rules. When proxy environment variables are present, the controller may remind the operator to add that display host to `NO_PROXY/no_proxy` so local preview requests do not go through a proxy.
+
+Every checkpoint now runs deterministic stage-output validation immediately after the artifact is produced:
+
+- Scope rejects real E2E/browser review text unless it maps to `AC-... [verification: e2e]` or a Journey row with exact `Status=active` and `Verification Layer=e2e`. Values such as `是` or `real integration + DB assertion` are not canonical. Prototype-only artifact review is handled by Product Design manifest and Unit Plan prototype conformance, not by 4.6 real E2E command validation.
+- Product Design rejects unknown AC/Journey references in its artifact and prototype manifest.
+- Technical Architecture rejects unknown AC/Journey references and, when Scope declares E2E/browser handoff, must cite the Scope canonical e2e AC/Journey instead of only describing a natural-language strategy.
+- Requirements Test Strategy rejects noncanonical E2E sections. If Scope or Test Strategy declares E2E/browser review, it must write fixed heading `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）`, use the fixed 11 columns, and cover every active e2e Journey plus any e2e AC not already covered by a mapped Journey row. `Environment Kind` is limited to `local_real` or `production_readonly`; `Real Entrypoint`, `User Steps`, and `Fixture / Test Data / Setup` must be concrete; core business API mocks/stubs are not allowed; expected assertions must be machine-checkable and screenshots cannot be the only assertion. `Verification Command` is a command intent, command family, or runner intent; exact commands belong in Unit Plan.
+
+AC verification-layer facts are only read from canonical AC/layer tables, direct inline AC markers such as `AC-... [verification: e2e]`, or clear non-table layer buckets. Explanatory surface, coverage, or support tables may reference E2E ACs and integration/prerequisite ACs in the same note, but those references do not promote every referenced AC to E2E.
+
+Requirements-stage AC layers include the behavioral layers `unit`, `functional`, `integration`, `e2e`, and `manual`, plus non-E2E support layers `static`, `regression`, and `prerequisite`. These support layers satisfy the Requirements obligation to classify the AC, but they do not trigger real E2E 4.6 strictness; Unit Plan still owns the exact executable command, test case, fixture initialization, and final evidence row.
+
+Journey Acceptance Matrix parsing follows the same boundary. The preferred minimal header is `| Journey | Title | Status | Steps | AC | Verification Layer |`. The parser accepts rows without a `Title` column by using the Journey ID as the title, and it accepts equivalent headers such as `Journey id`, `User steps`, `Acceptance contract`, `Path / assertion focus`, and `Linked AC`. When an assembled final gate contains multiple compatible Journey-like tables for the same Journey ID, the parser merges them into one contract row and keeps the richest steps, AC, Unit, Test Case, and command data; conflicting status or verification layer values still block approval. `static`, `regression`, and `prerequisite` are valid non-E2E Journey layers for support/baseline/prerequisite journeys; only normalized `e2e` Journey rows trigger 4.6 real E2E coverage requirements.
+
+Stage validation failures keep the workflow at the current checkpoint step and write a stage validation artifact. Before Requirements are human-approved, tmux-backed runners may automatically rework the failed checkpoint: the controller invalidates the failed stage and downstream artifacts, injects `Controller stage validation feedback` into `requirementsRevisionFeedback`, records `requirements_stage_auto_revision_requested`, and reruns the same stage action. The retry budget uses the same process-local consecutive semantic reason counter and `requirementsAutoRevisionMax` as Requirements auto-revision. Once that budget is exceeded, or when Requirements are already approved, the workflow hard-blocks with `requirements_stage_validation` guidance. The manual recovery remains `waygate unblock` for rerunning the same checkpoint, or `waygate revise --gate requirements --reason ...` when the error exposes an upstream AC, Journey, or Requirements contract conflict.
 
 ## Checkpoint Contract
 
@@ -73,7 +110,11 @@ The Requirements stage still carries enough context to decide scope, ACs, journe
 - architecture, interaction logic, and interface notes
 - dependency information
 
-The `Requirements Test Strategy Brief` carries E2E method review before Unit Plan. The Unit Plan inherits that review and turns it into executable test cases, verification commands, fixtures, mock policy, and expected assertions.
+The `Requirements Test Strategy Brief` carries E2E method review before Unit Plan. The Unit Plan inherits that review and turns it into executable test cases, exact verification commands, fixtures, mock policy, and expected assertions.
+
+The Test Strategy checkpoint remains strategy-level. It should describe risk, verification layers, evidence shapes, and handoff expectations, while exact test cases, concrete commands, fixture scripts, and final assertions are owned by Unit Plan.
+
+The final Requirements gate still runs the full `validate_requirements_acceptance_quality()` chain after assembly. The stage checks are earlier deterministic blockers, not a replacement for final preflight.
 
 ## Unit Plan Handoff
 
@@ -90,6 +131,8 @@ When `requirementsPackage.version` is `v0.6.2-staged`, the Unit Plan prompt must
 
 Natural-language summaries are not sufficient as the handoff contract. The artifact path/hash/status records are the traceable source.
 
+Unit Plan has no staged checkpoint sequence. Its deterministic gate is the same validator chain in draft preflight and approval revalidation: state patch, test strategy, test case coverage, AO/AC traceability, prototype conformance, document deliverables, infrastructure matrix, verification environment, verification-assist contract, evidence-row preflight, final evidence candidates, golden path, real E2E policy, Journey enrichment, and final walkthrough. A draft that fails this chain must not run annotation or enter human approval, and a human-approved gate is revalidated through the same helper before state advances.
+
 ## Revision And Downstream Invalidation
 
 Human revision or controller preflight failure uses downstream invalidation: only the affected stage and downstream stages become stale.
@@ -102,7 +145,15 @@ Human revision or controller preflight failure uses downstream invalidation: onl
 | Test Strategy | Test Strategy, Final Gate |
 | Final Gate assembly | Final Gate |
 
-`waygate revise --gate requirements` in staged package mode rewinds to `REQUIREMENTS_SCOPE_DRAFT`, clears Requirements and Unit Plan approval state, preserves the revision feedback, and lets the controller regenerate only the necessary chain.
+`waygate revise --gate requirements` in staged package mode clears Requirements and Unit Plan approval state, preserves revision feedback, and routes to the affected checkpoint through semantic issue classification. Surface/prototype/UI feedback such as “产品原型呢”, a missing prototype manifest, missing page states, missing click path, or missing prototype access method routes to Product Design. Interaction architecture, API, data-flow, state-write/readback, module-boundary, runtime, or external-system feedback routes to Technical Architecture. Test-method quality feedback such as mock policy, `environment_kind`, E2E method, fixture/setup, verification layer, 4.6 matrix shape, or expected assertions routes to Test Strategy. Broader scope, current-version boundary, visible-surface classification, unknown AC/Journey references, AO traceability, or unclear feedback routes to Scope.
+
+Controller preflight reasons that include missing AO requirements mapping, missing AO coverage, a required Journey contract with no active Journey rows, E2E review not mapped to an active E2E AC/Journey, unknown acceptance criteria, unknown Journey references, or inconsistent `requirementsSurfaceClassification` are Scope blockers. They route to `REQUIREMENTS_SCOPE_DRAFT` even if the same combined reason also mentions prototype manifest, Web, page states, or UI evidence. Pure prototype access or “how do I review the UI” feedback still routes to Product Design. For controller-validation-only auto-rework, routing uses the controller validation error as the primary source instead of the full old Requirements gate body; the event `requirements_staged_revision_routed` records `reason_key`, `routing_source`, and `routing_reason` for audit.
+
+Requirements auto-revision uses the same semantic issue key for its retry budget, but the budget is process-local to one `waygate go`. The controller keeps the last reason key, consecutive attempt count, and total requested attempts in the active `RalphRefinerController` instance only. It does not read or write `requirementsAutoRevisionLastReasonKey`, `requirementsAutoRevisionConsecutiveCount`, or `requirementsAutoRevisionTotalCount` in `session.json`; later state saves remove those legacy fields if an older session contains them. Events still record `attempt` and `total_attempt` for audit history, but event history and legacy session fields do not control a later run. A process exit, explicit human Requirements revise, or next `waygate go` starts with a fresh budget. Within one controller process, when an unapproved final Requirements preflight reason exceeds `requirementsAutoRevisionMax`, the workflow hard-blocks with `blockedContext.category=requirements_contract`; recovery is `waygate revise --gate requirements --reason "..."`, not `retry` or ordinary `unblock`.
+
+For staged checkpoint validation blockers, `waygate unblock` preserves the controller stage-validation reason into `requirementsRevisionFeedback` before clearing the blocker. Auto-rework uses the same feedback format before a hard block is reached. The next checkpoint prompt therefore sees the exact validator failure instead of regenerating the same artifact from ordinary upstream context alone.
+
+For non-Waygate target projects, Product Design and Technical Architecture are invalid if they primarily describe Waygate/controller staged package operation, controller orchestration, runner contracts, checkpoint state transitions, or artifact hash flows instead of target product UX and target system architecture.
 
 ## Version Boundary
 

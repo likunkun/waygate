@@ -264,6 +264,36 @@
 - 确保 Unit Plan 显式消费 staged artifact path/hash，让 scope、AC、Journey、产品设计、架构、prototype、E2E 和风险义务持续向下游传递。
 - 将长期流程规则沉淀到 `docs/workflow/staged-requirements-package-policy.md`，将模块边界沉淀到 `docs/architecture/staged-requirements-package-architecture.md`。
 
+### V0.6.2a - Staged Requirements 目标产品视角修复
+
+目标：让 staged Requirements artifacts 始终围绕目标产品或目标系统，而不是 Waygate/controller 内部流程。
+
+状态：patch release 已在 package `0.6.2a` 实施。
+
+已交付：
+
+- 新增 `requirementsSurfaceClassification`，包含 `product_ui`、`web_system`、`prototype_required`、`visible_surfaces` 和脱敏 `evidence_snippets`。
+- 从 `--spec`、目标上下文、当前 unit metadata 和人工反馈识别目标产品表面；默认 `currentUnitNeedsUiDesign=false` / `currentUnitIsWebSystem=false` 只能作为 ignored context，不能证明不需要 UI。
+- 更新 staged Scope、Product Design、Architecture 和 Test Strategy prompt 合同：Product Design 输出目标产品 UX / 原型 / 审阅表面，Architecture 输出目标系统交互、数据、API 和运行边界，Test Strategy 保持策略层，不提前写 Unit Plan 级 exact cases / commands。
+- 保留 Requirements 硬预检：UI/Web/prototype 目标仍要求合法 prototype manifest，unknown classification 必须解释依据，backend/API/CLI-only 目标必须给出明确 no-UI 依据。
+- 非 Waygate 目标项目中，Product Design 或 Architecture 如果主要描述 Waygate/controller staged package 操作而不是目标产品/系统，会被判 invalid。
+- “产品原型/UI 怎么看”反馈路由到 Product Design，“架构交互/API/数据流缺失”反馈路由到 Architecture，测试策略反馈路由到 Test Strategy，不再所有 staged revision 都回到 Scope。
+
+### V0.6.2b - Product Design 后常驻原型预览
+
+目标：Product Design 成功后立即保持 Requirements-stage 原型预览可访问，而不是只在 Plannotator review 命令期间临时启动。
+
+状态：patch release 已在 package `0.6.2b` 实施。
+
+已交付：
+
+- Product Design checkpoint 校验通过后立即生成 `plannotator-review.html` 和 `prototype-review-manifest.json`。
+- final Requirements approval gate 尚未装配时，使用 Scope checkpoint 作为 requirements reference。
+- 启动一个随 controller 进程常驻的 prototype preview server，Architecture、Test Strategy、final assembly、Requirements 人工评审和 Plannotator 辅助审阅期间复用同一 URL。
+- final Requirements assembly 后重新生成 review bundle，让 manifest 记录真实 approval gate path，同时保留当前 preview port。
+- 预览端口从 `WAYGATE_PREVIEW_PORT` 或默认 `20001` 起步，被占用时自动递增。
+- Plannotator Close 后保持预览服务可访问，并在 controller 进程退出时关闭。
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。

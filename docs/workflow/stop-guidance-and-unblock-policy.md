@@ -23,6 +23,8 @@ Explicit agent or controller `blocked` means the workflow needs a reasoned route
 - Requirements blockers mean approved requirements, acceptance criteria, out-of-scope decisions, or journey contracts must change.
 - Final Acceptance blocked route means the reviewer could not judge because environment, data, access, or evidence was unavailable.
 
+Blocked guidance prints the derived blocker category next to the reason, then prints the matching recovery command. Long validator blocker lists are compacted to the first few actionable items; the complete list remains in the referenced artifact, such as `artifacts/final-scope-audit/scope-audit.json`.
+
 ## Unblock Boundary
 
 `waygate unblock --state-dir <state-dir> --reason "<fixed condition>"` is allowed only after an environment or external dependency blocker has been fixed by a human. It is not an approval and it does not edit Requirements, Unit Plan, Final Acceptance gates, artifacts, or approval hashes.
