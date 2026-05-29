@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -14,6 +15,27 @@ from workflow_controller.prototype_review import (
     start_prototype_review_preview_server,
     validate_prototype_review_manifest,
 )
+
+
+def _occupy_tcp_port(port: int) -> socket.socket:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(('0.0.0.0', port))
+    sock.listen(1)
+    return sock
+
+
+def _find_free_port(start: int = 22000) -> int:
+    for port in range(start, 65535):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(('0.0.0.0', port))
+            return port
+        except OSError:
+            continue
+        finally:
+            sock.close()
+    raise RuntimeError('no free TCP port available for prototype preview test')
 
 
 def _write_requirements(path: Path) -> None:
@@ -156,6 +178,53 @@ def test_prototype_review_bundle_normalizes_manifest_copies_assets_and_renders_m
     assert 'localhost:20000/prototypes/' not in html_review
     assert 'Checkout flow' in html_review
     assert 'route:/checkout' in html_review
+
+
+def test_prototype_review_bundle_can_use_scope_reference_before_approval_gate(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    draft_dir = artifacts_dir / 'requirements-draft'
+    draft_dir.mkdir(parents=True)
+    prototype_path = draft_dir / 'checkout.html'
+    prototype_path.write_text('<button>Checkout</button>\n', encoding='utf-8')
+    scope_path = artifacts_dir / 'requirements-scope' / 'requirements-scope.md'
+    scope_path.parent.mkdir(parents=True)
+    scope_path.write_text(
+        '# Requirements Scope\n\n'
+        '## Acceptance Criteria\n'
+        '- AC-01 [verification: manual]: Checkout prototype is reviewable.\n',
+        encoding='utf-8',
+    )
+    (draft_dir / 'prototype-manifest.json').write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'checkout',
+                        'type': 'html',
+                        'path': 'checkout.html',
+                        'title': 'Checkout prototype',
+                        'linked_acceptance_criteria': ['AC-01'],
+                        'page_states': ['Cart', 'Confirmation'],
+                        'click_path': ['Open cart', 'Click checkout'],
+                        'implementation_targets': [{'kind': 'route', 'path': '/checkout'}],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    bundle = prepare_prototype_review_bundle(
+        artifacts_dir=artifacts_dir,
+        requirements_path=scope_path,
+        approval_gate_path=None,
+    )
+
+    assert bundle is not None
+    review_manifest = json.loads(bundle.manifest_path.read_text(encoding='utf-8'))
+    assert review_manifest['requirements_reference_path'] == str(scope_path)
+    assert 'approval_gate_path' not in review_manifest
+    assert 'Reference requirements source' in (bundle.html_review_path or bundle.review_path).read_text(encoding='utf-8')
 
 
 def test_prototype_manifest_requires_implementation_targets_and_accepts_aliases(tmp_path: Path) -> None:
@@ -426,6 +495,52 @@ def test_prototype_manifest_validation_blocks_unknown_ac_missing_interaction_and
     assert 'sensitive URL query parameter: token' in message
 
 
+def test_prototype_manifest_accepts_versioned_acceptance_criteria_ids(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    draft_dir = artifacts_dir / 'requirements-draft'
+    draft_dir.mkdir(parents=True)
+    html_source = draft_dir / 'course-production.html'
+    html_source.write_text('<button>Open production center</button>\n', encoding='utf-8')
+    requirements_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    requirements_path.write_text(
+        '# Requirements\n\n'
+        '## Acceptance Criteria\n'
+        '- AC-V04-001 [verification: e2e]: Teacher opens the course production center.\n',
+        encoding='utf-8',
+    )
+    manifest_path = draft_dir / 'prototype-manifest.json'
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'course-production',
+                        'type': 'html',
+                        'path': str(html_source),
+                        'title': 'Course production center',
+                        'linked_acceptance_criteria': ['AC-V04-001'],
+                        'linked_journeys': ['J-V04-001'],
+                        'page_states': ['Production center'],
+                        'click_path': ['Open production center'],
+                        'implementation_targets': [{'kind': 'route', 'path': '/teacher/course-production'}],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    normalized = validate_prototype_review_manifest(
+        manifest_path,
+        requirements_path=requirements_path,
+        artifacts_dir=artifacts_dir,
+        require_implementation_targets=True,
+    )
+
+    assert normalized['prototypes'][0]['linked_acceptance_criteria'] == ['AC-V04-001']
+
+
 def test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_and_approval_gate(
     tmp_path: Path,
     monkeypatch,
@@ -459,8 +574,9 @@ def test_prototype_preview_server_only_serves_review_bundle_manifest_prototypes_
     request_base_url = server.base_url.replace('192.0.2.44', '127.0.0.1')
     try:
         assert DEFAULT_PROTOTYPE_PREVIEW_PORT == 20001
-        assert server.base_url == 'http://192.0.2.44:20001'
-        assert server.preview_url == 'http://192.0.2.44:20001/plannotator-review.md'
+        assert server.port >= 20001
+        assert server.base_url == f'http://192.0.2.44:{server.port}'
+        assert server.preview_url == f'http://192.0.2.44:{server.port}/plannotator-review.md'
         assert '0.0.0.0' not in server.preview_url
         assert '127.0.0.1' not in server.preview_url
         markdown_response = urllib.request.urlopen(f'{request_base_url}/plannotator-review.md', timeout=2)
@@ -508,6 +624,77 @@ def test_prototype_preview_server_allows_fixed_port_override(
         assert server.preview_url == 'http://192.0.2.44:20002/plannotator-review.html'
     finally:
         server.close()
+
+
+def test_prototype_preview_server_increments_when_default_port_is_occupied(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv('WAYGATE_PREVIEW_HOST', raising=False)
+    monkeypatch.delenv('WAYGATE_PREVIEW_PORT', raising=False)
+    monkeypatch.setattr(networking, 'detect_primary_ip_address', lambda: '192.0.2.44')
+    try:
+        blocker = _occupy_tcp_port(20001)
+    except OSError:
+        pytest.skip('default preview port 20001 is already occupied by the local environment')
+    draft_dir = tmp_path / 'artifacts' / 'requirements-draft'
+    prototypes_dir = draft_dir / 'prototypes'
+    prototypes_dir.mkdir(parents=True)
+    review_path = draft_dir / 'plannotator-review.html'
+    manifest_path = draft_dir / 'prototype-review-manifest.json'
+    approval_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text('<!doctype html><p>Review</p>\n', encoding='utf-8')
+    manifest_path.write_text('{"version": "v0.6.0b"}\n', encoding='utf-8')
+    approval_path.write_text('# Approval\n', encoding='utf-8')
+
+    try:
+        server = start_prototype_review_preview_server(
+            review_path=review_path,
+            manifest_path=manifest_path,
+            prototypes_dir=prototypes_dir,
+            approval_gate_path=approval_path,
+        )
+        try:
+            assert server.preview_url == 'http://192.0.2.44:20002/plannotator-review.html'
+        finally:
+            server.close()
+    finally:
+        blocker.close()
+
+
+def test_prototype_preview_server_increments_from_env_port_when_occupied(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    start_port = _find_free_port(21000)
+    monkeypatch.setenv('WAYGATE_PREVIEW_PORT', str(start_port))
+    monkeypatch.setattr(networking, 'detect_primary_ip_address', lambda: '192.0.2.44')
+    blocker = _occupy_tcp_port(start_port)
+    draft_dir = tmp_path / 'artifacts' / 'requirements-draft'
+    prototypes_dir = draft_dir / 'prototypes'
+    prototypes_dir.mkdir(parents=True)
+    review_path = draft_dir / 'plannotator-review.html'
+    manifest_path = draft_dir / 'prototype-review-manifest.json'
+    approval_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text('<!doctype html><p>Review</p>\n', encoding='utf-8')
+    manifest_path.write_text('{"version": "v0.6.0b"}\n', encoding='utf-8')
+    approval_path.write_text('# Approval\n', encoding='utf-8')
+
+    try:
+        server = start_prototype_review_preview_server(
+            review_path=review_path,
+            manifest_path=manifest_path,
+            prototypes_dir=prototypes_dir,
+            approval_gate_path=approval_path,
+        )
+        try:
+            assert server.preview_url == f'http://192.0.2.44:{start_port + 1}/plannotator-review.html'
+        finally:
+            server.close()
+    finally:
+        blocker.close()
 
 
 def test_browser_display_host_uses_primary_ip_for_wildcard_bind(monkeypatch) -> None:

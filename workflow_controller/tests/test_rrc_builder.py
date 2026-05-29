@@ -299,6 +299,14 @@ def test_prepare_builder_prompt_includes_controller_verification_failure_protoco
     assert prompt_path is not None
     prompt = prompt_path.read_text(encoding='utf-8')
     assert 'Controller Verification Failure Protocol' in prompt
+    assert prompt.index('Previous controller failure feedback') < prompt.index(
+        'Current unit from approved Controller State Patch'
+    )
+    assert prompt.index('Controller Verification Failure Protocol') < prompt.index(
+        'Approved requirements gate'
+    )
+    assert 'Machine-readable DONE_FILE fields and stdout/stderr evidence markers are part of the contract' in prompt
+    assert 'writing marker names only inside JSON artifacts is not enough' in prompt
     assert 'failed command index: 2' in prompt
     assert f'exact failed command: {failed_command}' in prompt
     assert f'controller cwd: {tmp_path}' in prompt

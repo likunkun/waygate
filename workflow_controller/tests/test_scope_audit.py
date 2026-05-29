@@ -162,6 +162,37 @@ def test_scope_audit_writes_json_and_markdown_with_manual_evidence_rules(tmp_pat
         validate_final_scope_audit(audit)
 
 
+def test_scope_audit_records_coverage_status_separately_from_ledger_status(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    requirements_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    _write_requirements(requirements_path, ['AC-1', 'AC-2'])
+    _write_unit_artifacts(
+        artifacts_dir,
+        [
+            _passed_row('AC-1', ['AO-001']),
+            _manual_row('AC-2', [], 'Manual approval recorded.', []),
+        ],
+    )
+
+    audit = write_final_scope_audit(
+        _final_acceptance_state(),
+        artifacts_dir,
+        requirements_path=requirements_path,
+    )
+
+    items = {item['id']: item for item in audit['ao_coverage']['required_items']}
+    assert items['AO-001']['status'] == 'open'
+    assert items['AO-001']['ledger_status'] == 'open'
+    assert items['AO-001']['coverage_status'] == 'covered'
+    assert items['AO-002']['status'] == 'open'
+    assert items['AO-002']['coverage_status'] == 'uncovered'
+
+    markdown = (artifacts_dir / 'final-scope-audit' / 'scope-audit.md').read_text(encoding='utf-8')
+    assert '| AO | Ledger Status | Coverage Status | Evidence |' in markdown
+    assert '| AO-001 Delivery is visible | open | covered | `pytest tests/test_delivery.py -q` |' in markdown
+    assert '| AO-002 Manual acceptance recorded | open | uncovered | missing |' in markdown
+
+
 def test_scope_audit_rejects_needs_human_review_as_ac_coverage(tmp_path: Path) -> None:
     artifacts_dir = tmp_path / 'artifacts'
     requirements_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
@@ -183,6 +214,39 @@ def test_scope_audit_rejects_needs_human_review_as_ac_coverage(tmp_path: Path) -
     assert audit['ac_coverage']['uncovered_ids'] == ['AC-1']
     with pytest.raises(ValueError, match='AC-1'):
         validate_final_scope_audit(audit)
+
+
+def test_scope_audit_ignores_wildcard_ac_placeholders_in_requirement_tables(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    requirements_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    ac_ids = [f'AC-V04-{index:03d}' for index in range(1, 15)]
+    requirements_path.parent.mkdir(parents=True, exist_ok=True)
+    write_gate_file(
+        requirements_path,
+        '# Requirements & Acceptance Confirmation\n\n'
+        '## Acceptance Criteria\n\n'
+        + '\n'.join(f'- {ac_id} [verification: e2e] classroom V0.4 requirement' for ac_id in ac_ids)
+        + '\n\n'
+        '## Traceability Notes\n\n'
+        '| Pattern | Meaning |\n'
+        '| --- | --- |\n'
+        '| `AC-V04-*` | All V0.4 acceptance criteria in this package. |\n',
+    )
+    approve_gate_file(requirements_path, actor='tester')
+    _write_unit_artifacts(artifacts_dir, [_passed_row(ac_id, []) for ac_id in ac_ids])
+    state = _final_acceptance_state()
+    state['acceptanceObligations'] = []
+
+    audit = write_final_scope_audit(
+        state,
+        artifacts_dir,
+        requirements_path=requirements_path,
+    )
+
+    assert audit['ac_coverage']['required_ids'] == ac_ids
+    assert 'AC-V04' not in audit['ac_coverage']['required_ids']
+    assert audit['ac_coverage']['uncovered_ids'] == []
+    validate_final_scope_audit(audit)
 
 
 def test_final_acceptance_gate_renders_final_scope_audit_summary(tmp_path: Path) -> None:

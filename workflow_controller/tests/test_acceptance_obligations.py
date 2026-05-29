@@ -1437,6 +1437,23 @@ def test_requirements_e2e_review_matrix_accepts_complete_ac_and_journey_row(tmp_
     validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
 
 
+def test_requirements_e2e_review_matrix_accepts_command_intent_without_exact_command(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(
+                command=(
+                    'Unit Plan must create Go service/API E2E command for services/api '
+                    'real OpenMAIC PDF integration'
+                )
+            )
+        ),
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
 def test_requirements_e2e_review_matrix_requires_rows_for_e2e_ac_and_journey(tmp_path: Path) -> None:
     gate = tmp_path / 'requirements-and-acceptance.md'
     gate.write_text(
@@ -1476,6 +1493,30 @@ def test_requirements_e2e_review_matrix_rejects_incomplete_or_non_real_rows(
     )
 
     with pytest.raises(ValueError, match=expected_issue):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        '待 Unit Plan 补充',
+        'pytest',
+        '后续测试验证',
+    ],
+)
+def test_requirements_e2e_review_matrix_rejects_placeholder_or_generic_command_intent(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(command=command)
+        ),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='non-placeholder verification command intent'):
         validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
 
 

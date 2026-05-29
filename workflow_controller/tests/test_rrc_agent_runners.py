@@ -1399,6 +1399,56 @@ def test_make_runner_disables_initial_clear_for_auto_created_requirements_pane()
     assert runner.env['WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG'] == '1'
 
 
+def test_make_runner_disables_initial_clear_for_auto_created_staged_scope_pane() -> None:
+    runner = make_runner({
+        'agentRunner': 'tmux-claude',
+        'tmuxTarget': '%24',
+        'currentStep': 'REQUIREMENTS_SCOPE_DRAFT',
+        'requirementsPackage': {
+            'version': 'v0.6.2-staged',
+            'artifacts': {},
+        },
+        'tmuxTargetResolution': {'source': 'auto-created'},
+    })
+
+    assert runner.env['WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH'] == '0'
+    assert runner.env['RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS'] == '2.0'
+    assert runner.env['WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG'] == '1'
+
+
+def test_make_runner_keeps_clear_for_completed_staged_scope_artifact() -> None:
+    runner = make_runner({
+        'agentRunner': 'tmux-claude',
+        'tmuxTarget': '%24',
+        'currentStep': 'REQUIREMENTS_SCOPE_DRAFT',
+        'requirementsPackage': {
+            'version': 'v0.6.2-staged',
+            'artifacts': {
+                'scope': {'status': 'complete'},
+            },
+        },
+        'tmuxTargetResolution': {'source': 'auto-created'},
+    })
+
+    assert runner.env == {}
+
+
+def test_make_runner_does_not_disable_initial_clear_for_tmux_codex() -> None:
+    runner = make_runner({
+        'agentRunner': 'tmux-codex',
+        'tmuxTarget': '%24',
+        'currentStep': 'REQUIREMENTS_SCOPE_DRAFT',
+        'requirementsPackage': {
+            'version': 'v0.6.2-staged',
+            'artifacts': {},
+        },
+        'tmuxTargetResolution': {'source': 'auto-created'},
+    })
+
+    assert runner.backend == 'tmux-codex'
+    assert runner.env == {}
+
+
 def test_make_runner_defaults_test_strategist_to_codex_subprocess() -> None:
     runner = make_runner({}, role='test_strategist')
 

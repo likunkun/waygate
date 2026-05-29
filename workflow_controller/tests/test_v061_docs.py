@@ -108,26 +108,32 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
         'Infrastructure / Execution Context Matrix',
         'downstream invalidation',
         'requirements_annotation',
+        'requirementsSurfaceClassification',
+        'target product UX',
     ]:
         assert expected in workflow_doc
 
     for expected in [
         'workflow_controller/requirements_package.py',
+        'workflow_controller/requirements_surface.py',
         'workflow_controller/prompts/requirements_package.py',
         'workflow_controller/steps/requirements_package.py',
         'workflow_controller/rrc_controller.py',
         'validate_staged_requirements_package_consistency',
         'Unit Plan prompt',
         'artifact path/hash/status',
+        'requirementsSurfaceClassification',
     ]:
         assert expected in architecture_doc
 
     assert 'docs/workflow/staged-requirements-package-policy.md' in registry
     assert 'docs/architecture/staged-requirements-package-architecture.md' in registry
     assert 'V0.6.2 - Staged Requirements Package' in roadmap
+    assert 'V0.6.2a - Staged Requirements Target Product Perspective' in roadmap
     assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap
     assert 'Merge the original V0.6.2 Strict Test Presence scope into V0.6.3.' in roadmap
     assert 'V0.6.2 - Staged Requirements Package' in roadmap_zh
+    assert 'V0.6.2a - Staged Requirements 目标产品视角修复' in roadmap_zh
     assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap_zh
     assert '原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。' in roadmap_zh
 

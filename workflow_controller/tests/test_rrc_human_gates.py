@@ -376,7 +376,7 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '`fixture`' in unit_plan_prompt
     assert '`product_design_refs`' in unit_plan_prompt
     assert '`technical_architecture_refs`' in unit_plan_prompt
-    assert '沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图' in unit_plan_prompt
+    assert '沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令意图、环境类型、mock policy 和断言意图' in unit_plan_prompt
     assert '`golden_path: true` 必须同时声明 `layer: "e2e"`' in unit_plan_prompt
     assert 'API-only 或 service-only 项目的 golden path 可以使用 pytest/API/service E2E' in unit_plan_prompt
     assert '测试命令退出码为 0 且断言覆盖 AC' in unit_plan_prompt
@@ -1020,9 +1020,13 @@ def test_controller_generated_gate_bodies_are_chinese_first(tmp_path: Path) -> N
 
 
 def _generate_requirements_gate(state_dir: Path) -> None:
-    draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
-    assert draft_result.returncode == 0, draft_result.stderr
-    assert 'currentStep=WAITING_REQUIREMENTS_ACCEPTANCE' in draft_result.stdout
+    for _ in range(5):
+        draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
+        assert draft_result.returncode == 0, draft_result.stderr
+        if 'currentStep=WAITING_REQUIREMENTS_ACCEPTANCE' in draft_result.stdout:
+            break
+    else:
+        raise AssertionError(f'Requirements gate was not generated:\n{draft_result.stdout}')
     gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     assert gate_path.exists()
     _write_valid_requirements_infrastructure_section(gate_path)
@@ -1055,6 +1059,17 @@ def _write_valid_requirements_infrastructure_section(gate_path: Path) -> None:
     gate_path.write_text(content, encoding='utf-8')
 
 
+def _force_legacy_requirements_entry(state_dir: Path) -> None:
+    session_path = state_dir / 'session.json'
+    state = json.loads(session_path.read_text(encoding='utf-8'))
+    state['currentStep'] = 'REQUIREMENTS_DRAFT'
+    state['nextAllowedActions'] = ['run_requirements_drafter']
+    state['requirementsDraftGenerated'] = False
+    state.pop('stagedRequirementsEnabled', None)
+    state.pop('requirementsPackage', None)
+    session_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
 def test_target_init_requires_requirements_acceptance_gate(tmp_path: Path) -> None:
     workspace, _ = _make_target_workspace(tmp_path)
     state_dir = tmp_path / '.rrc-controller'
@@ -1073,12 +1088,14 @@ def test_target_init_requires_requirements_acceptance_gate(tmp_path: Path) -> No
     )
 
     assert result.returncode == 0, result.stderr
-    assert 'currentStep=REQUIREMENTS_DRAFT' in result.stdout
-    assert 'nextAction=run_requirements_drafter' in result.stdout
+    assert 'currentStep=REQUIREMENTS_SCOPE_DRAFT' in result.stdout
+    assert 'nextAction=run_requirements_scope_drafter' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['humanGatesRequired'] is True
     assert state['requirementsDraftGenerated'] is False
     assert state['requirementsAccepted'] is False
+    assert state['stagedRequirementsEnabled'] is True
+    assert state['requirementsPackage'] == {'version': 'v0.6.2-staged', 'artifacts': {}}
     assert not (state_dir / 'approvals' / 'requirements-and-acceptance.md').exists()
 
 
@@ -1100,9 +1117,9 @@ def test_auto_approve_does_not_skip_requirements_acceptance_gate(tmp_path: Path)
     )
     assert init_result.returncode == 0, init_result.stderr
 
-    result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
-
-    assert result.returncode == 0, result.stderr
+    for _ in range(5):
+        result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
+        assert result.returncode == 0, result.stderr
     assert 'currentStep=WAITING_REQUIREMENTS_ACCEPTANCE' in result.stdout
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
     assert state['requirementsAccepted'] is False
@@ -1160,6 +1177,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
 
     result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
 
@@ -1243,6 +1261,7 @@ raise SystemExit(0)
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
     draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
     assert draft_result.returncode == 0, draft_result.stderr
 
@@ -1401,6 +1420,7 @@ raise SystemExit(0)
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
     draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
     assert draft_result.returncode == 0, draft_result.stderr
 
@@ -1502,6 +1522,7 @@ raise SystemExit(0)
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
     draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
     assert draft_result.returncode == 0, draft_result.stderr
 
@@ -1603,6 +1624,7 @@ raise SystemExit(0)
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
     draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
     assert draft_result.returncode == 0, draft_result.stderr
 
@@ -1659,6 +1681,7 @@ def test_revise_requirements_gate_can_rewind_from_unit_plan_approval(tmp_path: P
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
     _generate_requirements_gate(state_dir)
     approve_gate_file(state_dir / 'approvals' / 'requirements-and-acceptance.md', actor='tester')
     req_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
@@ -1879,6 +1902,69 @@ def test_revise_requirements_gate_rejects_direct_final_acceptance_rewind(tmp_pat
     assert 'Traceback' not in result.stderr
 
 
+def test_revise_requirements_gate_allows_final_scope_audit_blocker_from_walkthrough_prepare(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / '.rrc-controller'
+    controller = RalphRefinerController(state_dir=state_dir, dry_run=True, auto_approve=True)
+    state = _staged_requirements_state(tmp_path)
+    state.update({
+        'task_id': 'target-v0-4',
+        'currentUnitId': 'target-v0-4',
+        'currentStep': 'FINAL_WALKTHROUGH_PREPARE',
+        'lastVerifiedStep': 'VERIFY_UNIT',
+        'status': 'blocked',
+        'blockedReason': (
+            'final acceptance gate invalid: final scope audit has blocker(s): '
+            'approved acceptance criterion AC-V04 has no passed or valid manual evidence row'
+        ),
+        'stagedRequirementsEnabled': True,
+        'scopeApproved': True,
+        'requirementsAccepted': True,
+        'requirementsAcceptedHash': 'sha256:req',
+        'requirementsAcceptedBy': 'tester',
+        'unitPlanAccepted': True,
+        'unitPlanAcceptedHash': 'sha256:plan',
+        'unitPlanAcceptedBy': 'tester',
+        'finalAcceptanceAccepted': False,
+        'units': [{'id': 'target-v0-4', 'name': 'V0.4', 'passes': True}],
+        'objectiveCoverage': [
+            {'objective': 'Complete classroom V0.4 acceptance', 'units': ['target-v0-4'], 'status': 'covered'},
+        ],
+    })
+    controller.init_state(state, force=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    write_gate_file(
+        approvals_dir / 'requirements-and-acceptance.md',
+        render_staged_requirements_package_gate_body(state),
+    )
+    write_gate_file(approvals_dir / 'unit-plan.md', '# Unit Plan\n')
+
+    controller.revise_human_gate(
+        'requirements',
+        reason='产品设计需要以 classroom 目标产品为主语，并补清课程生产中心入口和状态回看。',
+    )
+
+    revised = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert revised['currentStep'] == 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF'
+    assert revised['nextAllowedActions'] == ['run_requirements_product_design_brief']
+    assert revised['requirementsAccepted'] is False
+    assert revised['unitPlanAccepted'] is False
+    assert 'requirementsAcceptedHash' not in revised
+    assert 'unitPlanAcceptedHash' not in revised
+    assert revised['status'] == 'active'
+    assert revised.get('blockedReason') is None
+    assert 'Approved Requirements Change Context' in revised['requirementsRevisionFeedback']
+    assert '课程生产中心入口' in revised['requirementsRevisionFeedback']
+    artifacts = revised['requirementsPackage']['artifacts']
+    assert artifacts['scope']['status'] == 'complete'
+    assert artifacts['product_design']['status'] == 'stale'
+    assert artifacts['architecture']['status'] == 'stale'
+    assert artifacts['test_strategy']['status'] == 'stale'
+    assert artifacts['final_gate']['status'] == 'stale'
+
+
 def test_revise_unit_plan_gate_reruns_tmux_drafter_with_human_feedback(tmp_path: Path) -> None:
     workspace, _ = _make_target_workspace(tmp_path)
     fake_tmux = tmp_path / 'tmux'
@@ -1973,6 +2059,7 @@ raise SystemExit(0)
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
     _generate_requirements_gate(state_dir)
     approve_gate_file(state_dir / 'approvals' / 'requirements-and-acceptance.md', actor='tester')
     req_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
@@ -3937,6 +4024,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
     _generate_requirements_gate(state_dir)
     approve_gate_file(state_dir / 'approvals' / 'requirements-and-acceptance.md', actor='tester')
 
@@ -4038,10 +4126,11 @@ def test_gate_approval_becomes_stale_when_content_changes(tmp_path: Path) -> Non
     _generate_requirements_gate(state_dir)
     gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     approve_gate_file(gate_path, actor='tester')
+    assert 'Requirements Scope Checkpoint' in gate_path.read_text(encoding='utf-8')
     gate_path.write_text(
         gate_path.read_text(encoding='utf-8').replace(
-            '需求描述准确。',
-            '需求描述已变更。',
+            'Requirements Scope Checkpoint',
+            'Requirements Scope Checkpoint 已变更',
         ),
         encoding='utf-8',
     )

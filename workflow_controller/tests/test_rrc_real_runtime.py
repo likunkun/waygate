@@ -37,6 +37,17 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding='utf-8')
 
 
+def _force_legacy_requirements_entry(state_dir: Path) -> None:
+    session_path = state_dir / 'session.json'
+    state = json.loads(session_path.read_text(encoding='utf-8'))
+    state['currentStep'] = 'REQUIREMENTS_DRAFT'
+    state['nextAllowedActions'] = ['run_requirements_drafter']
+    state['requirementsDraftGenerated'] = False
+    state.pop('stagedRequirementsEnabled', None)
+    state.pop('requirementsPackage', None)
+    session_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
 def test_init_with_target_creates_target_acceptance_unit_and_prompt(tmp_path: Path) -> None:
     workspace = tmp_path / 'courses'
     _write(workspace / 'task_plan.md', '# Target Plan\n\nV1.1 customer delivery/import acceptance.\n')
@@ -608,6 +619,7 @@ raise SystemExit(0)
         str(fake_tmux),
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
 
     draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
     assert draft_result.returncode == 0, draft_result.stderr
@@ -761,6 +773,42 @@ def test_run_verifier_records_failed_command_evidence_row(tmp_path: Path) -> Non
     assert verification['evidence_rows'][0]['status'] == 'failed'
     assert verification['evidence_rows'][0]['result_index'] == 0
     assert verification['evidence_rows'][0]['returncode'] == 7
+
+
+def test_run_verifier_fails_masked_shell_command_not_found(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    command = "sh -c 'printf \"sh: 1: rg: not found\\n\" >&2; exit 0'"
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'test_cases': [
+                    {
+                        'id': 'TC-MISSING-TOOL',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'static',
+                        'command': command,
+                        'expected': 'missing verification tools fail even when shell pipelines mask exit code',
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification failed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['passed'] is False
+    assert verification['results'][0]['returncode'] == 0
+    assert verification['results'][0]['ok'] is False
+    assert verification['results'][0]['controller_issue'] == 'missing executable reported by shell: rg'
+    assert verification['evidence_rows'][0]['status'] == 'failed'
 
 
 def test_run_verifier_marks_mocked_browser_e2e_evidence_invalid(tmp_path: Path) -> None:
