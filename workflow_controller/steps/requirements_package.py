@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from workflow_controller.gates.validators import validate_staged_requirements_stage_output
 from workflow_controller.prompts.requirements_package import (
     render_architecture_prompt,
     render_product_design_prompt,
@@ -15,6 +16,7 @@ from workflow_controller.requirements_package import (
 )
 from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
 from workflow_controller.runners.base import DEFAULT_AGENT_TIMEOUT_SECONDS
+from workflow_controller.requirements_surface import render_requirements_surface_classification_markdown
 from workflow_controller.steps._common import (
     RecoverableAgentWait,
     StepResult,
@@ -44,7 +46,6 @@ _PROMPT_RENDERERS: dict[str, Callable[[dict[str, Any], Path], str]] = {
     'test_strategy': lambda state, output_path: render_test_strategy_prompt(state, output_path=output_path),
 }
 
-
 def run_requirements_package_stage(
     state: dict[str, Any],
     artifacts_dir: Path,
@@ -66,6 +67,7 @@ def run_requirements_package_stage(
 
     if dry_run or state.get('agentRunner') not in {'tmux-claude', 'tmux-codex'}:
         artifact_path.write_text(_local_template_artifact(stage, state), encoding='utf-8')
+        _validate_stage_contract_outputs(state, artifacts_dir, stage)
         record = mark_stage_artifact(state, stage, artifact_path)
         _write_stage_summary(
             summary_path,
@@ -129,6 +131,7 @@ def run_requirements_package_stage(
     if not artifact_path.exists():
         raise FileNotFoundError(f'Requirements package stage {stage} did not write {artifact_path}')
 
+    _validate_stage_contract_outputs(state, artifacts_dir, stage)
     record = mark_stage_artifact(state, stage, artifact_path)
     summary_payload.update({
         'status': 'done',
@@ -163,6 +166,17 @@ def _write_stage_summary(
     })
 
 
+def _validate_stage_contract_outputs(state: dict[str, Any], artifacts_dir: Path, stage: str) -> None:
+    stage_dir = artifacts_dir / STAGE_ARTIFACT_DIRNAMES[stage]
+    artifact_path = stage_dir / STAGE_ARTIFACT_FILENAMES[stage]
+    validate_staged_requirements_stage_output(
+        state,
+        artifacts_dir,
+        stage,
+        artifact_path=artifact_path,
+    )
+
+
 def _local_template_artifact(stage: str, state: dict[str, Any]) -> str:
     stage_title = {
         'scope': 'Requirements Scope Checkpoint',
@@ -175,4 +189,10 @@ def _local_template_artifact(stage: str, state: dict[str, Any]) -> str:
         f'- Requested outcome: `{state.get("requestedOutcome")}`\n'
         f'- Current unit: `{state.get("currentUnitId")}`\n'
         f'- Stage: `{stage}`\n'
+        '\n'
+        '## Target Surface Classification\n\n'
+        f'{render_requirements_surface_classification_markdown(state)}\n'
+        '\n'
+        'If any classification value is `unknown`, this local template records the uncertainty for human review; '
+        'a real staged checkpoint should resolve it from spec, target context, or human feedback before implementation.\n'
     )

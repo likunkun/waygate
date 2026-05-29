@@ -23,7 +23,6 @@ from workflow_controller.gates.parsers import (
     gate_body,
     write_gate_file,
 )
-from workflow_controller.journeys import final_journey_matrix_rows
 from workflow_controller.prototype_review import prototype_conformance_matrix_rows
 from workflow_controller.scope_audit import final_scope_audit_gate_lines
 from workflow_controller.requirements_package import (
@@ -31,6 +30,7 @@ from workflow_controller.requirements_package import (
     STAGE_APPENDIX_TITLES,
     STAGE_LABELS,
     artifact_hash,
+    staged_requirements_enabled,
 )
 
 
@@ -237,7 +237,7 @@ def _requirements_summary_lines(state: dict[str, Any]) -> list[str]:
         '- 需求描述、用户旅程和验收标准是否准确。',
         '- 每条 AC 是否声明 verification layer，并能被测试或人工证据验证。',
         '- Product Design / Technical Architecture 引用是否足以支持后续执行。',
-        '- 若 Requirements 声明或隐含真实 E2E / 浏览器验收，是否已审阅 `## 4.6` 的 E2E 方法、真实入口、用户步骤、fixture/setup、命令、环境、mock policy 和断言。',
+        '- 若 Requirements 声明或隐含真实 E2E / 浏览器验收，是否已审阅 `## 4.6` 的 E2E 方法、真实入口、用户步骤、fixture/setup、命令意图、环境、mock policy 和断言意图。',
         '- Journey Acceptance Matrix 是否覆盖跨单元闭环；不涉及跨流程时确认其为空是合理的。',
         '- 若当前或后续目标涉及 UI/UX 或 Web，人工确认前必须审阅 prototype evidence、clickable webpage prototype、页面状态、核心点击路径、真实实现目标和 AC 映射；当前非 UI 单元也要明确记录不生成业务原型页面。',
         '',
@@ -320,7 +320,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '## 3. 验收标准',
         '',
         '- 每条验收标准应使用稳定 AC ID，并写明固定测试数据或 fixture、操作路径、可断言的期望值。',
-        '- 每条 AC 必须声明 verification layer：unit / functional / integration / e2e / manual，推荐格式：`AC-ID [verification: e2e]`。',
+        '- 每条 AC 必须声明 verification layer：常用行为验证层为 unit / functional / integration / e2e / manual；Requirements 辅助类 AC 也可使用 static / regression / prerequisite。推荐格式：`AC-ID [verification: e2e]`。',
         '- 用户可见闭环或数据流验收应能生成可执行 E2E 测试；截图或人工观察不能替代断言。',
     ]
     done_when = unit.get('done_when') or []
@@ -334,7 +334,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '',
         '- 每个 active must AO 必须映射到一个 AC，或显式标记为 `deferred` / `rejected` / `out_of_scope` 并写明原因。',
         '- Status 只能填写 covered/deferred/rejected/out_of_scope；covered 行必须填写 AC ID 和 Verification Layer。',
-        '- Verification Layer 只能填写 unit / functional / integration / e2e / manual。',
+        '- Verification Layer 必须填写非占位值：常用行为验证层为 unit / functional / integration / e2e / manual；Requirements 辅助类 AC 可使用 static / regression / prerequisite。',
         '',
         '| AO | AC | Status | Verification Layer | Evidence/Reason |',
         '| --- | --- | --- | --- | --- |',
@@ -363,7 +363,8 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）',
         '',
         '- 当任一 AC 为 `verification: e2e`、任一 active Journey 为 `e2e`、测试策略明确要求 Playwright/browser/API/service end-to-end，或 Web/原型/UI 合约需要真实浏览器证明时，本节必须填写并供人工批准前审阅。',
-        '- 每个 e2e AC 和每个 active e2e Journey 必须有对应行；API-only/service-only 项目可以使用 pytest/API/service E2E，不要求浏览器；不涉及真实 E2E 时，可以保留表头并说明不适用。',
+        '- 每个 active e2e Journey 必须有对应行；e2e AC 如果已被 active e2e Journey 行覆盖，不需要重复独立行；API-only/service-only 项目可以使用 pytest/API/service E2E，不要求浏览器；不涉及真实 E2E 时，可以保留表头并说明不适用。',
+        '- Verification Command 列填写命令意图、command family 或 runner intent，不写最终 exact command；Unit Plan 才负责具体 test case、exact command 和 fixture 初始化脚本。',
         '- Environment Kind 只能使用 `local_real|production_readonly`（即 `local_real` 或 `production_readonly`）；Required Env / Dependencies 只写 env key、服务或依赖名称，不写 secret 值。',
         '- Mock Policy 必须声明核心业务 API 不得 mock/stub；截图只能作为辅助 artifact，不能作为唯一断言。',
         '',
@@ -373,7 +374,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '## 4.7 Journey Acceptance Matrix',
         '',
         '- e2e 或 closure 验收必须至少有一行 active Journey；Unit Plan 中 active e2e Journey 必须映射到 `layer=e2e` test case，不涉及时可以只保留表头。',
-        '- Steps 使用 `->` 分隔关键路径步骤；AC 填关联 AC ID；Verification Layer 只能使用 functional / integration / e2e / manual。',
+        '- Steps 使用 `->` 分隔关键路径步骤；AC 填关联 AC ID；Verification Layer 常用 functional / integration / e2e / manual；support/baseline/prerequisite Journey 可使用 static / regression / prerequisite。',
         '',
         '| Journey | Title | Status | Steps | AC | Verification Layer | Verification Command | Test Case | Unit |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
@@ -428,7 +429,7 @@ def _requirements_body(state: dict[str, Any]) -> str:
         '- [ ] 验收标准足以判断是否完成。',
         '- [ ] 每条 AC 都声明了 verification layer。',
         '- [ ] 每个 active must AO 都映射到 AC，或已明确 deferred/rejected/out_of_scope 及原因。',
-        '- [ ] 如存在真实 E2E / 浏览器验收，4.6 已列出 AC/Journey 对应的真实入口、用户步骤、fixture/setup、命令、环境、mock policy 和可机器断言的期望。',
+        '- [ ] 如存在真实 E2E / 浏览器验收，4.6 已列出 AC/Journey 对应的真实入口、用户步骤、fixture/setup、命令意图、环境、mock policy 和可机器断言的期望。',
         '- [ ] 测试策略足以验证请求目标。',
         '- [ ] 产品设计概要足以帮助评审者形成具体产品形态认知。',
         '- [ ] 架构概要足以帮助评审者理解模块边界、数据流和主要风险。',
@@ -521,7 +522,7 @@ def _v0_6_0_requirements_body(state: dict[str, Any]) -> str:
         '',
         '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）',
         '',
-        'V0.6.0 本身是 controller policy work；如果目标项目 Requirements 声明真实 E2E / 浏览器验收，则人工批准前必须填写本矩阵并审阅真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图。',
+        'V0.6.0 本身是 controller policy work；如果目标项目 Requirements 声明真实 E2E / 浏览器验收，则人工批准前必须填写本矩阵并审阅真实入口、fixture/setup、命令意图、环境类型、mock policy 和断言意图；具体 exact command 由 Unit Plan 承接。',
         '',
         '| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
@@ -684,6 +685,23 @@ def _unit_plan_body(state: dict[str, Any]) -> str:
         '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |',
         '|---|---|---|---|---|',
         document_deliverable_row,
+    ])
+    if staged_requirements_enabled(state):
+        lines.extend([
+            '',
+            '## Infrastructure / Execution Context Matrix',
+            '',
+            '| 类别 | 事实 | 来源 | Unit Plan 消费方式 |',
+            '| --- | --- | --- | --- |',
+            f"| 代码仓库 | workspace `{state.get('workspacePath') or '未指定'}` 与 state-dir artifacts | staged Requirements package | Builder scope and artifact lookup |",
+            '| 项目部署运行时环境 | 本地 Python/pytest/runner 环境，具体命令由 verification_commands 声明 | Requirements Test Strategy Brief | verifier execution context |',
+            '| 调试分析方法 | session.json、events.jsonl、runner stdout/stderr、verification artifacts | AGENTS.md / docs/README.md | failure triage |',
+            '| 参考环境 | 当前 controller workspace 与 staged Requirements artifacts | Requirements package artifact hashes | acceptance comparison baseline |',
+            '| 文档地址 | docs/README.md、ROADMAP.md、task_plan.md、progress.md、findings.md | formal docs registry and process records | documentation scope check |',
+            '| 架构/交互逻辑/接口说明 | controller state machine、gates、runners、requirements package modules | Architecture Brief | implementation boundary and review focus |',
+            '| 依赖信息 | Python stdlib、pytest、tmux/subprocess runner、shell runtime | Test Strategy Brief / local environment | dependency and command readiness check |',
+        ])
+    lines.extend([
         '',
         '## 附录 D：执行单元',
     ])
@@ -1083,6 +1101,8 @@ def _visual_prototype_evidence_lines(rows: list[dict[str, Any]]) -> list[str]:
 
 
 def _journey_matrix_lines(state: dict[str, Any], artifacts_dir: Path) -> list[str]:
+    from workflow_controller.journeys import final_journey_matrix_rows
+
     rows = final_journey_matrix_rows(state, artifacts_dir)
     if not rows:
         return []

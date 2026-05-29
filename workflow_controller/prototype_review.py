@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import html
+import errno
 import mimetypes
 import os
 import posixpath
@@ -23,6 +24,7 @@ from workflow_controller.evidence_policy import (
     visual_evidence_issue,
 )
 from workflow_controller.networking import browser_display_host, url_host
+from workflow_controller.requirements_ids import acceptance_criterion_ids_in_text
 
 
 PROTOTYPE_REVIEW_VERSION = 'v0.6.0b'
@@ -63,6 +65,7 @@ SENSITIVE_QUERY_KEYS = {
     'sig',
     'token',
 }
+_APPROVAL_GATE_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -79,13 +82,20 @@ class PrototypePreviewServer:
     httpd: ThreadingHTTPServer
     thread: threading.Thread
     base_url: str
+    port: int
     review_name: str = REVIEW_BUNDLE_NAME
+    allowed_paths: dict[str, Path] | None = None
+    prototypes_root: Path | None = None
+    closed: bool = False
 
     @property
     def preview_url(self) -> str:
         return f'{self.base_url}/{self.review_name}'
 
     def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=2)
@@ -95,9 +105,15 @@ def prepare_prototype_review_bundle(
     *,
     artifacts_dir: Path,
     requirements_path: Path,
+    approval_gate_path: Path | None | object = _APPROVAL_GATE_UNSET,
     state: dict[str, Any] | None = None,
 ) -> PrototypeReviewBundle | None:
     del state
+    resolved_approval_gate_path = (
+        requirements_path
+        if approval_gate_path is _APPROVAL_GATE_UNSET
+        else approval_gate_path
+    )
     draft_dir = artifacts_dir / 'requirements-draft'
     source_manifest_path = draft_dir / SOURCE_MANIFEST_NAME
     if not source_manifest_path.exists():
@@ -116,18 +132,30 @@ def prepare_prototype_review_bundle(
     html_review_path = draft_dir / REVIEW_BUNDLE_HTML_NAME
     normalized['review_bundle_path'] = str(review_path)
     normalized['review_html_path'] = str(html_review_path)
-    normalized['approval_gate_path'] = str(requirements_path)
+    normalized['requirements_reference_path'] = str(requirements_path)
+    if resolved_approval_gate_path is not None:
+        normalized['approval_gate_path'] = str(resolved_approval_gate_path)
+    else:
+        normalized.pop('approval_gate_path', None)
     normalized['prototypes_dir'] = str(prototypes_dir)
     review_manifest_path.write_text(
         json.dumps(normalized, ensure_ascii=False, indent=2) + '\n',
         encoding='utf-8',
     )
     review_path.write_text(
-        render_prototype_review_markdown(normalized, requirements_path=requirements_path),
+        render_prototype_review_markdown(
+            normalized,
+            requirements_path=requirements_path,
+            approval_gate_path=resolved_approval_gate_path if isinstance(resolved_approval_gate_path, Path) else None,
+        ),
         encoding='utf-8',
     )
     html_review_path.write_text(
-        render_prototype_review_html(normalized, requirements_path=requirements_path),
+        render_prototype_review_html(
+            normalized,
+            requirements_path=requirements_path,
+            approval_gate_path=resolved_approval_gate_path if isinstance(resolved_approval_gate_path, Path) else None,
+        ),
         encoding='utf-8',
     )
     return PrototypeReviewBundle(
@@ -181,12 +209,22 @@ def render_prototype_review_markdown(
     normalized_manifest: dict[str, Any],
     *,
     requirements_path: Path,
+    approval_gate_path: Path | None = None,
 ) -> str:
     prototypes = normalized_manifest.get('prototypes') if isinstance(normalized_manifest.get('prototypes'), list) else []
+    metadata_lines = [f'- Reference requirements source: `{requirements_path}`']
+    if approval_gate_path is not None:
+        metadata_lines.append(f'- Approval gate: `{approval_gate_path}`')
+        approval_instruction = f'Approve or request changes on `{approval_gate_path}` after reviewing this bundle.'
+    else:
+        approval_instruction = (
+            f'Use `{requirements_path}` as the current staged requirements reference; '
+            'the final Requirements approval gate has not been assembled yet.'
+        )
     lines = [
         '# Prototype Review Bundle for Plannotator',
         '',
-        f'- Approval gate: `{requirements_path}`',
+        *metadata_lines,
         f"- Source manifest: `{normalized_manifest.get('source_manifest') or '-'}`",
         f"- Normalized manifest: `{normalized_manifest.get('review_manifest_path') or REVIEW_MANIFEST_NAME}`",
         '',
@@ -245,7 +283,7 @@ def render_prototype_review_markdown(
         '',
         '## Approval Gate',
         '',
-        f'Approve or request changes on `{requirements_path}` after reviewing this bundle.',
+        approval_instruction,
     ])
     return '\n'.join(lines).rstrip() + '\n'
 
@@ -290,6 +328,7 @@ def render_prototype_review_html(
     normalized_manifest: dict[str, Any],
     *,
     requirements_path: Path,
+    approval_gate_path: Path | None = None,
 ) -> str:
     prototypes = normalized_manifest.get('prototypes') if isinstance(normalized_manifest.get('prototypes'), list) else []
     rows: list[str] = []
@@ -352,6 +391,18 @@ def render_prototype_review_html(
         previews.append('<p class="muted">No renderable local prototype previews declared.</p>')
     if not surface_rows:
         surface_rows.append('<tr><td colspan="9">No surface contracts declared.</td></tr>')
+    approval_meta = f'<p class="meta">Reference requirements source: <code>{html.escape(str(requirements_path))}</code></p>'
+    if approval_gate_path is not None:
+        approval_meta += f'\n    <p class="meta">Approval gate: <code>{html.escape(str(approval_gate_path))}</code></p>'
+        approval_instruction = (
+            f'Approve or request changes on <code>{html.escape(str(approval_gate_path))}</code> '
+            'after reviewing this rendered bundle.'
+        )
+    else:
+        approval_instruction = (
+            f'Use <code>{html.escape(str(requirements_path))}</code> as the current staged requirements reference; '
+            'the final Requirements approval gate has not been assembled yet.'
+        )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -377,7 +428,7 @@ def render_prototype_review_html(
 <body>
   <main>
     <h1>Prototype Review Bundle for Plannotator</h1>
-    <p class="meta">Approval gate: <code>{html.escape(str(requirements_path))}</code></p>
+    {approval_meta}
     <p class="meta">Source manifest: <code>{html.escape(str(normalized_manifest.get('source_manifest') or '-'))}</code></p>
 
     <section>
@@ -417,7 +468,7 @@ def render_prototype_review_html(
 
     <section>
       <h2>Approval Gate</h2>
-      <p>Approve or request changes on <code>{html.escape(str(requirements_path))}</code> after reviewing this rendered bundle.</p>
+      <p>{approval_instruction}</p>
     </section>
   </main>
 </body>
@@ -430,15 +481,16 @@ def start_prototype_review_preview_server(
     review_path: Path,
     manifest_path: Path,
     prototypes_dir: Path,
-    approval_gate_path: Path,
+    approval_gate_path: Path | None = None,
     host: str | None = None,
     port: int | None = None,
 ) -> PrototypePreviewServer:
     allowed = {
         f'/{review_path.name}': review_path.resolve(),
         f'/{REVIEW_MANIFEST_NAME}': manifest_path.resolve(),
-        '/requirements-and-acceptance.md': approval_gate_path.resolve(),
     }
+    if approval_gate_path is not None:
+        allowed['/requirements-and-acceptance.md'] = approval_gate_path.resolve()
     for sibling_name in {REVIEW_BUNDLE_NAME, REVIEW_BUNDLE_HTML_NAME}:
         sibling = review_path.parent / sibling_name
         if sibling.exists() and sibling.is_file():
@@ -469,7 +521,7 @@ def start_prototype_review_preview_server(
 
     bind_host = (host or os.environ.get('WAYGATE_PREVIEW_HOST') or '0.0.0.0').strip() or '0.0.0.0'
     bind_port = _prototype_preview_port(port)
-    httpd = ThreadingHTTPServer((bind_host, bind_port), Handler)
+    httpd = _bind_preview_http_server(bind_host, bind_port, Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     _server_host, port = httpd.server_address[:2]
@@ -478,8 +530,26 @@ def start_prototype_review_preview_server(
         httpd=httpd,
         thread=thread,
         base_url=f'http://{display_host}:{port}',
+        port=int(port),
         review_name=review_path.name,
+        allowed_paths=allowed,
+        prototypes_root=prototypes_root,
     )
+
+
+def _bind_preview_http_server(
+    bind_host: str,
+    start_port: int,
+    handler: type[BaseHTTPRequestHandler],
+) -> ThreadingHTTPServer:
+    port = start_port
+    while True:
+        try:
+            return ThreadingHTTPServer((bind_host, port), handler)
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE or start_port == 0 or port >= 65535:
+                raise
+            port += 1
 
 
 def _prototype_preview_port(explicit_port: int | None = None) -> int:
@@ -1352,14 +1422,7 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
 def _requirements_ac_ids(requirements_path: Path) -> set[str]:
     if not requirements_path.exists():
         return set()
-    return {
-        match.group(0).upper()
-        for match in re.finditer(
-            r'\bAC-\d+(?:[-.]\d+)*\b',
-            _gate_body(requirements_path.read_text(encoding='utf-8')),
-            re.IGNORECASE,
-        )
-    }
+    return acceptance_criterion_ids_in_text(_gate_body(requirements_path.read_text(encoding='utf-8')))
 
 
 def _gate_body(content: str) -> str:

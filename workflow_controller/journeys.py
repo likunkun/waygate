@@ -7,25 +7,49 @@ from pathlib import Path
 from typing import Any
 
 from workflow_controller.gates.parsers import _unit_test_cases, gate_body, hash_gate_body
+from workflow_controller.requirements_ids import ordered_acceptance_criterion_ids_in_text
 
 
 JOURNEY_CONTRACT_VERSION = 1
 ALLOWED_JOURNEY_STATUSES = {'active', 'deferred', 'rejected', 'out_of_scope'}
-ALLOWED_JOURNEY_LAYERS = {'functional', 'integration', 'e2e', 'manual'}
+ALLOWED_JOURNEY_LAYERS = {'functional', 'integration', 'e2e', 'manual', 'static', 'regression', 'prerequisite'}
 JOURNEY_ID_HEADERS = ('journey', 'journey id', 'journey_id', '旅程', '旅程 id')
-JOURNEY_VALUE_ID_HEADERS = ('journey', 'journey id', 'journey_id', 'id', '旅程', '旅程 id')
+JOURNEY_VALUE_ID_HEADERS = ('journey id', 'journey_id', 'id', '旅程 id', 'journey', '旅程')
 JOURNEY_TITLE_HEADERS = ('title', 'name', '标题', '名称')
 JOURNEY_STATUS_HEADERS = ('status', '状态')
-JOURNEY_STEPS_HEADERS = ('steps', 'step', '路径', '步骤')
+JOURNEY_STEPS_HEADERS = (
+    'steps',
+    'step',
+    'user steps',
+    'user step',
+    'journey steps',
+    'acceptance contract',
+    'path / assertion focus',
+    'path/assertion focus',
+    'path and assertion focus',
+    '路径',
+    '步骤',
+    '用户步骤',
+    '用户路径',
+    '验收合同',
+    '验收契约',
+    '路径 / 断言焦点',
+    '路径/断言焦点',
+)
 JOURNEY_AC_HEADERS = (
     'ac',
     'acs',
     'acceptance criteria',
     'acceptance criterion',
     'linked ac',
+    'linked acs',
+    'linked acceptance criteria',
+    'linked acceptance criterion',
+    '关联 ac',
+    '关联验收标准',
     '验收标准',
 )
-JOURNEY_LAYER_HEADERS = ('verification layer', 'layer', '验证层级')
+JOURNEY_LAYER_HEADERS = ('verification layer', 'verification', 'layer', '验证层级', '验证方式')
 JOURNEY_COMMAND_HEADERS = ('verification command', 'command', '命令')
 JOURNEY_TEST_CASE_HEADERS = ('test case', 'test cases', 'tc', '测试用例')
 JOURNEY_UNIT_HEADERS = ('unit', 'units', 'linked units', '单元')
@@ -272,8 +296,34 @@ def _is_e2e_layer_value(value: str) -> bool:
     return normalized in {'e2e', 'end-to-end', 'end to end'}
 
 
+def _normalize_journey_layer(value: str) -> str | None:
+    normalized = re.sub(r'[\s`*_，。:：;；]+', ' ', str(value or '').strip().lower()).strip()
+    if not normalized:
+        return None
+    aliases = {
+        'functional': ('functional', 'api', 'api test', 'api tests', '功能', '功能测试', '接口', '接口测试'),
+        'integration': ('integration', 'integration test', 'integration tests', '集成', '集成测试'),
+        'static': ('static', 'static check', 'static checks', 'static review', '静态', '静态检查', '静态审查'),
+        'regression': ('regression', 'regression test', 'regression tests', '回归', '回归测试'),
+        'prerequisite': ('prerequisite', 'prerequisites', 'prereq', 'prereqs', '前置', '前置条件', '前置依赖'),
+        'e2e': ('e2e', 'end-to-end', 'end to end', '端到端'),
+        'manual': ('manual', 'manual acceptance', 'uat', '人工', '人工验收', '手工'),
+    }
+    for layer, candidates in aliases.items():
+        if normalized in candidates:
+            return layer
+    for layer, candidates in aliases.items():
+        if any(
+            re.search(rf'\b{re.escape(candidate)}\b', normalized)
+            for candidate in candidates
+            if re.match(r'^[a-z0-9 -]+$', candidate)
+        ):
+            return layer
+    return None
+
+
 def _actual_ac_ids_from_text(value: str) -> list[str]:
-    return _ids_from_text(value, r'(?<![A-Za-z0-9_-])AC-\d+(?:[-.]\d+)*')
+    return ordered_acceptance_criterion_ids_in_text(value)
 
 
 def extract_requirement_journeys(requirements_body: str) -> list[dict[str, Any]]:
@@ -285,7 +335,7 @@ def extract_requirement_journeys(requirements_body: str) -> list[dict[str, Any]]
         status = (_first_value(row, *JOURNEY_STATUS_HEADERS) or 'active').lower()
         steps = _split_steps(_first_value(row, *JOURNEY_STEPS_HEADERS) or '')
         ac_cell = _first_value(row, *JOURNEY_AC_HEADERS) or ''
-        layer = (_first_value(row, *JOURNEY_LAYER_HEADERS) or '').lower()
+        layer = _normalize_journey_layer(_first_value(row, *JOURNEY_LAYER_HEADERS) or '') or ''
         command = _first_value(row, *JOURNEY_COMMAND_HEADERS)
         test_cases = _ids_from_text(
             _first_value(row, *JOURNEY_TEST_CASE_HEADERS) or '',
@@ -306,7 +356,65 @@ def extract_requirement_journeys(requirements_body: str) -> list[dict[str, Any]]
             'verification_command': command,
             'test_cases': test_cases,
         })
-    return journeys
+    return _merge_duplicate_journeys(journeys)
+
+
+def _merge_duplicate_journeys(journeys: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    for journey in journeys:
+        journey_id = str(journey.get('journey_id') or '').strip()
+        if not journey_id:
+            merged.append(journey)
+            continue
+        existing = by_id.get(journey_id)
+        if existing is None:
+            by_id[journey_id] = journey
+            merged.append(journey)
+            continue
+        _merge_journey_row(existing, journey)
+    return merged
+
+
+def _merge_journey_row(existing: dict[str, Any], incoming: dict[str, Any]) -> None:
+    journey_id = str(existing.get('journey_id') or incoming.get('journey_id') or '').strip()
+    for field in ('status', 'verification_layer'):
+        current = str(existing.get(field) or '').strip()
+        new = str(incoming.get(field) or '').strip()
+        if current and new and current != new:
+            conflicts = existing.setdefault('_merge_conflicts', [])
+            conflicts.append(f'{journey_id} conflicting {field}: {current} vs {new}')
+        elif new and not current:
+            existing[field] = new
+
+    current_title = str(existing.get('title') or '').strip()
+    new_title = str(incoming.get('title') or '').strip()
+    if (not current_title or current_title == journey_id) and new_title and new_title != journey_id:
+        existing['title'] = new_title
+
+    current_steps = existing.get('steps') if isinstance(existing.get('steps'), list) else []
+    new_steps = incoming.get('steps') if isinstance(incoming.get('steps'), list) else []
+    if len(new_steps) > len(current_steps):
+        existing['steps'] = list(new_steps)
+
+    for field in ('linked_acceptance_criteria', 'linked_units', 'test_cases'):
+        existing[field] = _dedupe([
+            *(
+                str(item).strip()
+                for item in (existing.get(field) or [])
+                if str(item).strip()
+            ),
+            *(
+                str(item).strip()
+                for item in (incoming.get(field) or [])
+                if str(item).strip()
+            ),
+        ])
+
+    if not str(existing.get('verification_command') or '').strip():
+        command = str(incoming.get('verification_command') or '').strip()
+        if command:
+            existing['verification_command'] = command
 
 
 def _validate_journeys(journeys: list[dict[str, Any]]) -> None:
@@ -318,6 +426,7 @@ def _validate_journeys(journeys: list[dict[str, Any]]) -> None:
         if not journey_id:
             issues.append(f'{prefix} missing journey_id')
             continue
+        issues.extend(str(issue) for issue in (journey.get('_merge_conflicts') or []))
         if journey_id in seen:
             issues.append(f'{journey_id} is duplicated')
         seen.add(journey_id)
@@ -364,7 +473,6 @@ def _looks_like_journey_header(headers: list[str]) -> bool:
     header_set = set(headers)
     return (
         _has_any_header(header_set, JOURNEY_ID_HEADERS)
-        and _has_any_header(header_set, JOURNEY_TITLE_HEADERS)
         and _has_any_header(header_set, JOURNEY_AC_HEADERS)
         and _has_any_header(header_set, JOURNEY_LAYER_HEADERS)
     )

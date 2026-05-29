@@ -57,6 +57,7 @@ Previous controller failure feedback:
 
 The controller rejected the previous attempt after running its own checks. Treat this as primary debugging context.
 The controller will rerun the approved verification commands exactly; do not mark DONE only because a manually modified command passed.
+Machine-readable DONE_FILE fields and stdout/stderr evidence markers are part of the contract. For visual evidence, writing marker names only inside JSON artifacts is not enough; the verifier parses `PROTOTYPE_SCREENSHOT:`, `PRODUCTION_SCREENSHOT:`, `INTERACTION_SCREENSHOT:`, and `VISUAL_EVIDENCE:` from command output.
 
 {previous_failure_feedback}
 """
@@ -69,6 +70,8 @@ Execution workspace: {state.get('executionWorkspacePath') or state.get('workspac
 Task id: {state.get('task_id')}
 Current unit id: {state.get('currentUnitId')}
 Requested outcome: {state.get('requestedOutcome')}
+
+{previous_failure_section}
 
 Current unit from approved Controller State Patch:
 
@@ -100,7 +103,6 @@ Original target prompt/context: {original_prompt_path}
 {original_prompt}
 ```
 {final_rejection_section}
-{previous_failure_section}
 
 Builder rules:
 - Implement the shortest verifiable path for the current unit only.

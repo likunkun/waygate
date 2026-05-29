@@ -336,12 +336,7 @@ def _default_cli_annotation_agent_config(role: str, backend: str) -> dict[str, A
         args = _current_codex_annotation_args()
     elif backend == 'claude-code':
         command = 'claude'
-        args = [
-            '-p',
-            DEFAULT_ANNOTATION_REQUEST,
-            '--permission-mode',
-            'bypassPermissions',
-        ]
+        args = _current_claude_code_annotation_args()
     else:
         command = 'opencode'
         args = [
@@ -373,6 +368,17 @@ def _current_codex_annotation_args() -> list[str]:
     ]
 
 
+def _current_claude_code_annotation_args() -> list[str]:
+    return [
+        '--bare',
+        '--no-session-persistence',
+        '-p',
+        DEFAULT_ANNOTATION_REQUEST,
+        '--permission-mode',
+        'bypassPermissions',
+    ]
+
+
 def _legacy_builtin_codex_annotation_args() -> list[str]:
     return [
         'exec',
@@ -383,6 +389,15 @@ def _legacy_builtin_codex_annotation_args() -> list[str]:
         '-o',
         '{artifact_path}',
         DEFAULT_ANNOTATION_REQUEST,
+    ]
+
+
+def _legacy_builtin_claude_code_annotation_args() -> list[str]:
+    return [
+        '-p',
+        DEFAULT_ANNOTATION_REQUEST,
+        '--permission-mode',
+        'bypassPermissions',
     ]
 
 
@@ -402,8 +417,24 @@ def _is_legacy_builtin_codex_annotation_config(
     )
 
 
+def _is_legacy_builtin_claude_code_annotation_config(
+    config: dict[str, Any],
+    role: str,
+    args: list[str],
+) -> bool:
+    configured_role = str(config.get('role') or role).strip()
+    backend = str(config.get('backend') or 'codex').strip()
+    command = str(config.get('command') or '').strip()
+    return (
+        configured_role == role
+        and backend == 'claude-code'
+        and command == 'claude'
+        and args == _legacy_builtin_claude_code_annotation_args()
+    )
+
+
 def migrate_legacy_annotation_agent_configs(state: dict[str, Any]) -> bool:
-    """Normalize Waygate's old built-in Codex annotation args in persisted state."""
+    """Normalize Waygate's old built-in annotation args in persisted state."""
     changed = False
     for container_key in ('annotationAgents', 'annotationAgentConfig', 'annotation_agents'):
         container = state.get(container_key)
@@ -418,6 +449,9 @@ def migrate_legacy_annotation_agent_configs(state: dict[str, Any]) -> bool:
             args = [str(arg) for arg in raw_args]
             if _is_legacy_builtin_codex_annotation_config(raw_config, role, args):
                 raw_config['args'] = _current_codex_annotation_args()
+                changed = True
+            elif _is_legacy_builtin_claude_code_annotation_config(raw_config, role, args):
+                raw_config['args'] = _current_claude_code_annotation_args()
                 changed = True
     return changed
 
@@ -513,6 +547,8 @@ def normalize_annotation_config(
     args = [str(arg) for arg in raw_args]
     if _is_legacy_builtin_codex_annotation_config(raw_config, role, args):
         args = _current_codex_annotation_args()
+    elif _is_legacy_builtin_claude_code_annotation_config(raw_config, role, args):
+        args = _current_claude_code_annotation_args()
 
     raw_env_keys = raw_config.get('env_keys') or raw_config.get('envKeys') or []
     if not isinstance(raw_env_keys, list):
@@ -1288,6 +1324,8 @@ def _normalize_annotation_artifact(
     except json.JSONDecodeError:
         parsed = {'summary': raw_text.strip(), 'issues': []}
     approval_markers = _approval_like_markers(parsed, raw_text)
+    parsed = annotation_payload_with_promoted_summary_json(parsed)
+    approval_markers.update(_approval_like_markers(parsed, raw_text))
     if approval_markers:
         _write_rejected_annotation_artifact(
             config,
@@ -1342,6 +1380,35 @@ def _normalize_annotation_artifact(
         json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
         encoding='utf-8',
     )
+
+
+def annotation_payload_with_promoted_summary_json(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    summary = value.get('summary')
+    if not isinstance(summary, str):
+        return value
+    text = summary.strip()
+    if not text or text[0] not in '{[':
+        return value
+    try:
+        parsed_summary = json.loads(text)
+    except json.JSONDecodeError:
+        return value
+    if not isinstance(parsed_summary, dict):
+        return value
+
+    promoted = dict(value)
+    nested_summary = parsed_summary.get('summary')
+    if nested_summary is not None:
+        promoted['summary'] = nested_summary
+    nested_issues = parsed_summary.get('issues')
+    top_level_issues = promoted.get('issues')
+    if isinstance(nested_issues, list) and (
+        not isinstance(top_level_issues, list) or not top_level_issues
+    ):
+        promoted['issues'] = nested_issues
+    return promoted
 
 
 def _verification_assist_role_backend(spec: dict[str, Any]) -> tuple[str, str | None]:
@@ -1640,6 +1707,14 @@ def _approval_like_fields(value: Any, prefix: str = '') -> set[str]:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             markers.update(_approval_like_fields(child, f'{prefix}[{index}]'))
+    elif isinstance(value, str):
+        text = value.strip()
+        if text and text[0] in '{[':
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return markers
+            markers.update(_approval_like_fields(parsed, prefix))
     return markers
 
 
@@ -1876,8 +1951,13 @@ def _allowed_env_values(config: AnnotationAgentConfig) -> list[str]:
     return values
 
 
-def _redact_text(text: str, secret_values: list[str]) -> str:
-    redacted = text
+def _redact_text(text: str | bytes | None, secret_values: list[str]) -> str:
+    if text is None:
+        redacted = ''
+    elif isinstance(text, bytes):
+        redacted = text.decode(errors='replace')
+    else:
+        redacted = text
     for value in sorted(secret_values, key=len, reverse=True):
         if value:
             redacted = redacted.replace(value, '[redacted]')

@@ -351,15 +351,21 @@ def run_verification_commands(
                     check=False,
                     env=env,
                 )
+                controller_issue = _verification_command_controller_issue(
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                )
                 result = {
                     'command': command,
                     'returncode': completed.returncode,
-                    'ok': completed.returncode == 0,
+                    'ok': completed.returncode == 0 and controller_issue is None,
                     'stdout': completed.stdout,
                     'stderr': completed.stderr,
                     'env_keys': sorted(verification_env),
                     'elapsed_seconds': round(time.monotonic() - started_at, 3),
                 }
+                if controller_issue:
+                    result['controller_issue'] = controller_issue
             except subprocess.TimeoutExpired as exc:
                 result = {
                     'command': command,
@@ -387,6 +393,34 @@ def run_verification_commands(
         'passed': all(result.get('ok') for result in results),
     })
     return results
+
+
+def _verification_command_controller_issue(*, stdout: str, stderr: str) -> str | None:
+    combined = '\n'.join(part for part in (stdout, stderr) if part)
+    missing = _shell_missing_executable(combined)
+    if missing:
+        return f'missing executable reported by shell: {missing}'
+    return None
+
+
+def _shell_missing_executable(text: str) -> str | None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        match = re.match(
+            r'^(?:/[^:\s]+/)?(?:ba|z)?sh:\s+(?:line\s+\d+:\s+)?(?:\d+:\s+)?(?P<cmd>[^:\s]+):\s+(?:command\s+)?not found$',
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return match.group('cmd')
+        match = re.match(
+            r'^(?:zsh|fish):\s+(?:command\s+)?not found:\s+(?P<cmd>\S+)$',
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return match.group('cmd')
+    return None
 
 
 @contextmanager
