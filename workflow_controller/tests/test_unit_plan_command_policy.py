@@ -161,6 +161,54 @@ def test_unit_plan_command_policy_allows_python_script_entrypoint() -> None:
     validate_unit_plan_script_entry_commands(state)
 
 
+def test_unit_plan_command_policy_allows_python_alias_script_entrypoint() -> None:
+    command = 'python scripts/verify/tc_ac1.py'
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-PYTHON-ALIAS-SCRIPT',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'functional',
+                        'command': command,
+                        'expected': 'script verifies behavior',
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ]
+    }
+
+    validate_unit_plan_script_entry_commands(state)
+
+
+def test_unit_plan_command_policy_allows_direct_python_script_entrypoint() -> None:
+    command = './scripts/verify/tc_ac1.py'
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-PYTHON-DIRECT-SCRIPT',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'functional',
+                        'command': command,
+                        'expected': 'script verifies behavior',
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ]
+    }
+
+    validate_unit_plan_script_entry_commands(state)
+
+
 def test_unit_plan_command_policy_rejects_unquoted_shell_pipeline() -> None:
     command = 'printf foo | grep foo'
     state = {

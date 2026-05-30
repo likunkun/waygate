@@ -17,3 +17,5 @@ Do not use `waygate revise` for transient runner silence. `waygate revise` remai
 - Agent timeout, idle-without-DONE, or delayed user response is a recoverable wait unless the agent explicitly returns `blocked` or the controller hits a real validation, verifier, environment, repeated-failure, or final-acceptance blocked route.
 
 Runner subprocess timeouts are normalized to `status=timeout` and `returncode=124` so controller stages can apply the same recoverable wait policy across subprocess, tmux Claude, and tmux Codex runners.
+
+For tmux runners, a stable pane tail is only idle when it does not show an active tool state. If the latest pane tail contains a shell tool marker such as `shell ·`, Waygate treats the agent as still running a background shell/script and does not nudge or classify the pane as `agent_idle_without_done`; the global timeout still applies.

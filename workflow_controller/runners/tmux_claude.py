@@ -301,7 +301,10 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
                 workspace_dir=request.workspace_dir,
                 env=env,
             )
-            if pane_tail != last_pane_content:
+            if _tmux_pane_tail_shows_running_shell(pane_tail):
+                last_pane_content = pane_tail
+                last_pane_change_time = now
+            elif pane_tail != last_pane_content:
                 last_pane_content = pane_tail
                 last_pane_change_time = now
             elif (now - last_pane_change_time) >= nudge_seconds:
@@ -809,6 +812,8 @@ def _wait_for_tmux_agent_idle_after_done(
 
 
 def _tmux_pane_looks_busy(pane_tail: str) -> bool:
+    if _tmux_pane_tail_shows_running_shell(pane_tail):
+        return True
     lines = [line.strip() for line in str(pane_tail or '').splitlines() if line.strip()]
     last_busy = -1
     last_done = -1
@@ -818,6 +823,14 @@ def _tmux_pane_looks_busy(pane_tail: str) -> bool:
         if re.search(r'\bWorked for\b', line):
             last_done = index
     return last_busy > last_done
+
+
+def _tmux_pane_tail_shows_running_shell(pane_tail: str) -> bool:
+    lines = [line.strip() for line in str(pane_tail or '').splitlines() if line.strip()]
+    for line in lines[-10:]:
+        if re.search(r'(?:^|\s)shell\s*[·•]\s+', line, flags=re.IGNORECASE):
+            return True
+    return False
 
 
 def _tmux_timeout_message(*, backend: str, done_path: Path, run_id: str, pane_tail: str) -> str:
