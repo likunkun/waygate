@@ -14,6 +14,7 @@ sh scripts/verify/<case>.sh
 python3 scripts/verify/<case>.py
 python scripts/verify/<case>.py
 ./scripts/verify/<case>.sh
+./scripts/verify/<case>.py
 ```
 
 Waygate does not accept substring, fuzzy, or aggregate command coverage for this check. For example, this is invalid:

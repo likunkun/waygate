@@ -84,7 +84,7 @@ UI/UX skill policy:
 - 计划中的 UI/Web/prototype 验证必须覆盖交互、可访问性、布局、遮挡检查，并映射到真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境。
 
 Verification command script-entry policy:
-- `command` 必须是 `scripts/verify/` 下的脚本入口，例如 `bash scripts/verify/<case>.sh`、`sh scripts/verify/<case>.sh`、`python3 scripts/verify/<case>.py`、`python scripts/verify/<case>.py` 或 `./scripts/verify/<case>.sh`。
+- `command` 必须是 `scripts/verify/` 下的脚本入口，例如 `bash scripts/verify/<case>.sh`、`sh scripts/verify/<case>.sh`、`python3 scripts/verify/<case>.py`、`python scripts/verify/<case>.py`、`./scripts/verify/<case>.sh` 或 `./scripts/verify/<case>.py`。
 - `verification_commands` 只能列脚本入口；每个自动化 test case 的 `command` 必须与其中一个脚本入口精确匹配。
 - 脚本内部可以运行 pytest、Playwright、环境准备或多步 shell；Unit Plan 只声明脚本入口和脚本应覆盖的 AC/断言。
 - 不要在 Unit Plan 中写 `pytest ...`、`playwright test ...`、`bash -lc`、`python -c`、管道或内联 shell；把这些内容写入 `scripts/verify/<case>.sh` 或 `scripts/verify/<case>.py`。

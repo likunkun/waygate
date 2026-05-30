@@ -1300,7 +1300,7 @@ def test_unit_plan_preflight_rejects_approved_ac_covered_only_by_verification_as
 def test_unit_plan_preflight_accepts_approved_ac_with_exact_command_candidate(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = _init_unit_plan_preflight_controller(state_dir)
-    command = 'bash scripts/verify/test-api-behavior.sh'
+    command = 'python3 scripts/verify/test_api_behavior.py'
     gate_path = state_dir / 'approvals' / 'unit-plan.md'
     _write_unit_plan_for_single_case(
         gate_path,
@@ -5279,7 +5279,10 @@ def test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_
     approval_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     approval_path.parent.mkdir(parents=True, exist_ok=True)
     approval_path.write_text(
-        '# Requirements & Acceptance Confirmation\n\nClaude body\n\n## Human Confirmation\n\nStatus: pending\n',
+        _requirements_body_with_infrastructure(
+            '# Requirements & Acceptance Confirmation\n\nClaude body\n'
+        )
+        + '\n## Human Confirmation\n\nStatus: pending\n',
         encoding='utf-8',
     )
     body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
