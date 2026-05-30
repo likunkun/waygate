@@ -34,7 +34,7 @@ The role-based annotation config supports:
 - `unit_plan_annotation`
 - `final_acceptance_verification_assist`
 
-Each role can select `claude-code`, `opencode`, or `codex` as a backend family. The normalized config records command, args, env key allowlist, timeout, artifact path, prompt template, and failure policy. State and artifacts record env keys only, not values.
+Each role can select `claude-code`, `opencode`, or `codex` as a backend family. The normalized config records command, args, custom env key allowlist, timeout, artifact path, prompt template, and failure policy. At subprocess launch time, Waygate also inherits standard proxy keys present in the parent process (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants). State and artifacts record env keys only, not values.
 
 `annotation_agents.py` owns built-in backend templates and legacy migration. The Codex template is normalized away from the removed `--ask-for-approval never` flag. The Claude Code template includes `--bare` and `--no-session-persistence` so subprocess annotation runs do not inherit stale interactive thinking/session context; persisted sessions with the old built-in Claude args migrate during status/config normalization.
 

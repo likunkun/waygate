@@ -140,7 +140,7 @@ waygate init --target V0.6.1 --annotation-agent unit-plan=codex
 waygate drive --state-dir .rrc-controller-v0.6.1 --annotation-agent unit-plan=codex --annotation-agent-cmd unit-plan='python3 fake.py'
 ```
 
-支持的 role alias 是 `requirements`、`unit-plan`、`final-acceptance` 和 `all`。支持的 backend 是 `codex`、`claude-code`（也接受 `claude`）和 `opencode`。可用 `--no-annotation-agent ROLE|all` 禁用 role，`--annotation-agent-env-key ROLE=KEY` 只继承指定环境变量名，`--annotation-agent-timeout ROLE=SECONDS` 设置超时，`--annotation-agent-failure-policy ROLE=block|warn` 设置失败策略。
+支持的 role alias 是 `requirements`、`unit-plan`、`final-acceptance` 和 `all`。支持的 backend 是 `codex`、`claude-code`（也接受 `claude`）和 `opencode`。Annotation subprocess 会在父进程存在时默认继承标准代理 key：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及对应小写形式。可用 `--no-annotation-agent ROLE|all` 禁用 role，`--annotation-agent-env-key ROLE=KEY` 继承额外非代理环境变量名，`--annotation-agent-timeout ROLE=SECONDS` 设置超时，`--annotation-agent-failure-policy ROLE=block|warn` 设置失败策略。
 
 内置 `--annotation-agent codex` 会启用三个 role，使用 `command=codex`、`args=["exec", "--sandbox", "workspace-write", "-o", "{artifact_path}", "..."]`、`timeout_seconds=7200`、`failure_policy=block` 和 `prompt_template=risk-json-v1`。Annotation 输出只能辅助标注风险，不能批准、跳过、修改或绕过任何 Waygate gate。Waygate 旧内置 Codex annotation args 会自动归一化；自定义 `--annotation-agent-cmd` 不会被改写。
 
@@ -243,7 +243,7 @@ waygate migrate --state-dir .rrc-controller-v1.0
 | `--annotation-agent ROLE=BACKEND` | 只启用一个 annotation role；可重复。 |
 | `--no-annotation-agent ROLE|all` | 禁用一个 annotation role 或全部 role。 |
 | `--annotation-agent-cmd ROLE='COMMAND ...'` | 覆盖完整 annotation 命令行，使用 `shlex.split` 解析。 |
-| `--annotation-agent-env-key ROLE=KEY` | 只继承该环境变量名；secret 值不写入 state。 |
+| `--annotation-agent-env-key ROLE=KEY` | 继承额外非代理环境变量名；标准代理 key 在父进程存在时默认继承，secret 值不写入 state。 |
 | `--annotation-agent-timeout ROLE=SECONDS` | 覆盖 role 超时时间。 |
 | `--annotation-agent-failure-policy ROLE=block|warn` | 设置 annotation 失败是阻断人工 gate 还是只写 warning evidence。 |
 | `--verbose` | 打印详细执行输出。 |

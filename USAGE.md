@@ -140,7 +140,7 @@ waygate init --target V0.6.1 --annotation-agent unit-plan=codex
 waygate drive --state-dir .rrc-controller-v0.6.1 --annotation-agent unit-plan=codex --annotation-agent-cmd unit-plan='python3 fake.py'
 ```
 
-Supported role aliases are `requirements`, `unit-plan`, `final-acceptance`, and `all`. Supported backend names are `codex`, `claude-code` (or `claude`), and `opencode`. Use `--no-annotation-agent ROLE|all` to disable roles, `--annotation-agent-env-key ROLE=KEY` to inherit only named environment keys, `--annotation-agent-timeout ROLE=SECONDS`, and `--annotation-agent-failure-policy ROLE=block|warn`.
+Supported role aliases are `requirements`, `unit-plan`, `final-acceptance`, and `all`. Supported backend names are `codex`, `claude-code` (or `claude`), and `opencode`. Annotation subprocesses automatically inherit standard proxy keys from the parent process when present: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants. Use `--no-annotation-agent ROLE|all` to disable roles, `--annotation-agent-env-key ROLE=KEY` for additional non-proxy environment keys, `--annotation-agent-timeout ROLE=SECONDS`, and `--annotation-agent-failure-policy ROLE=block|warn`.
 
 The built-in `--annotation-agent codex` configuration enables all three roles with `command=codex`, `args=["exec", "--sandbox", "workspace-write", "-o", "{artifact_path}", "..."]`, `timeout_seconds=7200`, `failure_policy=block`, and `prompt_template=risk-json-v1`. Annotation output is risk-only; it cannot approve, skip, modify, or bypass any Waygate gate. Legacy Waygate built-in Codex annotation args are normalized automatically; custom `--annotation-agent-cmd` commands are left unchanged.
 
@@ -243,7 +243,7 @@ waygate migrate --state-dir .rrc-controller-v1.0
 | `--annotation-agent ROLE=BACKEND` | Enable one annotation role; repeat for multiple roles. |
 | `--no-annotation-agent ROLE|all` | Disable one annotation role or all roles. |
 | `--annotation-agent-cmd ROLE='COMMAND ...'` | Override the full annotation command line, parsed with `shlex.split`. |
-| `--annotation-agent-env-key ROLE=KEY` | Inherit only this env key name for the role; secret values are not stored. |
+| `--annotation-agent-env-key ROLE=KEY` | Inherit an additional non-proxy env key name for the role; standard proxy keys are inherited by default when present, and secret values are not stored. |
 | `--annotation-agent-timeout ROLE=SECONDS` | Override role timeout. |
 | `--annotation-agent-failure-policy ROLE=block|warn` | Choose whether annotation failures block the human gate or write warning evidence. |
 | `--verbose` | Print detailed per-step output. |

@@ -26,6 +26,21 @@ from workflow_controller.rrc_controller import RalphRefinerController
 
 
 ROOT = Path(__file__).resolve().parents[2]
+ANNOTATION_PROXY_ENV_KEYS = (
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'ALL_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'all_proxy',
+    'no_proxy',
+)
+
+
+def _clear_annotation_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ANNOTATION_PROXY_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
 
 
 def _run_rrc(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -1650,6 +1665,180 @@ def test_cli_annotation_agent_role_specific_enable_leaves_other_roles_disabled(t
     assert configs['unit_plan_annotation']['backend'] == 'codex'
 
 
+def test_annotation_agent_inherits_default_proxy_env_without_explicit_env_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
+    expected_proxy_env = {
+        'HTTP_PROXY': 'http://127.0.0.1:19080',
+        'HTTPS_PROXY': 'http://127.0.0.1:19443',
+        'ALL_PROXY': 'socks5://127.0.0.1:19081',
+        'NO_PROXY': 'localhost,127.0.0.1',
+        'http_proxy': 'http://127.0.0.1:19080',
+        'https_proxy': 'http://127.0.0.1:19443',
+        'all_proxy': 'socks5://127.0.0.1:19081',
+        'no_proxy': 'localhost,127.0.0.1',
+    }
+    for key, value in expected_proxy_env.items():
+        monkeypatch.setenv(key, value)
+    writer = tmp_path / 'assert_proxy_env.py'
+    writer.write_text(
+        'from __future__ import annotations\n'
+        'import json, os\n'
+        f'expected = {expected_proxy_env!r}\n'
+        "missing = [key for key, value in expected.items() if os.environ.get(key) != value]\n"
+        "if missing:\n"
+        "    raise SystemExit('missing proxy keys: ' + ','.join(missing))\n"
+        "artifact = os.environ['WAYGATE_ANNOTATION_ARTIFACT']\n"
+        "with open(artifact, 'w', encoding='utf-8') as f:\n"
+        "    json.dump({'summary': '代理环境已继承', 'issues': []}, f, ensure_ascii=False)\n",
+        encoding='utf-8',
+    )
+    state = {
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': sys.executable,
+                'args': [str(writer)],
+                'timeout_seconds': 5,
+                'artifact_path': 'requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        }
+    }
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path,
+        artifacts_dir=tmp_path,
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+    )
+
+    payload = json.loads(result.artifact_path.read_text(encoding='utf-8'))
+    assert result.status == 'completed'
+    assert set(expected_proxy_env).issubset(set(result.runner_metadata['env_keys']))
+    assert set(expected_proxy_env).issubset(set(payload['env_keys']))
+
+
+def test_annotation_agent_does_not_create_proxy_env_when_parent_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
+    writer = tmp_path / 'assert_no_proxy_env.py'
+    writer.write_text(
+        'from __future__ import annotations\n'
+        'import json, os\n'
+        f'proxy_keys = {ANNOTATION_PROXY_ENV_KEYS!r}\n'
+        "unexpected = [key for key in proxy_keys if key in os.environ]\n"
+        "if unexpected:\n"
+        "    raise SystemExit('unexpected proxy keys: ' + ','.join(unexpected))\n"
+        "artifact = os.environ['WAYGATE_ANNOTATION_ARTIFACT']\n"
+        "with open(artifact, 'w', encoding='utf-8') as f:\n"
+        "    json.dump({'summary': '未凭空新增代理环境', 'issues': []}, f, ensure_ascii=False)\n",
+        encoding='utf-8',
+    )
+    state = {
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': sys.executable,
+                'args': [str(writer)],
+                'timeout_seconds': 5,
+                'artifact_path': 'requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        }
+    }
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path,
+        artifacts_dir=tmp_path,
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+    )
+
+    payload = json.loads(result.artifact_path.read_text(encoding='utf-8'))
+    assert result.status == 'completed'
+    assert not set(ANNOTATION_PROXY_ENV_KEYS).intersection(result.runner_metadata['env_keys'])
+    assert not set(ANNOTATION_PROXY_ENV_KEYS).intersection(payload['env_keys'])
+
+
+def test_annotation_proxy_env_values_are_redacted_from_metadata_events_and_failure_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
+    proxy_env = {
+        'http_proxy': 'http://proxy-user:proxy-pass@127.0.0.1:19080',
+        'https_proxy': 'http://proxy-user:proxy-pass@127.0.0.1:19443',
+    }
+    for key, value in proxy_env.items():
+        monkeypatch.setenv(key, value)
+    failing_agent = tmp_path / 'leak_proxy_then_fail.py'
+    failing_agent.write_text(
+        'from __future__ import annotations\n'
+        'import os, sys\n'
+        "print('stdout proxy=' + os.environ['http_proxy'])\n"
+        "print('stderr proxy=' + os.environ['https_proxy'], file=sys.stderr)\n"
+        'raise SystemExit(7)\n',
+        encoding='utf-8',
+    )
+    state = {
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': sys.executable,
+                'args': [str(failing_agent)],
+                'timeout_seconds': 5,
+                'artifact_path': 'failed-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'warn',
+            }
+        }
+    }
+    events: list[dict[str, Any]] = []
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path,
+        artifacts_dir=tmp_path,
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+        event_sink=lambda event_type, payload: events.append({'type': event_type, 'payload': payload}),
+    )
+
+    failure_payload = json.loads(result.artifact_path.read_text(encoding='utf-8'))
+    serialized_evidence = json.dumps(
+        {
+            'runner_metadata': result.runner_metadata,
+            'events': events,
+            'failure_payload': failure_payload,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assert result.status == 'warning'
+    assert set(proxy_env).issubset(set(result.runner_metadata['env_keys']))
+    assert set(proxy_env).issubset(set(events[-1]['payload']['env_keys']))
+    assert set(proxy_env).issubset(set(failure_payload['env_keys']))
+    for value in proxy_env.values():
+        assert value not in serialized_evidence
+    assert 'stdout proxy=[redacted]' in failure_payload['stdout']
+    assert 'stderr proxy=[redacted]' in failure_payload['stderr']
+
+
 @pytest.mark.parametrize(
     ('args', 'expected'),
     [
@@ -1779,6 +1968,7 @@ def test_annotation_config_safety_rejects_invalid_backend_unavailable_timeout_an
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
     with pytest.raises(ValueError, match='Unsupported annotation backend'):
         normalize_annotation_config(
             {

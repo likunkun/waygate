@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-05-30 Annotation Agent 默认代理环境
+
+- Annotation Agent subprocess 的网络代理应来自启动 `waygate` 的父进程环境，而不是要求用户把代理 key 写进 `--annotation-agent-env-key`。默认继承范围固定为 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写形式；父进程不存在的代理 key 不会凭空新增。
+- `--annotation-agent-env-key` 继续作为额外非代理变量的高级入口。持久化 config 仍只保存用户显式配置的 custom key；每次运行的 metadata、event 和 artifact 记录 effective `env_keys`，包含实际存在的默认代理 key 和显式 custom key。
+- 由于代理 URL 可能包含凭据，annotation / verification-assist 的 stdout、stderr 和 agent artifact 归一化必须把 effective env values 纳入脱敏源；审计输出只允许出现 env key 名称，不允许出现代理值。
+- 已经挂住的 annotation subprocess 无法原地注入新代理。正确恢复路径是修复启动 shell 的代理环境后中断/恢复当前 annotation runtime blocker，让 controller 重跑 pending annotation；不要为代理问题修改 Requirements 或 Unit Plan 合同。
+
 ## 2026-05-28 Unit Plan 命令脚本入口限制
 
 - Unit Plan 的 `verification_commands[]` 和 test case `command` 是 verifier 之后实际执行命令的事实源，因此命令格式限制必须落在 controller validator 中，不能只靠 prompt 或人工说明。

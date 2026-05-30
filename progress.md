@@ -1,5 +1,19 @@
 # 进度日志
 
+## 会话：2026-05-30
+
+### Annotation Agent 默认代理环境透传
+- **状态：** implementation verified; focused/full regression passed.
+- 修复：Annotation Agent subprocess 默认继承父 `waygate` 进程中已存在的标准代理 key：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写形式；不需要再通过 `--annotation-agent-env-key` 传代理。
+- 修复：runner metadata、event、annotation artifact 和 verification-assist artifact 只记录 effective `env_keys`，不记录代理 URL 或其他 env value；stdout/stderr 和 agent 输出中的 inherited env values 继续写入 artifact 前脱敏。
+- 文档：同步 `USAGE.md` / `USAGE.zh-CN.md` 和 external spec annotation workflow / architecture 文档，明确 `--annotation-agent-env-key` 只用于额外非代理变量，annotation runtime blocker 修复后从已有代理环境的 shell 重新运行或 unblock。
+- 验证：
+  - RED：新增 focused tests 初始失败，复现默认代理 env 未传给 annotation subprocess，以及代理值未进入 effective metadata 的旧行为。
+  - GREEN：`python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `48 passed`。
+  - GREEN：`python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'annotation or blocked'` -> `23 passed, 216 deselected`。
+  - GREEN：`python3 -m pytest workflow_controller/tests -q` -> `798 passed in 78.33s`。
+  - `git diff --check -- workflow_controller/annotation_agents.py workflow_controller/tests/test_v061_annotation_agents.py USAGE.md USAGE.zh-CN.md docs/workflow/external-spec-intake-and-annotation-policy.md docs/architecture/external-spec-intake-and-annotation-architecture.md` -> passed。
+
 ## 会话：2026-05-29
 
 ### V0.6.2b Product Design 后常驻原型预览

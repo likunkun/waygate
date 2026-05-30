@@ -32,6 +32,17 @@ VERIFICATION_ASSIST_CASE_STATUSES = {'passed', 'failed', 'blocked', 'needs_human
 
 FAILURE_POLICIES = {'block', 'warn'}
 
+DEFAULT_ANNOTATION_PROXY_ENV_KEYS = (
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'ALL_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'all_proxy',
+    'no_proxy',
+)
+
 ROLE_ALIASES = {
     'requirements': 'requirements_annotation',
     'requirements-annotation': 'requirements_annotation',
@@ -203,7 +214,7 @@ def add_annotation_agent_cli_arguments(parser: Any) -> None:
         action='append',
         metavar='ROLE=KEY',
         dest='annotation_agent_env_key',
-        help='Allow one environment variable key through to an annotation role without storing its value',
+        help='Allow one additional non-proxy environment variable key through to an annotation role without storing its value',
     )
     parser.add_argument(
         '--annotation-agent-timeout',
@@ -480,7 +491,7 @@ class AnnotationAgentConfig:
             'backend': self.backend,
             'command': self.command,
             'args': list(self.args),
-            'env_keys': list(self.env_keys),
+            'env_keys': _annotation_effective_env_keys(self),
             'timeout_seconds': self.timeout_seconds,
             'artifact_path': str(self.artifact_path),
             'prompt_template': self.prompt_template,
@@ -1276,7 +1287,7 @@ def _annotation_subprocess_env(config: AnnotationAgentConfig, prompt_path: Path)
         value = os.environ.get(key)
         if value is not None:
             env[key] = value
-    for key in config.env_keys:
+    for key in _annotation_effective_env_keys(config):
         if key in os.environ:
             env[key] = os.environ[key]
     env.update(
@@ -1288,6 +1299,14 @@ def _annotation_subprocess_env(config: AnnotationAgentConfig, prompt_path: Path)
         }
     )
     return env
+
+
+def _annotation_effective_env_keys(config: AnnotationAgentConfig) -> list[str]:
+    env_keys = {key for key in config.env_keys if key}
+    env_keys.update(
+        key for key in DEFAULT_ANNOTATION_PROXY_ENV_KEYS if key in os.environ
+    )
+    return sorted(env_keys)
 
 
 def _expanded_command(config: AnnotationAgentConfig, prompt_path: Path) -> list[str]:
@@ -1369,7 +1388,7 @@ def _normalize_annotation_artifact(
         'gate_path': str(gate_path) if gate_path else None,
         'gate_content_hash': gate_content_hash,
         'artifact_path': str(config.artifact_path),
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'summary': summary,
         'issues': issues,
         'risk_taxonomy': list(ROLE_RISK_CATEGORIES[config.role]),
@@ -1511,6 +1530,7 @@ def _normalize_verification_assist_artifact(
         'unit_id': unit_id,
         'test_case_id': _verification_assist_case_id(case),
         'artifact_path': str(config.artifact_path),
+        'env_keys': _annotation_effective_env_keys(config),
         'agent_assisted_judgement': judgement,
         'risk_annotations': _verification_assist_risk_annotations(parsed.get('risk_annotations') or parsed.get('riskAnnotations')),
         'structured_evidence_refs': _string_list(
@@ -1550,6 +1570,7 @@ def _write_verification_assist_failure_artifact(
         'unit_id': unit_id,
         'test_case_id': _verification_assist_case_id(case),
         'artifact_path': str(config.artifact_path),
+        'env_keys': _annotation_effective_env_keys(config),
         'agent_assisted_judgement': {
             'status': 'blocked',
             'summary': message,
@@ -1741,7 +1762,7 @@ def _write_rejected_annotation_artifact(
         'gate_path': str(gate_path) if gate_path else None,
         'gate_content_hash': gate_content_hash,
         'artifact_path': str(config.artifact_path),
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'issues': [
             {
                 'category': 'approval_like_payload',
@@ -1783,7 +1804,7 @@ def _write_language_rejected_annotation_artifact(
         'gate_path': str(gate_path) if gate_path else None,
         'gate_content_hash': gate_content_hash,
         'artifact_path': str(config.artifact_path),
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'summary': 'Annotation 输出的人类可见批注字段不是简体中文，已被拒绝。',
         'issues': [
             {
@@ -1846,7 +1867,7 @@ def _handle_annotation_failure(
             'prompt_path': str(prompt_path),
             'prompt_template_hash': prompt_hash,
             'gate_content_hash': gate_content_hash,
-            'env_keys': list(config.env_keys),
+            'env_keys': _annotation_effective_env_keys(config),
             'failure_policy': config.failure_policy,
             'reason': message,
             'returncode': returncode,
@@ -1893,7 +1914,7 @@ def _write_failure_artifact(
         'prompt_template_hash': prompt_hash,
         'gate_content_hash': gate_content_hash,
         'artifact_path': str(config.artifact_path),
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'failure_policy': config.failure_policy,
         'summary': f'标注运行失败：{message}',
         'returncode': returncode,
@@ -1944,7 +1965,7 @@ def _default_evidence_refs(role: str, state: dict[str, Any], artifacts_dir: Path
 
 def _allowed_env_values(config: AnnotationAgentConfig) -> list[str]:
     values: list[str] = []
-    for key in config.env_keys:
+    for key in _annotation_effective_env_keys(config):
         value = os.environ.get(key)
         if value:
             values.append(value)
@@ -1983,7 +2004,7 @@ def _event_payload(
         'prompt_template': config.prompt_template,
         'prompt_template_hash': prompt_hash,
         'gate_content_hash': gate_content_hash,
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'failure_policy': config.failure_policy,
     }
 
