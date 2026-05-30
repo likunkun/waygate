@@ -816,7 +816,7 @@ def validate_unit_plan_script_entry_commands(state: dict[str, Any]) -> None:
                 'write the command into a script file and execute it as '
                 '`bash scripts/verify/<case>.sh`, `sh scripts/verify/<case>.sh`, '
                 '`python3 scripts/verify/<case>.py`, `python scripts/verify/<case>.py`, '
-                'or `./scripts/verify/<case>.sh`'
+                '`./scripts/verify/<case>.sh`, or `./scripts/verify/<case>.py`'
             )
     if issues:
         raise ValueError('unit plan command policy is invalid: ' + '; '.join(issues))
@@ -856,7 +856,10 @@ def _command_is_script_entrypoint(command: str) -> bool:
 
     if len(tokens) == 1:
         script = tokens[0]
-        return _script_path_is_allowed(script, suffix='.sh', allow_direct=True)
+        return any(
+            _script_path_is_allowed(script, suffix=suffix, allow_direct=True)
+            for suffix in ('.sh', '.py')
+        )
 
     if len(tokens) != 2:
         return False

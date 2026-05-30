@@ -24,7 +24,11 @@ REQUIREMENTS_DRAFT_WAIT_TIMEOUT_MESSAGE = (
     '等了太久，先休息一下，等agent好了，再接着干。'
     '下次继续会接上这轮 Requirements Draft，不会重新讨论需求。'
 )
-_PENDING_REQUIREMENTS_DRAFT_STATUSES = {'timeout', 'agent_idle_without_done'}
+_PENDING_REQUIREMENTS_DRAFT_STATUSES = {
+    'timeout',
+    'agent_idle_without_done',
+    'agent_shell_running_without_done',
+}
 DEFAULT_REQUIREMENTS_DRAFT_RESUME_POLL_SECONDS = 5.0
 
 

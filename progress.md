@@ -1,11 +1,27 @@
 # 进度日志
 
+## 会话：2026-05-30
+
+### tmux Claude 后台 shell 超时语义修正
+- **状态：** implementation verified; focused regression passed.
+- 复现路径：`16:0.1` Claude pane 显示 `1 shell` / `1 shell still running`，但 controller 在 Requirements Draft 等待上限到达后写入 `status=timeout` 和“pane output stopped changing”文案。
+- 根因：`workflow_controller/runners/tmux_claude.py` 的 idle monitor 已用 `_tmux_pane_tail_shows_running_shell()` 避免 `agent_idle_without_done`，但最终 deadline 分支没有复用该判断，仍无条件返回 `timeout`。
+- 已修复：deadline 到达时若 pane tail 仍显示 shell 工具运行，runner 返回 `agent_shell_running_without_done`，记录同名 event，并写明这是 active shell pending 而不是 idle/no-response timeout。
+- 已按现场调试结论去除额外 timeout 证据落盘，不再生成 `timeout-decision.json` 或 `requirements-resume-timeout-decision.json`。
+- 已同步 recoverable wait 状态集合、Requirements pending draft 状态集合、stop guidance 和正式 workflow / usage 文档。
+- 已完成验证：
+  - `.venv312/bin/python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q -k 'shell_tool_tail_is_not_idle_without_done or idle_without_done or timeout or idle_monitor or nudge'` -> `9 passed, 30 deselected`
+  - `.venv312/bin/python -m pytest workflow_controller/tests/test_rrc_agent_runners.py workflow_controller/tests/test_rrc_controller.py -q -k 'shell_tool_tail_is_not_idle_without_done or recoverable_agent_wait or requirements_draft_timeout or builder_timeout or unit_plan_draft_timeout or stop_guidance'` -> `10 passed, 253 deselected`
+  - `.venv312/bin/python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q -k 'timeout or idle_without_done or shell_tool_tail_is_not_idle_without_done or nudge'` -> `9 passed, 30 deselected`
+  - `.venv312/bin/python -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_draft_timeout or recoverable_agent_wait or stop_guidance'` -> `7 passed, 217 deselected`
+
 ## 会话：2026-05-28
 
 ### Unit Plan 命令脚本入口限制
-- **状态：** implementation verified; broad regression passed except existing Python 3.10 collection blocker in `test_rrc_controller.py`.
+- **状态：** implementation verified; Python 3.12 full regression passed.
 - 用户决策：不再兼容 Unit Plan Markdown 表格中的管道符解析；所有可执行验证命令都必须先写入 `scripts/verify/` 下的脚本文件，再通过脚本入口执行。
-- 已新增 Unit Plan command policy validator，检查 `verification_commands[]` 与 test case `command`，只接受 `bash scripts/verify/<case>.sh`、`sh scripts/verify/<case>.sh`、`python3 scripts/verify/<case>.py`、`python scripts/verify/<case>.py` 或 `./scripts/verify/<case>.sh` 形态。
+- 已新增 Unit Plan command policy validator，检查 `verification_commands[]` 与 test case `command`，只接受脚本入口形态：`bash scripts/verify/<case>.sh`、`sh scripts/verify/<case>.sh`、`python3 scripts/verify/<case>.py`、`python scripts/verify/<case>.py`、`./scripts/verify/<case>.sh` 或 `./scripts/verify/<case>.py`。
+- 后续澄清：脚本入口策略不限制为 bash；Python 脚本入口同样是有效命令。Unit Plan 仍不接受直接 `pytest`、`python -c`、管道或内联 shell。
 - 已接入 Unit Plan 人工确认前 preflight 与 Unit Plan approval 后持久化前校验；Requirements 确认阶段不解析命令，因为可执行命令来自 Unit Plan `Controller State Patch`。
 - 已同步 `docs/workflow/unit-plan-evidence-row-preflight-policy.md` 与 `docs/README.md`。
 - 已完成验证：
@@ -16,6 +32,7 @@
   - `git diff --check` -> passed
   - 标准 `python -m pytest workflow_controller/tests -q` 当前环境失败：`python` 命令不存在。
   - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest workflow_controller/tests -q` 当前环境失败在既有 `workflow_controller/tests/test_rrc_controller.py:11120`：Python 3.10 不支持该 f-string expression 中的 backslash。
+  - `.venv312/bin/python -m pytest workflow_controller/tests -q` -> `670 passed in 119.00s`。
 
 ## 会话：2026-05-26
 

@@ -1,9 +1,16 @@
 # 发现与决策
 
+## 2026-05-30 tmux Claude 后台 shell 等待语义
+
+- Claude pane 中出现 `shell ·` 或 `1 shell still running` 这类状态时，说明 agent 仍有后台 shell/tool 在运行；controller 不能把这种状态称为 pane idle 或 no-response timeout。
+- idle monitor 和最终 deadline 分支必须使用同一 shell 活动事实源。前者避免误发 nudge / `agent_idle_without_done`，后者在等待上限到达时返回 `agent_shell_running_without_done`，而不是 `timeout`。
+- `agent_shell_running_without_done` 仍是 recoverable wait：单次 `go` 不无限阻塞，操作者可以等 shell 完成或停止 shell 后再运行 `go/run/drive/start` 接回同一阶段；它不是 Requirements / Unit Plan 合同失败，也不是 blocked。
+
 ## 2026-05-28 Unit Plan 命令脚本入口限制
 
 - Unit Plan 的 `verification_commands[]` 和 test case `command` 是 verifier 之后实际执行命令的事实源，因此命令格式限制必须落在 controller validator 中，不能只靠 prompt 或人工说明。
 - 不再把 Markdown 表格管道符解析作为当前修复方向。统一要求把完整验证逻辑写入 `scripts/verify/` 下的 `.sh` 或 `.py` 脚本，Unit Plan 中只保留脚本入口命令，避免 inline shell、管道、`bash -c` / `bash -lc`、`python -c` 和直接工具调用绕过流程规则。
+- 脚本入口策略不等同于只允许 bash。有效入口包括 `bash/sh scripts/verify/*.sh`、`python/python3 scripts/verify/*.py`，以及可执行脚本形式 `./scripts/verify/*.sh` / `./scripts/verify/*.py`。
 - Requirements 确认阶段不需要解析命令。Requirements 负责需求和验收准则，真正的可执行命令在 Unit Plan `Controller State Patch` 中出现，并在 Unit Plan 人工确认前与 approval 后两处执行 deterministic preflight。
 
 ## 2026-05-26 Recoverable wait 恢复入口收敛

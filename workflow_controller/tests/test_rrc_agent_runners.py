@@ -1257,6 +1257,52 @@ raise SystemExit(0)
     assert result.run_dir.name in result.stderr
 
 
+def test_tmux_claude_shell_tool_tail_is_not_idle_without_done(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Implement this unit.')
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        """#!/usr/bin/env python3
+import sys
+if sys.argv[1:2] == ["capture-pane"]:
+    print("Running verification")
+    print("shell · bash scripts/verify/import-courses.sh")
+raise SystemExit(0)
+""",
+    )
+    monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
+    monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_MAX_NUDGES', '0')
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='unit-shell-tool',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=1,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'agent_shell_running_without_done'
+    assert result.returncode == 124
+    assert 'shell task is still running' in result.stderr
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    assert not any(event.get('event') == 'agent_idle_without_done' for event in events)
+    assert not any(event.get('event') == 'agent_nudge_sent' for event in events)
+    assert any(event.get('event') == 'agent_shell_running_without_done' for event in events)
+    assert not (result.run_dir / 'timeout-decision.json').exists()
+
+
 def test_tmux_claude_runner_fails_fast_when_pane_returns_idle_after_dispatch(
     tmp_path: Path,
     monkeypatch,

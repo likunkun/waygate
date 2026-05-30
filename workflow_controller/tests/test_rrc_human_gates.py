@@ -333,6 +333,7 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '`verification_commands` 只能列脚本入口' in unit_plan_prompt
     assert 'bash scripts/verify/<case>.sh' in unit_plan_prompt
     assert 'python3 scripts/verify/<case>.py' in unit_plan_prompt
+    assert './scripts/verify/<case>.py' in unit_plan_prompt
     assert '不要在 Unit Plan 中写 `pytest ...`、`playwright test ...`、`bash -lc`、`python -c`、管道或内联 shell' in unit_plan_prompt
     assert '`verification_commands` 必须是可执行的测试命令（如 `playwright test` / `pytest`）' not in unit_plan_prompt
     assert '测试命令退出码为 0 且断言覆盖 AC' in unit_plan_prompt

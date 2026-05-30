@@ -930,7 +930,7 @@ def _fake_agent_result(request, *, status: str = 'done', returncode: int = 0, st
     )
 
 
-def _write_valid_unit_plan(path: Path, *, command: str = 'pytest tests/test_delivery.py -q') -> None:
+def _write_valid_unit_plan(path: Path, *, command: str = 'bash scripts/verify/test-delivery.sh') -> None:
     path.write_text(
         '# Unit Plan Confirmation\n\n'
         '## Test Case Matrix\n'
@@ -972,7 +972,7 @@ def _write_valid_unit_plan(path: Path, *, command: str = 'pytest tests/test_deli
 def _write_valid_unit_plan_with_manual_ac2(
     path: Path,
     *,
-    command: str = 'pytest tests/test_delivery.py -q',
+    command: str = 'bash scripts/verify/test-delivery.sh',
 ) -> None:
     path.write_text(
         '# Unit Plan Confirmation\n\n'
@@ -1216,7 +1216,7 @@ def test_unit_plan_preflight_rejects_approved_ac_covered_only_by_verification_as
 def test_unit_plan_preflight_accepts_approved_ac_with_exact_command_candidate(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = _init_unit_plan_preflight_controller(state_dir)
-    command = 'python3 -m pytest tests/test_api.py::test_api_behavior -q'
+    command = 'python3 scripts/verify/test_api_behavior.py'
     gate_path = state_dir / 'approvals' / 'unit-plan.md'
     _write_unit_plan_for_single_case(
         gate_path,
@@ -1387,7 +1387,7 @@ def test_unit_plan_drafter_persists_test_strategist_artifacts(tmp_path: Path, mo
             assert 'target project feature acceptance' in prompt
             assert 'Critical' in prompt and 'fake/mock/stubbed/page-load/screenshot evidence' in prompt
             assert 'Major' in prompt and 'fixture, real entrypoint, or expected assertion' in prompt
-            assert 'suggested_fix' in prompt and 'Playwright or pytest command' in prompt
+            assert 'suggested_fix' in prompt and 'script entrypoint' in prompt
             (request.artifact_dir / 'test-strategy.json').write_text(
                 json.dumps(
                     {
@@ -1398,7 +1398,7 @@ def test_unit_plan_drafter_persists_test_strategist_artifacts(tmp_path: Path, mo
                                     {
                                         'id': 'TC-AC1-E2E',
                                         'layer': 'e2e',
-                                        'command': 'pnpm exec playwright test import-retry.spec.ts --workers=1',
+                                        'command': 'bash scripts/verify/import-retry-e2e.sh',
                                         'evidence': '',
                                         'expected': 'Retry state is visible in the browser',
                                     }
@@ -1427,10 +1427,10 @@ def test_unit_plan_drafter_persists_test_strategist_artifacts(tmp_path: Path, mo
                 '## Test Case Matrix\n'
                 '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
                 '| --- | --- | --- | --- | --- |\n'
-                '| AC-1 | TC-AC1-E2E | e2e | pnpm exec playwright test import-retry.spec.ts --workers=1 | Retry state visible |\n\n'
+                '| AC-1 | TC-AC1-E2E | e2e | bash scripts/verify/import-retry-e2e.sh | Retry state visible |\n\n'
                 '## Controller State Patch\n\n'
                 '```json\n'
-                '{"currentUnitId":"unit-01","objectiveCoverage":[{"objective":"Import retry state is visible","units":["unit-01"],"status":"partial"}],"units":[{"id":"unit-01","name":"Import retry visibility","passes":false,"test_cases":[{"id":"TC-AC1-E2E","acceptance_criterion":"AC-1","layer":"e2e","command":"pnpm exec playwright test import-retry.spec.ts --workers=1","expected":"Retry state visible"}],"verification_commands":["pnpm exec playwright test import-retry.spec.ts --workers=1"],"verification_env":{"DATABASE_URL":"file:test.db"}}]}\n'
+                '{"currentUnitId":"unit-01","objectiveCoverage":[{"objective":"Import retry state is visible","units":["unit-01"],"status":"partial"}],"units":[{"id":"unit-01","name":"Import retry visibility","passes":false,"test_cases":[{"id":"TC-AC1-E2E","acceptance_criterion":"AC-1","layer":"e2e","command":"bash scripts/verify/import-retry-e2e.sh","expected":"Retry state visible"}],"verification_commands":["bash scripts/verify/import-retry-e2e.sh"],"verification_env":{"DATABASE_URL":"file:test.db"}}]}\n'
                 '```\n',
                 encoding='utf-8',
             )
@@ -1754,7 +1754,7 @@ def test_unit_plan_drafter_runs_planner_before_strategist_and_passes_body_in_pro
                                     {
                                         'id': 'TC-AC1',
                                         'layer': 'integration',
-                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'command': 'bash scripts/verify/test-delivery.sh',
                                         'expected': 'Delivery behavior works',
                                     }
                                 ],
@@ -1819,7 +1819,7 @@ def test_codex_patcher_fills_critical_gap_and_enters_unit_plan_gate(tmp_path: Pa
                                     {
                                         'id': 'TC-AC1',
                                         'layer': 'integration',
-                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'command': 'bash scripts/verify/test-delivery.sh',
                                         'expected': 'Delivery behavior works',
                                     }
                                 ],
@@ -1940,7 +1940,7 @@ def test_controller_renders_major_minor_gap_report_in_existing_unit_plan_gate(tm
                                     {
                                         'id': 'TC-AC1',
                                         'layer': 'integration',
-                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'command': 'bash scripts/verify/test-delivery.sh',
                                         'expected': 'Delivery behavior works',
                                     }
                                 ],
@@ -2216,7 +2216,7 @@ def test_e2e_test_strategist_unit_plan_flow(tmp_path: Path, monkeypatch) -> None
                                     {
                                         'id': 'TC-AC1',
                                         'layer': 'integration',
-                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'command': 'bash scripts/verify/test-delivery.sh',
                                         'fixture': 'fake unit planner and strategist',
                                         'environment': 'temporary state dir',
                                         'evidence': 'approvals/unit-plan.md',
@@ -2498,7 +2498,7 @@ def test_controller_resets_stale_strategist_retry_count_for_fresh_unit_plan_cycl
                                     {
                                         'id': 'TC-AC1',
                                         'layer': 'integration',
-                                        'command': 'pytest tests/test_delivery.py -q',
+                                        'command': 'bash scripts/verify/test-delivery.sh',
                                         'expected': 'Delivery behavior works',
                                     }
                                 ],
@@ -4282,7 +4282,7 @@ def test_run_verifier_rejects_malformed_evidence_schema_before_unit_complete(
                     'id': 'unit-01',
                     'name': 'Delivery',
                     'passes': False,
-                    'verification_commands': ['pytest tests/test_delivery.py -q'],
+                    'verification_commands': ['bash scripts/verify/test-delivery.sh'],
                 },
             ],
         },
@@ -4295,7 +4295,7 @@ def test_run_verifier_rejects_malformed_evidence_schema_before_unit_complete(
             json.dumps({
                 'unit_id': 'unit-01',
                 'passed': True,
-                'commands': ['pytest tests/test_delivery.py -q'],
+                'commands': ['bash scripts/verify/test-delivery.sh'],
                 'evidence_files': ['green-test.txt'],
                 'verified_at': '2026-05-04T00:00:00+00:00',
             }),
@@ -4868,7 +4868,10 @@ def test_drive_plannotator_reviews_requirements_bundle_when_available_and_keeps_
     approval_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
     approval_path.parent.mkdir(parents=True, exist_ok=True)
     approval_path.write_text(
-        '# Requirements & Acceptance Confirmation\n\nClaude body\n\n## Human Confirmation\n\nStatus: pending\n',
+        _requirements_body_with_infrastructure(
+            '# Requirements & Acceptance Confirmation\n\nClaude body\n'
+        )
+        + '\n## Human Confirmation\n\nStatus: pending\n',
         encoding='utf-8',
     )
     body_path = state_dir / 'artifacts' / 'requirements-draft' / 'requirements-body.md'
@@ -5047,7 +5050,7 @@ def test_drive_auto_approves_gate_when_plannotator_approves(
 ## Units
 ### unit-01 - Delivery
 - Verification commands:
-  - `pytest tests/test_delivery.py -q`
+  - `bash scripts/verify/test-delivery.sh`
 
 ## Controller State Patch
 
@@ -5062,7 +5065,7 @@ def test_drive_auto_approves_gate_when_plannotator_approves(
       "id": "unit-01",
       "name": "Delivery",
       "passes": false,
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }
   ]
 }
@@ -5950,7 +5953,7 @@ def test_status_prints_recoverable_wait_guidance_with_state_dir_go(tmp_path: Pat
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
     assert lines[0].startswith('currentStep=EXECUTE_UNIT status=active')
-    assert '原因：Agent 等待超时或 idle，属于可恢复等待。' in result.stdout
+    assert '原因：Agent 等待超时、idle 或后台 shell 仍在运行，属于可恢复等待。' in result.stdout
     assert f'waygate go --state-dir {shlex.quote(str(state_dir))}' in result.stdout
     assert 'waygate retry' not in result.stdout
 
@@ -7342,6 +7345,7 @@ def test_requirements_draft_does_not_recover_done_and_body_older_than_timeout(
     assert wait['runner_status'] == 'timeout'
     assert wait['summary_path'] == str(summary_path)
     assert dispatch_count == 0
+    assert not (draft_dir / 'requirements-resume-timeout-decision.json').exists()
 
 
 def test_requirements_draft_waits_on_existing_timeout_run_until_fresh_body_arrives(
@@ -7507,7 +7511,7 @@ def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_re
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+| 无 active must AO | AC-1 | covered | e2e | bash scripts/verify/test-delivery-e2e.sh |
 """ + _requirements_e2e_review_matrix('AC-1')),
         _requirements_body_with_infrastructure("""# 需求与验收确认
 
@@ -7517,7 +7521,7 @@ def test_requirements_draft_auto_revises_controller_invalid_gate_before_human_re
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+| 无 active must AO | AC-1 | covered | e2e | bash scripts/verify/test-delivery-e2e.sh |
 
 """ + _requirements_e2e_review_matrix() + """
 ## Journey Acceptance Matrix
@@ -7618,7 +7622,7 @@ def test_drive_auto_revises_pending_requirements_gate_before_human_review(
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+| AO-001 | AC-1 | covered | integration | bash scripts/verify/test-delivery.sh |
 """),
     )
     captured_prompts: list[str] = []
@@ -7638,8 +7642,8 @@ def test_drive_auto_revises_pending_requirements_gate_before_human_review(
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
-| AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+| AO-001 | AC-1 | covered | integration | bash scripts/verify/test-delivery.sh |
+| AO-002 | AC-1 | covered | integration | bash scripts/verify/test-delivery.sh |
 """),
             encoding='utf-8',
         )
@@ -8074,8 +8078,8 @@ def test_unit_plan_draft_auto_revises_controller_invalid_gate_before_human_revie
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
-| AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+| AO-001 | AC-1 | covered | integration | bash scripts/verify/test-delivery.sh |
+| AO-002 | AC-1 | covered | integration | bash scripts/verify/test-delivery.sh |
 """),
     )
     approve_gate_file(requirements_path, actor='tester')
@@ -8177,8 +8181,8 @@ def test_drive_auto_revises_invalid_unit_plan_with_short_precheck_status(
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
-| AO-002 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+| AO-001 | AC-1 | covered | integration | bash scripts/verify/test-delivery.sh |
+| AO-002 | AC-1 | covered | integration | bash scripts/verify/test-delivery.sh |
 """),
     )
     approve_gate_file(requirements_path, actor='tester')
@@ -8261,7 +8265,7 @@ def _unit_plan_body_with_obligations(obligations: list[str]) -> str:
 ## Test Case Matrix
 | Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |
 | --- | --- | --- | --- | --- |
-| AC-1 covers {', '.join(obligations)} | TC-1 | integration | pytest tests/test_delivery.py -q | Delivery behavior works |
+| AC-1 covers {', '.join(obligations)} | TC-1 | integration | bash scripts/verify/test-delivery.sh | Delivery behavior works |
 
 ## Controller State Patch
 
@@ -8283,11 +8287,11 @@ def _unit_plan_body_with_obligations(obligations: list[str]) -> str:
           "covers_obligations": {json.dumps(obligations)},
           "layer": "integration",
           "fixture": "tests/fixtures/delivery.json",
-          "command": "pytest tests/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery.sh",
           "expected": "Delivery behavior works"
         }}
       ],
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }}
   ]
 }}
@@ -8340,7 +8344,7 @@ def test_drive_announces_plannotator_feedback_before_revising_gate(
 ## Units
 ### unit-01 - Delivery
 - Verification commands:
-  - `pytest tests/test_delivery.py -q`
+  - `bash scripts/verify/test-delivery.sh`
 """,
     )
     fake_plannotator = tmp_path / 'fake-plannotator'
@@ -8638,7 +8642,7 @@ def test_drive_waits_for_plannotator_approval_after_printing_link(
 ## Units
 ### unit-01 - Delivery
 - Verification commands:
-  - `pytest tests/test_delivery.py -q`
+  - `bash scripts/verify/test-delivery.sh`
 
 ## Controller State Patch
 
@@ -8653,7 +8657,7 @@ def test_drive_waits_for_plannotator_approval_after_printing_link(
       "id": "unit-01",
       "name": "Delivery",
       "passes": false,
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }
   ]
 }
@@ -8751,7 +8755,7 @@ def test_drive_can_approve_unit_plan_gate_and_continue(tmp_path: Path) -> None:
 ## Units
 ### unit-01 - Delivery
 - Verification commands:
-  - `pytest tests/test_delivery.py -q`
+  - `bash scripts/verify/test-delivery.sh`
 
 ## Controller State Patch
 
@@ -8766,7 +8770,7 @@ def test_drive_can_approve_unit_plan_gate_and_continue(tmp_path: Path) -> None:
       "id": "unit-01",
       "name": "Delivery",
       "passes": false,
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }
   ]
 }
@@ -8832,7 +8836,7 @@ def test_drive_blocks_unit_plan_approval_when_acceptance_obligation_is_missing(t
 ## Test Case Matrix
 | Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |
 | --- | --- | --- | --- | --- |
-| AC-1 covers AO-001 | TC-1 | integration | pytest tests/test_delivery.py -q | AO-001 works |
+| AC-1 covers AO-001 | TC-1 | integration | bash scripts/verify/test-delivery.sh | AO-001 works |
 
 ## Controller State Patch
 
@@ -8853,11 +8857,11 @@ def test_drive_blocks_unit_plan_approval_when_acceptance_obligation_is_missing(t
           "acceptance_criterion": "AC-1",
           "covers_obligations": ["AO-001"],
           "layer": "integration",
-          "command": "pytest tests/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery.sh",
           "expected": "AO-001 works"
         }
       ],
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }
   ]
 }
@@ -8924,7 +8928,7 @@ def test_requirements_approval_blocks_unmapped_acceptance_obligation(tmp_path: P
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| AO-001 | AC-1 | covered | integration | pytest tests/test_delivery.py -q |
+| AO-001 | AC-1 | covered | integration | bash scripts/verify/test-delivery.sh |
 """,
     )
 
@@ -8993,7 +8997,7 @@ def test_requirements_approval_blocks_e2e_ac_without_journey_contract(tmp_path: 
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+| 无 active must AO | AC-1 | covered | e2e | bash scripts/verify/test-delivery-e2e.sh |
 """ + _requirements_e2e_review_matrix('AC-1')),
     )
 
@@ -9043,7 +9047,7 @@ def test_requirements_approval_writes_journey_contract_artifact(tmp_path: Path) 
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+| 无 active must AO | AC-1 | covered | e2e | bash scripts/verify/test-delivery-e2e.sh |
 
 """ + _requirements_e2e_review_matrix() + """
 ## Journey Acceptance Matrix
@@ -9115,7 +9119,7 @@ def test_requirements_approval_rejects_e2e_gate_without_4_6_review_matrix(tmp_pa
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| 无 active must AO | AC-1 | covered | e2e | pytest tests/e2e/test_delivery.py -q |
+| 无 active must AO | AC-1 | covered | e2e | bash scripts/verify/test-delivery-e2e.sh |
 
 ## Journey Acceptance Matrix
 | Journey | Title | Status | Steps | AC | Verification Layer |
@@ -9174,7 +9178,7 @@ def test_run_rejects_preapproved_requirements_missing_ac_verification_layer(tmp_
 ## Requirements Traceability Matrix
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| AO-001 | AC-1 | covered |  | pytest tests/test_delivery.py -q |
+| AO-001 | AC-1 | covered |  | bash scripts/verify/test-delivery.sh |
 """),
     )
     approve_gate_file(gate_path, actor='tester')
@@ -9287,7 +9291,7 @@ def test_approve_requirements_gate_records_change_request_approver(tmp_path: Pat
 ## 4. 需求可追溯矩阵（Requirements Traceability Matrix）
 | AO | AC | Status | Verification Layer | Evidence/Reason |
 | --- | --- | --- | --- | --- |
-| 无 active must AO | AC-1 | covered | unit | pytest tests/test_delivery.py -q |
+| 无 active must AO | AC-1 | covered | unit | bash scripts/verify/test-delivery.sh |
 
 ## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）
 | AC | Product Design Ref | Technical Architecture Ref | Notes |
@@ -9402,12 +9406,12 @@ def test_unit_plan_approval_rejects_active_journey_without_mapped_test_case(tmp_
           "fixture": "tests/fixtures/delivery.json",
           "environment_kind": "local_real",
           "real_entrypoint": "/delivery",
-          "command": "pytest tests/e2e/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery-e2e.sh",
           "expected": "delivery confirmation is visible",
           "golden_path": true
         }
       ],
-      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery-e2e.sh"]
     }
   ]
 }
@@ -9516,12 +9520,12 @@ def test_unit_plan_approval_enriches_journey_contract_from_mapped_test_case(tmp_
           "fixture": "tests/fixtures/delivery.json",
           "environment_kind": "local_real",
           "real_entrypoint": "/delivery",
-          "command": "pytest tests/e2e/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery-e2e.sh",
           "expected": "delivery confirmation is visible",
           "golden_path": true
         }
       ],
-      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery-e2e.sh"]
     }
   ]
 }
@@ -9539,7 +9543,7 @@ def test_unit_plan_approval_enriches_journey_contract_from_mapped_test_case(tmp_
     journey = contract['journeys'][0]
     assert journey['linked_units'] == ['unit-01']
     assert journey['test_cases'] == ['TC-AC1-E2E']
-    assert journey['verification_command'] == 'pytest tests/e2e/test_delivery.py -q'
+    assert journey['verification_command'] == 'bash scripts/verify/test-delivery-e2e.sh'
 
 
 
@@ -9635,12 +9639,12 @@ def test_unit_plan_approval_accepts_covers_journeys_mapping(tmp_path: Path) -> N
           "fixture": "tests/fixtures/delivery.json",
           "environment_kind": "local_real",
           "real_entrypoint": "/delivery",
-          "command": "pytest tests/e2e/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery-e2e.sh",
           "expected": "delivery confirmation is visible",
           "golden_path": true
         }
       ],
-      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery-e2e.sh"]
     }
   ]
 }
@@ -9749,12 +9753,12 @@ def test_unit_plan_approval_accepts_backticked_journey_contract_ids(tmp_path: Pa
           "fixture": "tests/fixtures/delivery.json",
           "environment_kind": "local_real",
           "real_entrypoint": "/delivery",
-          "command": "pytest tests/e2e/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery-e2e.sh",
           "expected": "delivery confirmation is visible",
           "golden_path": true
         }
       ],
-      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery-e2e.sh"]
     }
   ]
 }
@@ -9864,12 +9868,12 @@ def test_unit_plan_approval_accepts_journey_refs_mapping(tmp_path: Path) -> None
           "fixture": "tests/fixtures/delivery.json",
           "environment_kind": "local_real",
           "real_entrypoint": "/delivery",
-          "command": "pytest tests/e2e/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery-e2e.sh",
           "expected": "delivery confirmation is visible",
           "golden_path": true
         }
       ],
-      "verification_commands": ["pytest tests/e2e/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery-e2e.sh"]
     }
   ]
 }
@@ -9885,7 +9889,7 @@ def test_unit_plan_approval_accepts_journey_refs_mapping(tmp_path: Path) -> None
     journey = contract['journeys'][0]
     assert journey['linked_units'] == ['unit-01']
     assert journey['test_cases'] == ['TC-AC1-E2E']
-    assert journey['verification_command'] == 'pytest tests/e2e/test_delivery.py -q'
+    assert journey['verification_command'] == 'bash scripts/verify/test-delivery-e2e.sh'
 
 
 def test_run_rejects_preapproved_unit_plan_missing_acceptance_obligation(tmp_path: Path) -> None:
@@ -9927,7 +9931,7 @@ def test_run_rejects_preapproved_unit_plan_missing_acceptance_obligation(tmp_pat
 ## Test Case Matrix
 | Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |
 | --- | --- | --- | --- | --- |
-| AC-1 covers AO-001 | TC-1 | integration | pytest tests/test_delivery.py -q | AO-001 works |
+| AC-1 covers AO-001 | TC-1 | integration | bash scripts/verify/test-delivery.sh | AO-001 works |
 
 ## Controller State Patch
 
@@ -9948,11 +9952,11 @@ def test_run_rejects_preapproved_unit_plan_missing_acceptance_obligation(tmp_pat
           "acceptance_criterion": "AC-1",
           "covers_obligations": ["AO-001"],
           "layer": "integration",
-          "command": "pytest tests/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery.sh",
           "expected": "AO-001 works"
         }
       ],
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }
   ]
 }
@@ -10039,11 +10043,11 @@ def test_run_rejects_preapproved_unit_plan_missing_design_architecture_traceabil
           "id": "TC-1",
           "acceptance_criterion": "AC-1",
           "layer": "integration",
-          "command": "pytest tests/test_delivery.py -q",
+          "command": "bash scripts/verify/test-delivery.sh",
           "expected": "Delivery behavior works"
         }
       ],
-      "verification_commands": ["pytest tests/test_delivery.py -q"]
+      "verification_commands": ["bash scripts/verify/test-delivery.sh"]
     }
   ]
 }
@@ -11883,7 +11887,7 @@ def test_patch_list_in_final_acceptance_gate_is_extracted_for_builder(tmp_path: 
         '## 验收证据矩阵（Final Acceptance Evidence Matrix）\n\n'
         '| AO | AC | Test Case | Layer | Status | Evidence | Expected | Artifacts | Golden Path |\n'
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
-        '| AO-001 | AC-1 | TC-AC1-GOLDEN | e2e | passed | `pytest tests/test_delivery.py -q` | delivery visible | verification.json | yes |\n\n'
+        '| AO-001 | AC-1 | TC-AC1-GOLDEN | e2e | passed | `bash scripts/verify/test-delivery.sh` | delivery visible | verification.json | yes |\n\n'
         '## 修改清单\n\n'
         '- [ ] 登录按钮文字改为"立即登录"\n'
         '- [ ] 错误提示消失时间从 5s 改为 3s\n\n'
@@ -12069,7 +12073,7 @@ def test_final_acceptance_approval_accepts_passed_journey_evidence(tmp_path: Pat
                         'unit_id': 'unit-01',
                         'test_case_id': 'TC-AC1-E2E',
                         'layer': 'e2e',
-                        'command': 'pytest tests/e2e/test_delivery.py -q',
+                        'command': 'bash scripts/verify/test-delivery-e2e.sh',
                         'status': 'passed',
                         'returncode': 0,
                         'expected': 'delivery confirmation is visible',
