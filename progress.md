@@ -28,6 +28,19 @@
   - GREEN：`python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q -k 'staged_requirements or package_version or version'` -> `4 passed, 6 deselected`。
   - GREEN：`python3 -m pytest workflow_controller/tests -q` -> `795 passed in 79.50s`。
 
+### tmux Claude 后台 shell 超时语义修正
+- **状态：** implementation verified; focused regression passed.
+- 复现路径：`16:0.1` Claude pane 显示 `1 shell` / `1 shell still running`，但 controller 在 Requirements Draft 等待上限到达后写入 `status=timeout` 和“pane output stopped changing”文案。
+- 根因：`workflow_controller/runners/tmux_claude.py` 的 idle monitor 已用 `_tmux_pane_tail_shows_running_shell()` 避免 `agent_idle_without_done`，但最终 deadline 分支没有复用该判断，仍无条件返回 `timeout`。
+- 已修复：deadline 到达时若 pane tail 仍显示 shell 工具运行，runner 返回 `agent_shell_running_without_done`，记录同名 event，并写明这是 active shell pending 而不是 idle/no-response timeout。
+- 已按现场调试结论去除额外 timeout 证据落盘，不再生成 `timeout-decision.json` 或 `requirements-resume-timeout-decision.json`。
+- 已同步 recoverable wait 状态集合、Requirements pending draft 状态集合、stop guidance 和正式 workflow / usage 文档。
+- 已完成验证：
+  - `.venv312/bin/python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q -k 'shell_tool_tail_is_not_idle_without_done or idle_without_done or timeout or idle_monitor or nudge'` -> `9 passed, 30 deselected`
+  - `.venv312/bin/python -m pytest workflow_controller/tests/test_rrc_agent_runners.py workflow_controller/tests/test_rrc_controller.py -q -k 'shell_tool_tail_is_not_idle_without_done or recoverable_agent_wait or requirements_draft_timeout or builder_timeout or unit_plan_draft_timeout or stop_guidance'` -> `10 passed, 253 deselected`
+  - `.venv312/bin/python -m pytest workflow_controller/tests/test_rrc_agent_runners.py -q -k 'timeout or idle_without_done or shell_tool_tail_is_not_idle_without_done or nudge'` -> `9 passed, 30 deselected`
+  - `.venv312/bin/python -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_draft_timeout or recoverable_agent_wait or stop_guidance'` -> `7 passed, 217 deselected`
+
 ## 会话：2026-05-29
 
 ### V0.6.2b Product Design 后常驻原型预览

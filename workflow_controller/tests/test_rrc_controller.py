@@ -6537,7 +6537,7 @@ def test_status_prints_recoverable_wait_guidance_with_state_dir_go(tmp_path: Pat
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
     assert lines[0].startswith('currentStep=EXECUTE_UNIT status=active')
-    assert '原因：Agent 等待超时或 idle，属于可恢复等待。' in result.stdout
+    assert '原因：Agent 等待超时、idle 或后台 shell 仍在运行，属于可恢复等待。' in result.stdout
     assert f'waygate go --state-dir {shlex.quote(str(state_dir))}' in result.stdout
     assert 'waygate retry' not in result.stdout
 
@@ -7963,6 +7963,7 @@ def test_requirements_draft_does_not_recover_done_and_body_older_than_timeout(
     assert wait['runner_status'] == 'timeout'
     assert wait['summary_path'] == str(summary_path)
     assert dispatch_count == 0
+    assert not (draft_dir / 'requirements-resume-timeout-decision.json').exists()
 
 
 def test_requirements_draft_waits_on_existing_timeout_run_until_fresh_body_arrives(

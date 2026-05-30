@@ -15,6 +15,12 @@
 - 非交互 CLI 对 staged Requirements revision 需要 `--reason` 或 `--checkpoint`，否则审计上无法区分“人工已写反馈”与“误触 revise”。Legacy 非 staged Requirements gate 仍保持已有行为，允许从已编辑 gate 或 Plannotator submitted feedback 返工。
 - explicit checkpoint revise event 需要记录 `gate`、`checkpoint`、`checkpoint_label`、`reason`、`reason_key` 和 `routing_source`，这样可以审计是人工指定 checkpoint 还是 semantic routing 推断。
 
+## 2026-05-30 tmux Claude 后台 shell 等待语义
+
+- Claude pane 中出现 `shell ·` 或 `1 shell still running` 这类状态时，说明 agent 仍有后台 shell/tool 在运行；controller 不能把这种状态称为 pane idle 或 no-response timeout。
+- idle monitor 和最终 deadline 分支必须使用同一 shell 活动事实源。前者避免误发 nudge / `agent_idle_without_done`，后者在等待上限到达时返回 `agent_shell_running_without_done`，而不是 `timeout`。
+- `agent_shell_running_without_done` 仍是 recoverable wait：单次 `go` 不无限阻塞，操作者可以等 shell 完成或停止 shell 后再运行 `go/run/drive/start` 接回同一阶段；它不是 Requirements / Unit Plan 合同失败，也不是 blocked。
+
 ## 2026-05-28 Unit Plan 命令脚本入口限制
 
 - Unit Plan 的 `verification_commands[]` 和 test case `command` 是 verifier 之后实际执行命令的事实源，因此命令格式限制必须落在 controller validator 中，不能只靠 prompt 或人工说明。

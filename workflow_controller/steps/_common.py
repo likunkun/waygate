@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-RECOVERABLE_AGENT_RUN_STATUSES = {'timeout', 'agent_idle_without_done'}
+RECOVERABLE_AGENT_RUN_STATUSES = {'timeout', 'agent_idle_without_done', 'agent_shell_running_without_done'}
 
 
 @dataclass
