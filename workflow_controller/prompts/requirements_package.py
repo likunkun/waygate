@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from workflow_controller.requirements_package import STAGE_LABELS
 from workflow_controller.requirements_surface import (
     render_requirements_surface_classification_markdown,
 )
@@ -11,7 +12,7 @@ from workflow_controller.requirements_surface import (
 def render_scope_prompt(state: dict[str, Any], *, output_path: Path) -> str:
     spec_section = _render_requirements_spec_section(state)
     surface_section = render_requirements_surface_classification_markdown(state)
-    return f"""生成 Requirements Scope checkpoint，并写入这个精确文件：
+    return f"""生成 {STAGE_LABELS['scope']}，并写入这个精确文件：
 {output_path}
 
 使用简体中文。保留命令、路径、JSON key 和代码标识符原文。
@@ -121,7 +122,7 @@ def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) ->
     return _render_downstream_prompt(
         state,
         output_path=output_path,
-        title='Product Design Brief',
+        title=STAGE_LABELS['product_design'],
         stage_goal='说明目标产品 UX、目标用户如何进入并审阅可见表面、原型/审阅入口证据、页面/状态/详情/API 输出的交互行为。',
         stage_rules=stage_rules,
         upstream_stages=['scope'],
@@ -132,7 +133,7 @@ def render_architecture_prompt(state: dict[str, Any], *, output_path: Path) -> s
     return _render_downstream_prompt(
         state,
         output_path=output_path,
-        title='Technical Architecture Brief',
+        title=STAGE_LABELS['architecture'],
         stage_goal='说明目标系统交互架构、模块边界、API、数据流、状态写入/回看、外部系统调用和运行时依赖。',
         stage_rules=[
             '必须围绕目标系统怎样完成业务交互、数据写入、状态回看和外部系统调用。',
@@ -147,7 +148,7 @@ def render_test_strategy_prompt(state: dict[str, Any], *, output_path: Path) -> 
     return _render_downstream_prompt(
         state,
         output_path=output_path,
-        title='Requirements Test Strategy Brief',
+        title=STAGE_LABELS['test_strategy'],
         stage_goal='在策略层说明风险、验证层级、真实 E2E/浏览器/API/service 审阅方法、mock policy 和证据形态。',
         stage_rules=[
             '只写 Requirements 阶段测试策略，不要提前生成 Unit Plan 级别的 exact commands、完整测试用例矩阵或实现任务。',
@@ -177,7 +178,7 @@ def _render_downstream_prompt(
     spec_section = _render_requirements_spec_section(state)
     surface_section = render_requirements_surface_classification_markdown(state)
     rules = '\n'.join(f'- {rule}' for rule in stage_rules)
-    return f"""生成 {title} checkpoint，并写入这个精确文件：
+    return f"""生成 {title}，并写入这个精确文件：
 {output_path}
 
 使用简体中文。保留命令、路径、JSON key 和代码标识符原文。
@@ -214,10 +215,10 @@ def _render_upstream_artifacts(state: dict[str, Any], stages: list[str]) -> str:
         record = artifacts.get(stage)
         if isinstance(record, dict):
             lines.append(
-                f"- {stage}: path=`{record.get('path')}` hash=`{record.get('hash')}` status=`{record.get('status')}`"
+                f"- {STAGE_LABELS.get(stage, stage)} (`{stage}`): path=`{record.get('path')}` hash=`{record.get('hash')}` status=`{record.get('status')}`"
             )
         else:
-            lines.append(f'- {stage}: missing artifact metadata')
+            lines.append(f'- {STAGE_LABELS.get(stage, stage)} (`{stage}`): missing artifact metadata')
     return '\n'.join(lines)
 
 

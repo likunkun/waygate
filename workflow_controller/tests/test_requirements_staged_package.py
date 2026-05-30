@@ -11,9 +11,12 @@ import workflow_controller.rrc_controller as rrc_controller_module
 from workflow_controller.requirements_package import (
     REQUIREMENTS_PACKAGE_VERSION,
     STAGED_REQUIREMENTS_STEPS,
+    STAGE_APPENDIX_TITLES,
+    STAGE_LABELS,
     artifact_hash,
     invalidate_stage_and_downstream,
     mark_stage_artifact,
+    normalize_requirements_checkpoint,
     package_artifacts_complete,
 )
 from workflow_controller.requirements_revision_routing import (
@@ -238,6 +241,27 @@ def test_staged_requirements_steps_are_ordered() -> None:
         'test_strategy',
         'final_gate',
     ]
+
+
+def test_staged_requirements_public_checkpoint_labels_are_chinese_primary() -> None:
+    assert STAGE_LABELS['scope'].startswith('需求范围检查点')
+    assert STAGE_LABELS['product_design'].startswith('产品设计简报')
+    assert STAGE_LABELS['architecture'].startswith('技术架构简报')
+    assert STAGE_LABELS['test_strategy'].startswith('需求测试策略简报')
+    assert STAGE_APPENDIX_TITLES['scope'].startswith('附录 A：需求范围检查点')
+    assert STAGE_APPENDIX_TITLES['product_design'].startswith('附录 B：产品设计简报')
+
+
+def test_normalize_requirements_checkpoint_accepts_cli_and_chinese_aliases() -> None:
+    assert normalize_requirements_checkpoint('product-design') == 'product_design'
+    assert normalize_requirements_checkpoint('product_design') == 'product_design'
+    assert normalize_requirements_checkpoint('产品设计') == 'product_design'
+    assert normalize_requirements_checkpoint('技术架构') == 'architecture'
+    assert normalize_requirements_checkpoint('测试策略') == 'test_strategy'
+    assert normalize_requirements_checkpoint('需求范围') == 'scope'
+
+    with pytest.raises(ValueError, match='Unknown requirements checkpoint'):
+        normalize_requirements_checkpoint('deployment')
 
 
 def test_mark_stage_artifact_records_path_hash_and_status(tmp_path: Path) -> None:
@@ -1232,7 +1256,8 @@ def test_product_design_run_once_stage_validation_failure_records_recovery_state
 
     assert state['status'] == 'blocked'
     assert state['currentStep'] == 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF'
-    assert 'Product Design stage validation failed' in state['blockedReason']
+    assert '产品设计简报' in state['blockedReason']
+    assert 'stage validation failed' in state['blockedReason']
     assert 'prototype-manifest.json' in state['blockedReason']
     assert state['blockedContext']['category'] == 'requirements_stage_validation'
     assert state['blockedContext']['action'] == 'run_requirements_product_design_brief'
@@ -1241,10 +1266,10 @@ def test_product_design_run_once_stage_validation_failure_records_recovery_state
     validation = json.loads(validation_path.read_text(encoding='utf-8'))
     assert validation['stage'] == 'product_design'
     assert validation['action'] == 'run_requirements_product_design_brief'
-    assert 'Rerun Product Design checkpoint' in validation['guidance']
+    assert 'Rerun 产品设计简报' in validation['guidance']
     assert 'upstream AC/Journey/Requirements contract change' in validation['guidance']
     guidance = format_stop_guidance(state, state_dir=state_dir)
-    assert '默认解除阻塞并重跑 Product Design checkpoint' in guidance
+    assert '默认解除阻塞并重跑 产品设计简报' in guidance
     assert 'waygate unblock --state-dir' in guidance
     assert 'waygate revise --gate requirements' in guidance
 
@@ -1492,10 +1517,13 @@ def test_final_package_assembly_embeds_checkpoint_appendices_and_hashes(tmp_path
 
     assert '## 审批摘要' in gate
     assert '## Artifact Hashes' in gate
-    assert '## 附录 A：Requirements Scope Checkpoint' in gate
-    assert '## 附录 B：Product Design Brief' in gate
-    assert '## 附录 C：Technical Architecture Brief' in gate
-    assert '## 附录 D：Requirements Test Strategy Brief' in gate
+    assert '| Checkpoint | Stage Key | Path | Hash | Status |' in gate
+    assert '| 需求范围检查点' in gate
+    assert '| 产品设计简报' in gate
+    assert '## 附录 A：需求范围检查点' in gate
+    assert '## 附录 B：产品设计简报' in gate
+    assert '## 附录 C：技术架构简报' in gate
+    assert '## 附录 D：需求测试策略简报' in gate
     for record in state['requirementsPackage']['artifacts'].values():
         assert record['path'] in gate
         assert record['hash'] in gate
@@ -1514,7 +1542,7 @@ def test_package_consistency_rejects_missing_appendix_hash_and_conflicts(tmp_pat
 
     with pytest.raises(ValueError, match='missing appendix.*Product Design'):
         validate_staged_requirements_package_consistency(
-            valid_gate.replace('## 附录 B：Product Design Brief', '## Removed Product Design Brief'),
+            valid_gate.replace('## 附录 B：产品设计简报', '## Removed Product Design Brief'),
             state,
         )
 

@@ -2,6 +2,13 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2c
+
+- Made the public staged Requirements checkpoint names Chinese-primary: 需求范围检查点, 产品设计简报, 技术架构简报, and 需求测试策略简报, while keeping internal stage keys unchanged.
+- Updated final Requirements package assembly to show Chinese appendix titles and checkpoint names in the artifact hash table.
+- Added `waygate revise --gate requirements --checkpoint ... --reason ...` for explicit rollback to a staged checkpoint, including Chinese aliases such as `产品设计`.
+- Kept Unit Plan revision behavior unchanged and reject `--checkpoint` with `--gate unit-plan`.
+
 ## 0.6.2b
 
 - Added Blocked Assist for controlled diagnosis of `status=blocked` workflows, with summary artifacts, human-confirmed `human_reason`, and explicit controller-selected recovery routes.

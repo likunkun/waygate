@@ -295,6 +295,20 @@ Delivered work:
 - Start preview port selection from `WAYGATE_PREVIEW_PORT` or `20001`, incrementing when a port is occupied.
 - Keep the preview server alive after Plannotator Close and close it when the controller process exits.
 
+### V0.6.2c - Chinese Checkpoint Names and Targeted Revise
+
+Goal: make staged Requirements checkpoint names Chinese-primary for human review and let operators revise a specific checkpoint with an auditable reason.
+
+Status: patch release implemented in package `0.6.2c`.
+
+Delivered work:
+
+- Use Chinese-primary public checkpoint names for final gate appendices, hash tables, prompts, compact output, and guidance: 需求范围检查点, 产品设计简报, 技术架构简报, and 需求测试策略简报.
+- Preserve English internal state keys, artifact keys, and state-machine steps for historical session compatibility.
+- Add `waygate revise --gate requirements --checkpoint scope|product-design|architecture|test-strategy --reason ...`, with Chinese aliases such as `需求范围`, `产品设计`, `技术架构`, and `测试策略`.
+- Keep `--checkpoint` scoped to Requirements revision; `--gate unit-plan` continues to use the existing Unit Plan revision behavior.
+- Mark the selected checkpoint and downstream staged artifacts stale, clear Requirements and Unit Plan approvals, delete the current Unit Plan gate, and record the explicit checkpoint route in audit events.
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.

@@ -26,7 +26,7 @@ Waygate 不是要把人移出流程，而是把人的注意力放回真正重要
 | --- | --- |
 | 可恢复工作流 | `session.json`、`events.jsonl`、approvals 和 artifacts 是事实源。 |
 | Requirements Gate | 生成人类可审阅的需求与验收标准，并执行可追溯校验，包括 V0.6.0j 基础设施缺口追问和验证留痕。 |
-| 分段 Requirements Package | V0.6.2 把过载的 Requirements draft 拆成 scope、产品设计、架构和测试策略 checkpoint；V0.6.2a 确保这些 checkpoint 围绕目标产品/目标系统表面；V0.6.2b 让 Product Design 原型预览常驻到 Requirements review。 |
+| 分段 Requirements Package | V0.6.2 把过载的 Requirements draft 拆成 scope、产品设计、架构和测试策略 checkpoint；V0.6.2a 确保这些 checkpoint 围绕目标产品/目标系统表面；V0.6.2b 让 Product Design 原型预览常驻到 Requirements review；V0.6.2c 使用中文主 checkpoint 名称并支持 Requirements checkpoint 定点 revise。 |
 | 外部 spec intake | V0.6.1 会把受支持的 OpenSpec/OpenAPI 和 Spec Kit 来源导入为可审计 conversion artifacts，并对 unsupported/deferred 格式给出清晰错误。 |
 | Unit Plan Gate | Unit Plan 必须映射目标、AC、测试用例、Journey 和验证命令。 |
 | 标注 Agent | V0.6.1 支持在 Requirements、Unit Plan 和 Final Acceptance 人工 gate 前运行非批准型、按 role 配置的 annotation / verification-assist pass。 |

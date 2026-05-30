@@ -16,6 +16,7 @@ import workflow_controller.rrc_controller as rrc_controller_module
 import workflow_controller.cli as cli_module
 from workflow_controller import __version__
 from workflow_controller.gates import approve_gate_file, render_requirements_gate_body, write_gate_file
+from workflow_controller.requirements_package import REQUIREMENTS_PACKAGE_VERSION, mark_stage_artifact
 from workflow_controller.rrc_controller import RalphRefinerController, parse_args, run_unit_plan_drafter
 from workflow_controller.steps.requirements import run_requirements_drafter
 from workflow_controller.steps._common import TestStrategistBlocked as StrategistBlocked
@@ -3040,6 +3041,169 @@ def test_revise_with_target_infers_go_style_state_dir(tmp_path: Path) -> None:
     assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
     assert state['requirementsRevisionCount'] == 1
     assert (state_dir / 'artifacts' / 'requirements-revisions' / 'revision-1.json').exists()
+
+
+def _init_staged_revision_fixture(
+    controller: RalphRefinerController,
+    state_dir: Path,
+    tmp_path: Path,
+    *,
+    current_step: str = 'PLAN_APPROVED',
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir(exist_ok=True)
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    requirements_gate = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_gate.write_text(
+        '# 需求与验收确认\n\n'
+        '## 1. 需求\n'
+        '- Existing approved staged Requirements package.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Human Confirmation\n\n'
+        'Status: approved\n'
+        'Confirmed by: human\n'
+        'Content hash: sha256:unit-approved\n',
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'target-v0-6-2c',
+        'currentUnitId': 'target-v0-6-2c',
+        'currentStep': current_step,
+        'lastVerifiedStep': 'PLAN_CREATED',
+        'status': 'active',
+        'requestedOutcome': 'V0.6.2c',
+        'feasibleOutcome': 'V0.6.2c',
+        'workspacePath': str(workspace),
+        'scopeApproved': True,
+        'autoApprove': True,
+        'agentRunner': 'subprocess',
+        'humanGatesRequired': True,
+        'stagedRequirementsEnabled': True,
+        'requirementsAccepted': True,
+        'requirementsAcceptedHash': 'sha256:req-approved',
+        'requirementsAcceptedBy': 'human',
+        'requirementsDraftGenerated': True,
+        'unitPlanAccepted': True,
+        'unitPlanAcceptedHash': 'sha256:unit-approved',
+        'unitPlanAcceptedBy': 'human',
+        'unitPlanDraftGenerated': True,
+        'objectiveCoverage': [
+            {'objective': 'V0.6.2c target acceptance', 'units': ['target-v0-6-2c'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'target-v0-6-2c', 'name': 'V0.6.2c target', 'passes': False},
+        ],
+        'requirementsPackage': {
+            'version': REQUIREMENTS_PACKAGE_VERSION,
+            'artifacts': {},
+        },
+    }
+    artifact_dir = tmp_path / 'staged-artifacts'
+    artifact_dir.mkdir()
+    for stage in ['scope', 'product_design', 'architecture', 'test_strategy']:
+        artifact_path = artifact_dir / f'{stage}.md'
+        artifact_path.write_text(f'# {stage}\n', encoding='utf-8')
+        mark_stage_artifact(state, stage, artifact_path)
+    mark_stage_artifact(state, 'final_gate', requirements_gate)
+    controller.init_state(state, force=True)
+
+
+def test_revise_requirements_with_explicit_checkpoint_routes_and_stales_downstream(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    _init_staged_revision_fixture(controller, state_dir, tmp_path)
+    reason = '补产品原型和页面状态'
+
+    controller.revise_human_gate('requirements', reason=reason, checkpoint='product-design')
+
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF'
+    assert state['nextAllowedActions'] == ['run_requirements_product_design_brief']
+    assert state['requirementsAccepted'] is False
+    assert state['unitPlanAccepted'] is False
+    assert 'requirementsAcceptedHash' not in state
+    assert 'unitPlanAcceptedHash' not in state
+    assert not (state_dir / 'approvals' / 'unit-plan.md').exists()
+    artifacts = state['requirementsPackage']['artifacts']
+    assert artifacts['scope']['status'] == 'complete'
+    assert artifacts['product_design']['status'] == 'stale'
+    assert artifacts['architecture']['status'] == 'stale'
+    assert artifacts['test_strategy']['status'] == 'stale'
+    assert artifacts['final_gate']['status'] == 'stale'
+    assert reason in state['requirementsRevisionFeedback']
+    assert '产品设计简报' in state['requirementsRevisionFeedback']
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    routed = [event for event in events if event['type'] == 'requirements_staged_revision_routed'][-1]
+    assert routed['payload']['checkpoint'] == 'product_design'
+    assert routed['payload']['routing_source'] == 'explicit_checkpoint'
+    assert routed['payload']['reason'] == reason
+
+
+def test_revise_requirements_cli_accepts_chinese_checkpoint_alias(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    _init_staged_revision_fixture(controller, state_dir, tmp_path)
+
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--checkpoint',
+        '产品设计',
+        '--reason',
+        '补产品原型和页面状态',
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF'
+    assert state['requirementsPackage']['artifacts']['product_design']['status'] == 'stale'
+
+
+def test_revise_cli_rejects_checkpoint_for_unit_plan(tmp_path: Path) -> None:
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(tmp_path / 'state'),
+        '--gate',
+        'unit-plan',
+        '--checkpoint',
+        'product-design',
+        '--reason',
+        'plan change',
+    )
+
+    assert result.returncode == 1
+    assert '--checkpoint only applies to --gate requirements' in result.stderr
+
+
+def test_revise_cli_non_tty_requires_reason_or_checkpoint(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    _init_staged_revision_fixture(controller, state_dir, tmp_path)
+
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+    )
+
+    assert result.returncode == 1
+    assert 'waygate revise --gate requirements --checkpoint product-design --reason' in result.stderr
 
 
 def test_rrc_go_inside_tmux_auto_creates_claude_pane(

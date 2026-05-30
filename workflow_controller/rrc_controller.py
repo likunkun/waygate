@@ -108,8 +108,11 @@ from workflow_controller.requirements_package import (
     STAGE_ARTIFACT_FILENAMES,
     STAGE_TO_ACTION,
     STAGE_TO_STEP,
+    checkpoint_public_label,
     invalidate_stage_and_downstream,
     mark_stage_artifact,
+    normalize_requirements_checkpoint,
+    staged_requirements_enabled,
 )
 from workflow_controller.requirements_revision_routing import (
     requirements_auto_revision_semantic_key,
@@ -253,11 +256,11 @@ ANSI_RESET = '\033[0m'
 
 ACTION_LABELS = {
     'run_requirements_drafter': '生成需求与验收草案',
-    'run_requirements_scope_drafter': '生成 Requirements Scope checkpoint',
-    'run_requirements_product_design_brief': '生成 Product Design checkpoint',
-    'run_requirements_architecture_brief': '生成 Architecture checkpoint',
-    'run_requirements_test_strategy_brief': '生成 Test Strategy checkpoint',
-    'assemble_requirements_package': '装配 Requirements package',
+    'run_requirements_scope_drafter': '生成需求范围检查点',
+    'run_requirements_product_design_brief': '生成产品设计简报',
+    'run_requirements_architecture_brief': '生成技术架构简报',
+    'run_requirements_test_strategy_brief': '生成需求测试策略简报',
+    'assemble_requirements_package': '装配最终需求确认门禁',
     'run_unit_plan_drafter': '生成 Unit Plan 草案',
     'check_requirements_acceptance': '检查需求与验收确认',
     'check_unit_plan_approval': '检查 Unit Plan 确认',
@@ -287,6 +290,11 @@ COMPACT_STAGE_LABELS = {
 
 COMPACT_PLANNING_STAGE_LABELS = {
     'Requirements draft': '需求草案',
+    'Requirements scope': '需求范围检查点',
+    'Requirements product design': '产品设计简报',
+    'Requirements architecture': '技术架构简报',
+    'Requirements test strategy': '需求测试策略简报',
+    'Requirements package assembly': '需求门禁装配',
     'Requirements confirmation': '需求确认',
     'Unit plan': 'Unit Plan',
     'Unit plan confirmation': 'Unit Plan确认',
@@ -299,6 +307,7 @@ COMPACT_PLANNING_ACTION_STAGES = {
     'run_requirements_product_design_brief': 'Requirements product design',
     'run_requirements_architecture_brief': 'Requirements architecture',
     'run_requirements_test_strategy_brief': 'Requirements test strategy',
+    'assemble_requirements_package': 'Requirements package assembly',
     'check_requirements_acceptance': 'Requirements confirmation',
     'run_unit_plan_drafter': 'Unit plan',
     'check_unit_plan_approval': 'Unit plan confirmation',
@@ -1215,10 +1224,23 @@ class RalphRefinerController:
         })
         return True
 
-    def revise_human_gate(self, gate: str, *, reason: str | None = None) -> Path:
+    def revise_human_gate(
+        self,
+        gate: str,
+        *,
+        reason: str | None = None,
+        checkpoint: str | None = None,
+        require_reason_or_checkpoint: bool = False,
+    ) -> Path:
         if gate == 'requirements':
-            return self._revise_requirements_gate(change_reason=reason)
+            return self._revise_requirements_gate(
+                change_reason=reason,
+                checkpoint=checkpoint,
+                require_reason_or_checkpoint=require_reason_or_checkpoint,
+            )
         if gate == 'unit-plan':
+            if checkpoint:
+                raise ValueError('--checkpoint only applies to --gate requirements')
             return self._revise_unit_plan_gate(human_reason=reason)
         raise ValueError(f'Unsupported gate revision: {gate}')
 
@@ -1987,6 +2009,8 @@ class RalphRefinerController:
         *,
         controller_validation_only: bool = False,
         change_reason: str | None = None,
+        checkpoint: str | None = None,
+        require_reason_or_checkpoint: bool = False,
     ) -> Path:
         state = self.store.load_state()
         if not controller_validation_only:
@@ -2030,15 +2054,36 @@ class RalphRefinerController:
             isinstance(package, dict)
             and package.get('version') == REQUIREMENTS_PACKAGE_VERSION
         )
+        explicit_checkpoint = normalize_requirements_checkpoint(checkpoint) if checkpoint else None
+        if explicit_checkpoint and not is_staged_package:
+            raise ValueError('--checkpoint requires a staged Requirements package state')
+        if (
+            is_staged_package
+            and require_reason_or_checkpoint
+            and not controller_validation_only
+            and not explicit_checkpoint
+            and not str(change_reason or '').strip()
+        ):
+            raise ValueError(
+                'non-interactive staged requirements revise requires --reason or --checkpoint. '
+                'Example: ' + _revise_requirements_checkpoint_example()
+            )
         routing_source = 'revision_feedback'
         routing_feedback = change_reason or raw_revision_feedback
-        if controller_validation_only and controller_validation_error:
+        if explicit_checkpoint:
+            routing_source = 'explicit_checkpoint'
+            routing_feedback = (change_reason or raw_revision_feedback or '').strip()
+        elif controller_validation_only and controller_validation_error:
             routing_source = 'controller_validation_error'
             routing_feedback = controller_validation_error
         elif change_reason:
             routing_source = 'change_reason'
-        routing_stage = _staged_requirements_revision_stage_from_feedback(routing_feedback)
-        routing_reason_key = requirements_auto_revision_semantic_key(routing_feedback)
+        routing_stage = explicit_checkpoint or _staged_requirements_revision_stage_from_feedback(routing_feedback)
+        routing_reason_key = (
+            f'explicit:{routing_stage}'
+            if explicit_checkpoint
+            else requirements_auto_revision_semantic_key(routing_feedback)
+        )
         if is_staged_package and controller_validation_only and controller_validation_error:
             state['requirementsRevisionFeedback'] = _requirements_controller_validation_revision_feedback(
                 reason=controller_validation_error,
@@ -2056,6 +2101,12 @@ class RalphRefinerController:
                     'EXECUTE_UNIT',
                     'FINAL_WALKTHROUGH_PREPARE',
                 },
+            )
+        if explicit_checkpoint:
+            state['requirementsRevisionFeedback'] = _prepend_requirements_checkpoint_revision_feedback(
+                state['requirementsRevisionFeedback'],
+                checkpoint=explicit_checkpoint,
+                reason=change_reason,
             )
         state['requirementsRevisionCount'] = int(state.get('requirementsRevisionCount') or 0) + 1
         revision_count = int(state.get('requirementsRevisionCount') or 0)
@@ -2099,8 +2150,12 @@ class RalphRefinerController:
             self.store.append_event('requirements_staged_revision_routed', {
                 'task_id': state.get('task_id'),
                 'unit_id': state.get('currentUnitId'),
+                'gate': 'requirements',
+                'checkpoint': revision_stage,
+                'checkpoint_label': checkpoint_public_label(revision_stage),
                 'stage': revision_stage,
                 'revision_count': revision_count,
+                'reason': routing_feedback,
                 'reason_key': routing_reason_key,
                 'routing_source': routing_source,
                 'routing_reason': routing_feedback,
@@ -5336,7 +5391,32 @@ def _is_requirements_stage_validation_blocker(state: dict[str, Any]) -> bool:
 
 
 def _requirements_stage_display_name(stage: str) -> str:
-    return 'Product Design' if stage == 'product_design' else stage.replace('_', ' ').title()
+    try:
+        return checkpoint_public_label(stage)
+    except ValueError:
+        return stage.replace('_', ' ').title()
+
+
+def _prepend_requirements_checkpoint_revision_feedback(
+    feedback: str,
+    *,
+    checkpoint: str,
+    reason: str | None,
+) -> str:
+    label = checkpoint_public_label(checkpoint)
+    lines = [
+        '## Target Requirements Checkpoint',
+        '',
+        f'- checkpoint: {label}',
+        f'- stage key: `{checkpoint}`',
+    ]
+    human_reason = str(reason or '').strip()
+    if human_reason:
+        lines.append(f'- human reason: {human_reason}')
+    body = str(feedback or '').strip()
+    if body:
+        lines.extend(['', body])
+    return '\n'.join(lines).rstrip() + '\n'
 
 
 def _requirements_stage_validation_feedback(
@@ -5672,7 +5752,7 @@ def format_stop_guidance(
         lines.append(_blocked_assist_guidance_line(state_dir, color_enabled=color_enabled))
         if category == 'requirements_stage_validation':
             stage = str(context.get('stage') or '').strip()
-            display_stage = 'Product Design' if stage == 'product_design' else stage.replace('_', ' ').title()
+            display_stage = _requirements_stage_display_name(stage)
             validation_artifact = str(context.get('validation_artifact') or '').strip()
             lines.extend(
                 [
@@ -7282,13 +7362,29 @@ def _stage_tokens_for_state(
     action = state.get('nextAction') or compute_next_allowed_action(state)
     planning_stage = planning_stage or COMPACT_PLANNING_ACTION_STAGES.get(str(action))
     if planning_stage:
-        stages = [
+        staged_planning = [
+            'Requirements scope',
+            'Requirements product design',
+            'Requirements architecture',
+            'Requirements test strategy',
+            'Requirements package assembly',
+            'Requirements confirmation',
+            'Unit plan',
+            'Unit plan confirmation',
+            'Builder',
+        ]
+        legacy_planning = [
             'Requirements draft',
             'Requirements confirmation',
             'Unit plan',
             'Unit plan confirmation',
             'Builder',
         ]
+        stages = (
+            staged_planning
+            if staged_requirements_enabled(state) and planning_stage in staged_planning
+            else legacy_planning
+        )
         return _format_stage_tokens(
             stages,
             COMPACT_PLANNING_STAGE_LABELS,
@@ -8256,6 +8352,48 @@ def normalize_go_args(args: argparse.Namespace, parser: argparse.ArgumentParser)
     return args
 
 
+def resolve_revise_checkpoint_arg(
+    args: argparse.Namespace,
+    *,
+    stdin: Any = sys.stdin,
+    input_func: Callable[[str], str] = input,
+    output_func: Callable[[str], None] = print,
+) -> str | None:
+    gate = str(getattr(args, 'gate', '') or '')
+    raw_checkpoint = getattr(args, 'checkpoint', None)
+    reason = str(getattr(args, 'reason', None) or '').strip()
+
+    if raw_checkpoint:
+        if gate != 'requirements':
+            raise ValueError('--checkpoint only applies to --gate requirements')
+        return normalize_requirements_checkpoint(str(raw_checkpoint))
+
+    if gate != 'requirements':
+        return None
+
+    if reason:
+        if hasattr(stdin, 'isatty') and stdin.isatty():
+            inferred = select_requirements_revision_stage(reason)
+            output_func(
+                'Inferred Requirements checkpoint: '
+                f'{checkpoint_public_label(inferred)} (`{inferred}`). '
+                'Press Enter to accept, or type scope/product-design/architecture/test-strategy.'
+            )
+            selected = input_func('checkpoint> ').strip()
+            if selected:
+                return normalize_requirements_checkpoint(selected)
+        return None
+
+    return None
+
+
+def _revise_requirements_checkpoint_example() -> str:
+    return (
+        'waygate revise --gate requirements --checkpoint product-design '
+        '--reason "补产品原型和页面状态"'
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog='waygate',
@@ -8339,6 +8477,11 @@ def parse_args() -> argparse.Namespace:
         '--reason',
         default=None,
         help='Human reason to include in a requirements change request prompt',
+    )
+    revise_parser.add_argument(
+        '--checkpoint',
+        default=None,
+        help='Requirements checkpoint to revise: scope, product-design, architecture, or test-strategy',
     )
 
     migrate_parser = subparsers.add_parser(
@@ -8560,7 +8703,13 @@ def main() -> None:
 
     if args.command == 'revise':
         try:
-            gate_path = controller.revise_human_gate(args.gate, reason=getattr(args, 'reason', None))
+            checkpoint = resolve_revise_checkpoint_arg(args)
+            gate_path = controller.revise_human_gate(
+                args.gate,
+                reason=getattr(args, 'reason', None),
+                checkpoint=checkpoint,
+                require_reason_or_checkpoint=True,
+            )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None

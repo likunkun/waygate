@@ -12,10 +12,10 @@ The staged package contains four checkpoint artifacts:
 
 | Stage | Artifact Purpose |
 | --- | --- |
-| Requirements Scope | Current-version goals, non-goals, users, target-product journeys, visible product surfaces, ACs, AO traceability, minimal context, risks, and later-version candidates. |
-| Product Design Brief | Target product UX, prototype or review evidence, page/state/entrypoint review method, and product behavior implied by the approved scope. |
-| Technical Architecture Brief | Target system interaction architecture, module boundaries, APIs, data flow, state write/readback behavior, runtime dependencies, and external integrations. |
-| Requirements Test Strategy Brief | Strategy-level test layers, E2E review method when required, command intent, mock policy, risks, and verifier evidence shapes that Unit Plan must later turn into exact test cases and commands. |
+| 需求范围检查点 (Requirements Scope Checkpoint) | Current-version goals, non-goals, users, target-product journeys, visible product surfaces, ACs, AO traceability, minimal context, risks, and later-version candidates. |
+| 产品设计简报 (Product Design Brief) | Target product UX, prototype or review evidence, page/state/entrypoint review method, and product behavior implied by the approved scope. |
+| 技术架构简报 (Technical Architecture Brief) | Target system interaction architecture, module boundaries, APIs, data flow, state write/readback behavior, runtime dependencies, and external integrations. |
+| 需求测试策略简报 (Requirements Test Strategy Brief) | Strategy-level test layers, E2E review method when required, command intent, mock policy, risks, and verifier evidence shapes that Unit Plan must later turn into exact test cases and commands. |
 
 Scope must stay focused. It must not ask the drafter to produce the complete product design, architecture, test strategy, or full `## 4.9 目标项目基础设施信息` inventory in the same checkpoint.
 
@@ -31,13 +31,13 @@ V0.6.2a adds `requirementsSurfaceClassification` to prevent staged checkpoints f
 
 Default controller flags such as `currentUnitNeedsUiDesign=false` and `currentUnitIsWebSystem=false` are not evidence that the target product has no UI. They can only be recorded as ignored context. A `not_required` classification must cite an explicit backend/API/CLI-only basis.
 
-If `product_ui`, `web_system`, or `prototype_required` is `required`, Requirements preflight still requires a valid prototype manifest when the target UI/Web/prototype contract is active. If the classification is `unknown`, the Scope or Product Design checkpoint must explain the uncertainty or route back for clarification; it must not silently write “no UI”.
+If `product_ui`, `web_system`, or `prototype_required` is `required`, Requirements preflight still requires a valid prototype manifest when the target UI/Web/prototype contract is active. If the classification is `unknown`, the 需求范围检查点 or 产品设计简报 must explain the uncertainty or route back for clarification; it must not silently write “no UI”.
 
-When `prototype_required=required` or `web_system=required`, the Product Design checkpoint prompt must require `artifacts/requirements-draft/prototype-manifest.json` and include the canonical top-level `{"prototypes": [...]}` schema skeleton. Local prototype paths are resolved relative to the manifest directory, so agents must generate or copy HTML/image/Markdown prototypes into `artifacts/requirements-draft/` and then reference an artifact-local path such as `prototypes/<prototype-id>/index.html`. Workspace-relative paths such as `docs/prototypes/...` are invalid unless the same file exists under `artifacts/requirements-draft/docs/prototypes/...`. Stage completion validates that the manifest exists and contains a clickable prototype access method, page states, click path, AC/Journey mapping, implementation targets, and surface contracts under `prototypes[]`. Manifest AC/Journey references and surface-contract AC references must already exist in Requirements Scope; Product Design cannot invent new AC or Journey IDs. Flat top-level prototype keys such as `clickable_prototype_access_method`, `page_states`, or `click_path` are invalid as the final manifest shape. Missing or malformed manifest output is a Product Design stage problem and must be surfaced there, not deferred to the final Requirements preflight loop.
+When `prototype_required=required` or `web_system=required`, the 产品设计简报 prompt must require `artifacts/requirements-draft/prototype-manifest.json` and include the canonical top-level `{"prototypes": [...]}` schema skeleton. Local prototype paths are resolved relative to the manifest directory, so agents must generate or copy HTML/image/Markdown prototypes into `artifacts/requirements-draft/` and then reference an artifact-local path such as `prototypes/<prototype-id>/index.html`. Workspace-relative paths such as `docs/prototypes/...` are invalid unless the same file exists under `artifacts/requirements-draft/docs/prototypes/...`. Stage completion validates that the manifest exists and contains a clickable prototype access method, page states, click path, AC/Journey mapping, implementation targets, and surface contracts under `prototypes[]`. Manifest AC/Journey references and surface-contract AC references must already exist in 需求范围检查点; 产品设计简报 cannot invent new AC or Journey IDs. Flat top-level prototype keys such as `clickable_prototype_access_method`, `page_states`, or `click_path` are invalid as the final manifest shape. Missing or malformed manifest output is a 产品设计简报 stage problem and must be surfaced there, not deferred to the final Requirements preflight loop.
 
 The final Requirements preflight accepts a manifest that passes `validate_prototype_review_manifest(..., require_clickable=True)` as clickable webpage prototype evidence. Product Design text can also satisfy the textual evidence check when it names an artifact-local clickable HTML path or URL, manifest path, page states, click path, and AC/Journey mapping. The manifest remains mandatory for active UI/Web/prototype contracts: missing files, missing page states, missing click path, missing AC mapping, unsupported prototype kind, or invalid surface contracts still block approval.
 
-V0.6.2b promotes the prototype review bundle from a temporary Plannotator helper to a controller process-level preview service. After Product Design validation succeeds, the controller generates `plannotator-review.html` and `prototype-review-manifest.json`, starts the preview server, and prints the prototype preview URL. Before final Requirements assembly exists, the bundle uses the Scope checkpoint as the requirements reference. Final assembly regenerates the bundle with the real `approvals/requirements-and-acceptance.md` approval gate metadata, while the already-started preview server keeps the same port. Requirements Plannotator review reuses that server, Plannotator Close does not shut it down, and the controller closes it only when the process exits.
+V0.6.2b promotes the prototype review bundle from a temporary Plannotator helper to a controller process-level preview service. After 产品设计简报 validation succeeds, the controller generates `plannotator-review.html` and `prototype-review-manifest.json`, starts the preview server, and prints the prototype preview URL. Before final Requirements assembly exists, the bundle uses the 需求范围检查点 as the requirements reference. Final assembly regenerates the bundle with the real `approvals/requirements-and-acceptance.md` approval gate metadata, while the already-started preview server keeps the same port. Requirements Plannotator review reuses that server, Plannotator Close does not shut it down, and the controller closes it only when the process exits.
 
 Preview port selection starts at `WAYGATE_PREVIEW_PORT` when set, otherwise `20001`. If the selected port is occupied, the controller increments until it finds a free port. The printed browser URL uses the display host from the existing preview host rules. When proxy environment variables are present, the controller may remind the operator to add that display host to `NO_PROXY/no_proxy` so local preview requests do not go through a proxy.
 
@@ -77,12 +77,12 @@ The final gate must include:
 
 - `## 审批摘要`
 - `## Artifact Hashes`
-- `## 附录 A：Requirements Scope Checkpoint`
-- `## 附录 B：Product Design Brief`
-- `## 附录 C：Technical Architecture Brief`
-- `## 附录 D：Requirements Test Strategy Brief`
+- `## 附录 A：需求范围检查点 (Requirements Scope Checkpoint)`
+- `## 附录 B：产品设计简报 (Product Design Brief)`
+- `## 附录 C：技术架构简报 (Technical Architecture Brief)`
+- `## 附录 D：需求测试策略简报 (Requirements Test Strategy Brief)`
 
-The hash table binds the approval file to the checkpoint artifacts. Missing appendices, missing hash rows, or hash mismatches are controller validation failures.
+The hash table binds the approval file to the checkpoint artifacts and shows both the Chinese public checkpoint name and the stable English stage key. Missing appendices, missing hash rows, or hash mismatches are controller validation failures.
 
 ## Gate Ordering
 
@@ -110,7 +110,7 @@ The Requirements stage still carries enough context to decide scope, ACs, journe
 - architecture, interaction logic, and interface notes
 - dependency information
 
-The `Requirements Test Strategy Brief` carries E2E method review before Unit Plan. The Unit Plan inherits that review and turns it into executable test cases, exact verification commands, fixtures, mock policy, and expected assertions.
+The 需求测试策略简报 (`Requirements Test Strategy Brief`) carries E2E method review before Unit Plan. The Unit Plan inherits that review and turns it into executable test cases, exact verification commands, fixtures, mock policy, and expected assertions.
 
 The Test Strategy checkpoint remains strategy-level. It should describe risk, verification layers, evidence shapes, and handoff expectations, while exact test cases, concrete commands, fixture scripts, and final assertions are owned by Unit Plan.
 
@@ -145,7 +145,15 @@ Human revision or controller preflight failure uses downstream invalidation: onl
 | Test Strategy | Test Strategy, Final Gate |
 | Final Gate assembly | Final Gate |
 
-`waygate revise --gate requirements` in staged package mode clears Requirements and Unit Plan approval state, preserves revision feedback, and routes to the affected checkpoint through semantic issue classification. Surface/prototype/UI feedback such as “产品原型呢”, a missing prototype manifest, missing page states, missing click path, or missing prototype access method routes to Product Design. Interaction architecture, API, data-flow, state-write/readback, module-boundary, runtime, or external-system feedback routes to Technical Architecture. Test-method quality feedback such as mock policy, `environment_kind`, E2E method, fixture/setup, verification layer, 4.6 matrix shape, or expected assertions routes to Test Strategy. Broader scope, current-version boundary, visible-surface classification, unknown AC/Journey references, AO traceability, or unclear feedback routes to Scope.
+`waygate revise --gate requirements` in staged package mode clears Requirements and Unit Plan approval state, preserves revision feedback, and routes to the affected checkpoint through semantic issue classification. Operators can also target the checkpoint directly:
+
+```bash
+waygate revise --gate requirements --checkpoint product-design --reason "补产品原型和页面状态"
+```
+
+`--checkpoint` accepts `scope`, `product-design`, `architecture`, `test-strategy`, and Chinese aliases such as `需求范围`, `产品设计`, `技术架构`, and `测试策略`. It only applies to `--gate requirements`; Unit Plan revision keeps the existing `waygate revise --gate unit-plan --reason ...` behavior. If no checkpoint is supplied, `--reason` is semantically routed as before. In non-interactive shells, Requirements revise must provide a reason or explicit checkpoint so the rollback is auditable.
+
+Surface/prototype/UI feedback such as “产品原型呢”, a missing prototype manifest, missing page states, missing click path, or missing prototype access method routes to 产品设计简报. Interaction architecture, API, data-flow, state-write/readback, module-boundary, runtime, or external-system feedback routes to 技术架构简报. Test-method quality feedback such as mock policy, `environment_kind`, E2E method, fixture/setup, verification layer, 4.6 matrix shape, or expected assertions routes to 需求测试策略简报. Broader scope, current-version boundary, visible-surface classification, unknown AC/Journey references, AO traceability, or unclear feedback routes to 需求范围检查点.
 
 Controller preflight reasons that include missing AO requirements mapping, missing AO coverage, a required Journey contract with no active Journey rows, E2E review not mapped to an active E2E AC/Journey, unknown acceptance criteria, unknown Journey references, or inconsistent `requirementsSurfaceClassification` are Scope blockers. They route to `REQUIREMENTS_SCOPE_DRAFT` even if the same combined reason also mentions prototype manifest, Web, page states, or UI evidence. Pure prototype access or “how do I review the UI” feedback still routes to Product Design. For controller-validation-only auto-rework, routing uses the controller validation error as the primary source instead of the full old Requirements gate body; the event `requirements_staged_revision_routed` records `reason_key`, `routing_source`, and `routing_reason` for audit.
 

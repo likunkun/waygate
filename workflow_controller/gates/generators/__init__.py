@@ -74,12 +74,12 @@ def render_staged_requirements_package_gate_body(state: dict[str, Any]) -> str:
         '',
         '## Artifact Hashes',
         '',
-        '| Stage | Path | Hash | Status |',
-        '| --- | --- | --- | --- |',
+        '| Checkpoint | Stage Key | Path | Hash | Status |',
+        '| --- | --- | --- | --- | --- |',
     ]
     for stage, record, _body in records:
         lines.append(
-            f"| {stage} | `{record.get('path')}` | `{record.get('hash')}` | `{record.get('status')}` |"
+            f"| {STAGE_LABELS[stage]} | `{stage}` | `{record.get('path')}` | `{record.get('hash')}` | `{record.get('status')}` |"
         )
     lines.append('')
     for stage, _record, body in records:

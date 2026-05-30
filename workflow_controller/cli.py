@@ -19,6 +19,7 @@ from workflow_controller.rrc_controller import (
     format_stop_guidance,
     _format_recoverable_wait_message,
     normalize_go_args,
+    resolve_revise_checkpoint_arg,
 )
 from workflow_controller.state_machine.actions import compute_next_allowed_action
 
@@ -196,6 +197,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help='Human reason to include in a requirements change request prompt',
     )
+    revise_parser.add_argument(
+        '--checkpoint',
+        default=None,
+        help='Requirements checkpoint to revise: scope, product-design, architecture, or test-strategy',
+    )
 
     migrate_parser = subparsers.add_parser(
         'migrate',
@@ -360,7 +366,13 @@ def main() -> None:
 
     if args.command == 'revise':
         try:
-            gate_path = controller.revise_human_gate(args.gate, reason=getattr(args, 'reason', None))
+            checkpoint = resolve_revise_checkpoint_arg(args)
+            gate_path = controller.revise_human_gate(
+                args.gate,
+                reason=getattr(args, 'reason', None),
+                checkpoint=checkpoint,
+                require_reason_or_checkpoint=True,
+            )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None

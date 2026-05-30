@@ -12,7 +12,7 @@ V0.6.0m moves golden-path E2E mistakes earlier: Unit Plan approval rejects `gold
 
 V0.6.1 adds OpenSpec/OpenAPI and Spec Kit spec intake, non-approving annotation / verification-assist passes before human gates, and flexible verifier evidence rows with `human_review_required`.
 
-V0.6.2 splits Requirements drafting into focused scope, product design, architecture, and test strategy checkpoints, then assembles one final Requirements approval package with checkpoint hashes. V0.6.2a adds target surface classification so staged Product Design and Architecture stay centered on the target product/system. V0.6.2b starts a persistent prototype preview after Product Design succeeds and keeps that URL available through Requirements review.
+V0.6.2 splits Requirements drafting into focused scope, product design, architecture, and test strategy checkpoints, then assembles one final Requirements approval package with checkpoint hashes. V0.6.2a adds target surface classification so staged Product Design and Architecture stay centered on the target product/system. V0.6.2b starts a persistent prototype preview after Product Design succeeds and keeps that URL available through Requirements review. V0.6.2c uses Chinese-primary checkpoint names and supports targeted Requirements checkpoint revise.
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.2b_all.deb
+sudo apt install ./dist/waygate_0.6.2c_all.deb
 waygate --help
 waygate doctor
 waygate doctor --color auto
@@ -206,7 +206,10 @@ Ask the agent to revise a requirements or unit-plan gate after feedback is writt
 
 ```bash
 waygate revise --state-dir .rrc-controller-v1.0 --gate unit-plan
+waygate revise --state-dir .rrc-controller-v1.0 --gate requirements --checkpoint product-design --reason "补产品原型和页面状态"
 ```
+
+For staged Requirements packages, `--checkpoint` targets `scope`, `product-design`, `architecture`, or `test-strategy`; Chinese aliases such as `需求范围`, `产品设计`, `技术架构`, and `测试策略` are accepted. Without `--checkpoint`, `--reason` continues to route to the inferred checkpoint. `--checkpoint` is only valid with `--gate requirements`.
 
 For blocked recovery, the interactive menu requires a non-empty human reason before routing to Unit Plan or Requirements rework. The Blocked Assist summary is context only; it is not a substitute for the human reason.
 

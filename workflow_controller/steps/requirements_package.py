@@ -12,6 +12,7 @@ from workflow_controller.prompts.requirements_package import (
 )
 from workflow_controller.requirements_package import (
     STAGE_ARTIFACT_FILENAMES,
+    STAGE_LABELS,
     mark_stage_artifact,
 )
 from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
@@ -178,12 +179,7 @@ def _validate_stage_contract_outputs(state: dict[str, Any], artifacts_dir: Path,
 
 
 def _local_template_artifact(stage: str, state: dict[str, Any]) -> str:
-    stage_title = {
-        'scope': 'Requirements Scope Checkpoint',
-        'product_design': 'Product Design Brief',
-        'architecture': 'Technical Architecture Brief',
-        'test_strategy': 'Requirements Test Strategy Brief',
-    }[stage]
+    stage_title = STAGE_LABELS[stage]
     return (
         f'# {stage_title}\n\n'
         f'- Requested outcome: `{state.get("requestedOutcome")}`\n'

@@ -14,6 +14,20 @@
   - GREEN：`python3 -m pytest workflow_controller/tests -q` -> `798 passed in 78.33s`。
   - `git diff --check -- workflow_controller/annotation_agents.py workflow_controller/tests/test_v061_annotation_agents.py USAGE.md USAGE.zh-CN.md docs/workflow/external-spec-intake-and-annotation-policy.md docs/architecture/external-spec-intake-and-annotation-architecture.md` -> passed。
 
+### V0.6.2c 中文 Checkpoint 命名与定点 Revise
+- **状态：** implementation verified; focused/full regression passed; package version updated to `0.6.2c`.
+- 修复：staged Requirements 用户可见 checkpoint 名称改为中文主名：需求范围检查点、产品设计简报、技术架构简报、需求测试策略简报；内部 `scope` / `product_design` / `architecture` / `test_strategy` state key、artifact key 和 state-machine step 保持英文不迁移。
+- 修复：final Requirements gate 的 appendix title 和 hash table 展示中文 checkpoint 名称，同时保留稳定 stage key 与英文别名；prompt、compact action/status 和 stage-validation guidance 使用中文 checkpoint 名称。
+- 修复：`waygate revise --gate requirements --checkpoint scope|product-design|architecture|test-strategy --reason ...` 支持定点回撤；接受 `需求范围`、`产品设计`、`技术架构`、`测试策略` 等中文别名；`--gate unit-plan --checkpoint ...` 会被拒绝。
+- 修复：显式 checkpoint revise 会写入 checkpoint / human reason 到 `requirementsRevisionFeedback`，清除 Requirements 与 Unit Plan approval，删除当前 Unit Plan gate，将指定 checkpoint 及下游 artifacts 标记 stale，并在 `requirements_staged_revision_routed` event 记录 gate、checkpoint、reason 和 routing source。
+- 文档：同步 `docs/README.md`、staged requirements workflow / architecture docs、README/USAGE、CHANGELOG 和 ROADMAP / ROADMAP.zh-CN。
+- 验证：
+  - RED：新增 focused tests 初始失败，覆盖缺少 checkpoint normalizer、CLI `--checkpoint`、explicit checkpoint API 和非 TTY staged Requirements revise guard。
+  - GREEN：`python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `81 passed`。
+  - GREEN：`python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'revise or staged or checkpoint'` -> `20 passed, 219 deselected`。
+  - GREEN：`python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q -k 'staged_requirements or package_version or version'` -> `4 passed, 6 deselected`。
+  - GREEN：`python3 -m pytest workflow_controller/tests -q` -> `795 passed in 79.50s`。
+
 ## 会话：2026-05-29
 
 ### V0.6.2b Product Design 后常驻原型预览

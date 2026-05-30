@@ -295,6 +295,20 @@
 - 预览端口从 `WAYGATE_PREVIEW_PORT` 或默认 `20001` 起步，被占用时自动递增。
 - Plannotator Close 后保持预览服务可访问，并在 controller 进程退出时关闭。
 
+### V0.6.2c - 中文 Checkpoint 命名与定点 Revise
+
+目标：让 staged Requirements checkpoint 的用户可见名称以中文为主，并允许 operator 带原因回撤到指定 checkpoint。
+
+状态：patch release 已在 package `0.6.2c` 实施。
+
+已交付：
+
+- final gate 附录、hash table、prompt、compact output 和 guidance 使用中文主名：需求范围检查点、产品设计简报、技术架构简报、需求测试策略简报。
+- 保留英文内部 state key、artifact key 和状态机 step，避免历史 session 迁移风险。
+- 增加 `waygate revise --gate requirements --checkpoint scope|product-design|architecture|test-strategy --reason ...`，并支持 `需求范围`、`产品设计`、`技术架构`、`测试策略` 等中文别名。
+- `--checkpoint` 只适用于 Requirements revision；`--gate unit-plan` 保持现有 Unit Plan revision 行为。
+- 指定 checkpoint 及其下游 staged artifacts 会标记 stale；Requirements / Unit Plan approval 会被清除，当前 Unit Plan gate 会被删除，并在 audit event 中记录 explicit checkpoint route。
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。

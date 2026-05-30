@@ -7,6 +7,14 @@
 - 由于代理 URL 可能包含凭据，annotation / verification-assist 的 stdout、stderr 和 agent artifact 归一化必须把 effective env values 纳入脱敏源；审计输出只允许出现 env key 名称，不允许出现代理值。
 - 已经挂住的 annotation subprocess 无法原地注入新代理。正确恢复路径是修复启动 shell 的代理环境后中断/恢复当前 annotation runtime blocker，让 controller 重跑 pending annotation；不要为代理问题修改 Requirements 或 Unit Plan 合同。
 
+## 2026-05-30 V0.6.2c 中文 Checkpoint 命名与定点 Revise
+
+- staged Requirements 的用户可见名称可以中文化，但内部事实源不应迁移。`requirementsPackage.artifacts`、state-machine step、action 和 artifact filename 继续使用英文 key，final gate / prompt / compact / guidance 只改人类可见 label，降低历史 session 兼容风险。
+- Requirements checkpoint 定点回撤应复用现有 downstream invalidation helper。指定 `product-design` 时保留 Scope，标记 Product Design、Architecture、Test Strategy 和 Final Gate stale；指定 `architecture` 时保留 Scope/Product Design；指定 `test-strategy` 时只 stale Test Strategy / Final Gate。
+- `--checkpoint` 是 Requirements staged package 的路由输入，不是 Unit Plan 概念。Unit Plan revision 仍只处理执行计划返工，不能接受 Requirements checkpoint 参数。
+- 非交互 CLI 对 staged Requirements revision 需要 `--reason` 或 `--checkpoint`，否则审计上无法区分“人工已写反馈”与“误触 revise”。Legacy 非 staged Requirements gate 仍保持已有行为，允许从已编辑 gate 或 Plannotator submitted feedback 返工。
+- explicit checkpoint revise event 需要记录 `gate`、`checkpoint`、`checkpoint_label`、`reason`、`reason_key` 和 `routing_source`，这样可以审计是人工指定 checkpoint 还是 semantic routing 推断。
+
 ## 2026-05-28 Unit Plan 命令脚本入口限制
 
 - Unit Plan 的 `verification_commands[]` 和 test case `command` 是 verifier 之后实际执行命令的事实源，因此命令格式限制必须落在 controller validator 中，不能只靠 prompt 或人工说明。
