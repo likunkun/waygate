@@ -1290,14 +1290,17 @@ raise SystemExit(0)
 
     result = run_agent_backend(request)
 
-    assert result.status == 'timeout'
+    assert result.status == 'agent_shell_running_without_done'
     assert result.returncode == 124
+    assert 'shell task is still running' in result.stderr
     events = [
         json.loads(line)
         for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
     ]
     assert not any(event.get('event') == 'agent_idle_without_done' for event in events)
     assert not any(event.get('event') == 'agent_nudge_sent' for event in events)
+    assert any(event.get('event') == 'agent_shell_running_without_done' for event in events)
+    assert not (result.run_dir / 'timeout-decision.json').exists()
 
 
 def test_tmux_claude_runner_fails_fast_when_pane_returns_idle_after_dispatch(

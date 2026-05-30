@@ -4783,7 +4783,7 @@ def format_stop_guidance(
         action = wait.get('action') or state.get('nextAction') or compute_next_allowed_action(state) or '-'
         return '\n'.join(
             [
-                _guidance_line('原因', 'Agent 等待超时或 idle，属于可恢复等待。', label_style='red', color_enabled=color_enabled),
+                _guidance_line('原因', 'Agent 等待超时、idle 或后台 shell 仍在运行，属于可恢复等待。', label_style='red', color_enabled=color_enabled),
                 _guidance_line(
                     '下一步',
                     f'重新运行 go 继续同一阶段（阶段：{wait.get("stage") or state.get("currentStep") or "-"}，下一步：{ACTION_LABELS.get(action, action)}）。',

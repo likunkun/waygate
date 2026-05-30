@@ -363,6 +363,30 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     )
     if pane_tail:
         (run_dir / 'tmux-pane-tail.txt').write_text(pane_tail, encoding='utf-8')
+    if _tmux_pane_tail_shows_running_shell(pane_tail):
+        status = 'agent_shell_running_without_done'
+        _append_event(events_path, {
+            'event': status,
+            'pane_tail_path': str(run_dir / 'tmux-pane-tail.txt') if pane_tail else None,
+        })
+        shell_message = _tmux_shell_running_message(
+            backend=backend,
+            done_path=done_path,
+            run_id=run_id,
+            pane_tail=pane_tail,
+        )
+        return RunnerResult(
+            backend=backend,
+            status=status,
+            command=dispatch_commands[-1],
+            returncode=124 if last_returncode == 0 else last_returncode,
+            stdout=''.join(stdout_parts),
+            stderr=''.join(stderr_parts) + shell_message,
+            run_dir=run_dir,
+            prompt_path=runner_prompt_path,
+            done_path=done_path,
+            runner_metadata=runner_metadata,
+        )
     status = 'timeout'
     _append_event(events_path, {
         'event': status,
@@ -830,7 +854,22 @@ def _tmux_pane_tail_shows_running_shell(pane_tail: str) -> bool:
     for line in lines[-10:]:
         if re.search(r'(?:^|\s)shell\s*[·•]\s+', line, flags=re.IGNORECASE):
             return True
+        if re.search(r'(?:^|\s)\d+\s+shells?\s+still\s+running\b', line, flags=re.IGNORECASE):
+            return True
     return False
+
+
+def _tmux_shell_running_message(*, backend: str, done_path: Path, run_id: str, pane_tail: str) -> str:
+    pane_hint = ''
+    if pane_tail:
+        pane_hint = f'\n\nLast captured tmux pane output:\n{_tail_text(pane_tail, max_chars=4000)}'
+    return (
+        f'{backend} reached the controller wait limit while a shell task is still running. '
+        f'DONE_FILE is still pending: {done_path} (run_id={run_id}). '
+        'The pane is active, so this is not an idle/no-response timeout. '
+        'Wait for the shell task to finish or stop it, then have the pane agent write DONE_FILE and rerun the controller.'
+        f'{pane_hint}'
+    )
 
 
 def _tmux_timeout_message(*, backend: str, done_path: Path, run_id: str, pane_tail: str) -> str:

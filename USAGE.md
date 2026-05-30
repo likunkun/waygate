@@ -90,7 +90,7 @@ waygate go V0.6.1 --annotation-agent codex
 waygate go V0.6.1 --annotation-agent unit-plan=codex
 ```
 
-If a previous agent dispatch stopped with timeout or idle-without-DONE, rerun `waygate go ...` with the same target or `--state-dir`. Waygate reads `recoverableAgentWait` from `session.json`, records an automatic resume event, and continues the same stage. Explicit `blocked` states are different: interactive `go`, `drive`, and `start` can open Blocked Assist for diagnosis, but only a human-selected route changes state. Use `unblock` after an external condition is fixed, or use `revise` / Final Acceptance rejection routing when the approved contract must change.
+If a previous agent dispatch stopped with timeout, idle-without-DONE, or a still-running tmux shell tool without DONE, rerun `waygate go ...` with the same target or `--state-dir`. Waygate reads `recoverableAgentWait` from `session.json`, records an automatic resume event, and continues the same stage. Explicit `blocked` states are different: interactive `go`, `drive`, and `start` can open Blocked Assist for diagnosis, but only a human-selected route changes state. Use `unblock` after an external condition is fixed, or use `revise` / Final Acceptance rejection routing when the approved contract must change.
 
 ## Prototype Review Bundle
 

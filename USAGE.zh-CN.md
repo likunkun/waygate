@@ -90,7 +90,7 @@ waygate go V0.6.1 --annotation-agent codex
 waygate go V0.6.1 --annotation-agent unit-plan=codex
 ```
 
-如果上一轮 agent 派发因 timeout 或 idle-without-DONE 停止，使用同一个 target 或 `--state-dir` 再运行 `waygate go ...`。Waygate 会从 `session.json` 读取 `recoverableAgentWait`，记录自动恢复事件，并继续同一阶段。显式 `blocked` 状态不同：交互式 `go`、`drive`、`start` 可以打开 Blocked Assist 做诊断，但只有人工选择的 route 会改变状态。外部条件修好后用 `unblock`；批准合同需要变更时用 `revise` 或 Final Acceptance rejection route。
+如果上一轮 agent 派发因 timeout、idle-without-DONE，或 tmux shell 工具仍在后台运行且尚未写 DONE 而停止，使用同一个 target 或 `--state-dir` 再运行 `waygate go ...`。Waygate 会从 `session.json` 读取 `recoverableAgentWait`，记录自动恢复事件，并继续同一阶段。显式 `blocked` 状态不同：交互式 `go`、`drive`、`start` 可以打开 Blocked Assist 做诊断，但只有人工选择的 route 会改变状态。外部条件修好后用 `unblock`；批准合同需要变更时用 `revise` 或 Final Acceptance rejection route。
 
 ## Prototype Review Bundle
 

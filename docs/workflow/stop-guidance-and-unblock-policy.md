@@ -10,7 +10,7 @@ Additional guidance is printed after that line by `status`, `run`, `drive`, `sta
 
 ## Recoverable Wait Boundary
 
-`recoverableAgentWait` is only for runner `timeout`, idle-without-DONE, or equivalent pending agent silence. It keeps approvals and artifacts intact and records why the current automatic loop stopped.
+`recoverableAgentWait` is only for runner `timeout`, idle-without-DONE, active shell-without-DONE, or equivalent pending agent silence. It keeps approvals and artifacts intact and records why the current automatic loop stopped.
 
 The next `waygate go --state-dir <state-dir>` invocation, or another execution command such as `run`, `drive`, or `start`, consumes `recoverableAgentWait`, appends an `agent_wait_auto_resumed` event, and lets the same stage compute its next action again.
 
