@@ -309,6 +309,21 @@
 - `--checkpoint` 只适用于 Requirements revision；`--gate unit-plan` 保持现有 Unit Plan revision 行为。
 - 指定 checkpoint 及其下游 staged artifacts 会标记 stale；Requirements / Unit Plan approval 会被清除，当前 Unit Plan gate 会被删除，并在 audit event 中记录 explicit checkpoint route。
 
+### V0.6.2d - Unit Continuity Gate
+
+目标：在 Unit Plan approval 前拒绝模糊的多单元 handoff，并在下游 Builder 启动前要求上游 producer evidence。
+
+状态：patch release 已在 package `0.6.2d` 实施。
+
+已交付：
+
+- 多单元 Unit Plan 必须包含 `## 单元连贯性摘要` 和 `## Handoff Matrix`，记录上游单元、下游单元、产出 artifact/readiness、消费输入、证据路径和失败路线。
+- Controller State Patch unit metadata 新增 `depends_on` 和 `handoff.human_summary`、`produces`、`requires`、`ready_checks`、`evidence_artifacts`。
+- Unit Plan validation 新增缺失依赖、缺失 producer handoff、循环依赖、consumer `requires[]` 不匹配、ready checks 未映射到命令/测试用例，以及 `environment ready` 等占位摘要检查。
+- Verifier 会为 producer unit 写入 `artifacts/<unit-id>/handoff-evidence.json`；声明的 handoff 证据缺失或 failed 时 producer verification 失败。
+- 下游 Builder preflight 在依赖 handoff evidence 缺失、无效、failed 或无法满足下游 `requires[]` 时，以 `blockedContext.category=unit_handoff` 阻塞。
+- 长期 workflow 规则沉淀到 `docs/workflow/unit-continuity-handoff-policy.md`。
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。
@@ -374,6 +389,18 @@
 - 支持 clean checkout 或 clean environment verification。
 - 区分本地预检和权威验证证据。
 - 捕获可复现的 verifier context。
+
+### V0.6.8 - Cross-Platform and QAgent Runner Support
+
+目标：让 Waygate 可用于 Windows 工作站，并把 QAgent 增加为一等 runner family。
+
+计划：
+
+- 增加 Windows 平台支持规划，在保持现有 Linux/tmux 行为稳定的同时，记录平台特定约束。
+- 引入 `psmux` 作为 Windows 下的 pane/session 编排层，承担当前 `tmux` 在 Linux 工作流中的角色。
+- 增加 QAgent runner 支持，并复用现有 runner 的 role runner、dispatch、completion signaling、artifact、metadata、timeout、env allowlist 和 secret redaction 契约。
+- 扩展 `waygate doctor` 诊断，报告 Windows、`psmux` 和 QAgent 可用性，同时不暴露 secret value。
+- 增加 Windows/psmux runner selection、QAgent dispatch、completion、timeout 和 failure mode 回归测试。
 
 ## 长期方向
 

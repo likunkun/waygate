@@ -309,6 +309,21 @@ Delivered work:
 - Keep `--checkpoint` scoped to Requirements revision; `--gate unit-plan` continues to use the existing Unit Plan revision behavior.
 - Mark the selected checkpoint and downstream staged artifacts stale, clear Requirements and Unit Plan approvals, delete the current Unit Plan gate, and record the explicit checkpoint route in audit events.
 
+### V0.6.2d - Unit Continuity Gate
+
+Goal: reject vague multi-unit handoffs before Unit Plan approval and require producer evidence before downstream Builder execution.
+
+Status: patch release implemented in package `0.6.2d`.
+
+Delivered work:
+
+- Require multi-unit Unit Plans to include `## 单元连贯性摘要` and `## Handoff Matrix` with upstream unit, downstream unit, produced artifacts/readiness, consumed inputs, evidence path, and failure route.
+- Extend Controller State Patch unit metadata with `depends_on` and `handoff.human_summary`, `produces`, `requires`, `ready_checks`, and `evidence_artifacts`.
+- Add Unit Plan validation for missing dependencies, missing producer handoffs, circular dependencies, unmatched consumer `requires[]`, ready checks not mapped to commands/test cases, and vague placeholder summaries such as `environment ready`.
+- Make Verifier write `artifacts/<unit-id>/handoff-evidence.json` for producer units and fail producer verification when declared handoff evidence is missing or failed.
+- Block downstream Builder preflight with `blockedContext.category=unit_handoff` when dependency handoff evidence is missing, invalid, failed, or does not satisfy downstream `requires[]`.
+- Document the long-lived workflow policy in `docs/workflow/unit-continuity-handoff-policy.md`.
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.
@@ -374,6 +389,18 @@ Planned work:
 - Support clean checkout or clean environment verification.
 - Separate local preflight from authoritative verification evidence.
 - Capture reproducible verifier context.
+
+### V0.6.8 - Cross-Platform and QAgent Runner Support
+
+Goal: make Waygate usable on Windows workstations and add QAgent as a first-class runner family.
+
+Planned work:
+
+- Add a Windows platform support track that keeps existing Linux/tmux behavior stable while documenting platform-specific constraints.
+- Introduce `psmux` as the Windows pane/session orchestration layer that fills the role currently served by `tmux`.
+- Add QAgent runner support with the same role runner, dispatch, completion signaling, artifact, metadata, timeout, env allowlist, and secret redaction contracts used by existing runners.
+- Extend `waygate doctor` diagnostics to report Windows, `psmux`, and QAgent availability without exposing secret values.
+- Add regression coverage for Windows/psmux runner selection, QAgent dispatch, completion, timeout, and failure modes.
 
 ## Longer-Term Direction
 
