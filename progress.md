@@ -1,5 +1,61 @@
 # 进度日志
 
+## 会话：2026-05-31
+
+### stale Builder blocked artifact 恢复修复
+- **状态：** implementation verified; live Classroom V0.4 recovered and advanced through normal controller route.
+- 根因：Unit Plan 重新批准后，controller 仍会把旧 `artifacts/<unit>/builder-summary.json` 的 `blocked` 结果重新解释成当前官方 blocked；旧 artifact 没有与最新 Unit Plan approval 建立 freshness 边界。
+- 修复：Unit Plan approval 成功时记录 `unitPlanAcceptedAt`；旧 session 若只有 `unitPlanAcceptedHash`，在 gate approved 且 hash 匹配时用 `approvals/unit-plan.md` mtime 作为 cutoff。Builder summary mtime 早于 cutoff 时视为 stale audit artifact，不再阻塞。
+- 修复：Builder blocked context 可按 unit 读取；Unit Plan approval 扫描 approved plan 的所有 `units[].id` 与 `currentUnitId`，把已有 blocked summaries 写入 `ignoredBuilderBlockedContexts`，避免非当前 unit 的旧 blocker 在切换单元后复活。
+- 修复：`get_status()` 会自动清理已处于 `status=blocked` 的 stale `blockedContext.source=builder_agent`，恢复 `status=active` / `currentStep=EXECUTE_UNIT`，并追加 `stale_builder_agent_blocked_context_cleared` event；不删除历史 `builder-summary.json`。
+- 已完成验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'builder_summary_blocked or builder_agent_blocked or unit_plan_approval_ignores'` -> 新增/更新用例按预期失败。
+  - GREEN: 同一命令 -> `5 passed, 237 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'builder_agent_blocked or stale_builder or unit_plan_approval_ignores_previous_builder_blocked_artifact or unblock_rejects_unit_plan_contract'` -> `4 passed, 238 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_builder.py::test_prepare_builder_prompt_ignores_controller_failure_from_other_unit workflow_controller/tests/test_rrc_controller.py::test_builder_done_ignores_verifier_failure_from_other_unit -q` -> `2 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `817 passed in 82.90s`。
+  - `git diff --check` -> passed。
+- Live recovery:
+  - `python3 -m workflow_controller.rrc_controller status --state-dir /home/lichangkun/code/classroom/.rrc-controller-v0.4` -> `currentStep=EXECUTE_UNIT status=active nextAction=run_builder projectTargetVersion=V0.4`，并写入 `stale_builder_agent_blocked_context_cleared`。
+  - `python3 -m workflow_controller.rrc_controller go --state-dir /home/lichangkun/code/classroom/.rrc-controller-v0.4 --max-steps 1` 正常派发 Builder，不手改 live `session.json`、不删除 artifact；Builder 完成后 controller 前进到 `currentStep=REFINE_UNIT status=active nextAction=run_refiner`，因 `--max-steps 1` 停止。
+
+### V0.6.2d Unit Continuity Gate
+- **状态：** implementation verified; focused/full regression passed.
+- 新增 Unit Plan handoff 连贯性 validator：多单元依赖必须声明 `depends_on` 与 `handoff`，拒绝缺失依赖、循环依赖、模糊 `human_summary`、下游 `requires[]` 无上游 `produces[]` 匹配、ready checks 未映射到命令/测试用例。
+- 修正多上游依赖匹配：下游 `requires[]` 可由不同 upstream 分别满足，但每个 required input 至少要有一个 producer，且每个声明依赖至少贡献一个 required input。
+- Unit Plan approval Markdown 也会校验多单元 handoff 的 `## 单元连贯性摘要` 和 `## Handoff Matrix` 人工审阅段落，避免只剩结构化 JSON 而缺少人工可读交接说明。
+- 新增 Verifier producer handoff evidence：声明 handoff 的 unit 会写 `artifacts/<unit-id>/handoff-evidence.json`；声明的 evidence artifact 缺失或 ready check 未通过时 producer verification 失败。
+- 新增 downstream Builder preflight：依赖单元 handoff evidence 缺失、无效、failed 或无法满足下游 `requires[]` 时，以 `blockedContext.category=unit_handoff` 阻塞，并给出中文恢复 guidance。
+- Prompt / docs：Unit Plan prompt 增加 `单元连贯性摘要`、`Handoff Matrix` 和 Controller State Patch JSON 字段；Builder prompt 说明上游 handoff 证据边界；新增 `docs/workflow/unit-continuity-handoff-policy.md` 并登记到 `docs/README.md`。
+- 版本记录：更新 package version metadata 至 `0.6.2d`，同步 ROADMAP / CHANGELOG / README / USAGE。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_unit_plan_continuity.py -q` -> `12 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_unit_plan_continuity.py workflow_controller/tests/test_unit_plan_command_policy.py -q` -> `21 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_unit_plan_command_policy.py -q` -> `9 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_verifier.py -q` -> `7 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_builder.py -q` -> `6 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'unit_plan_gate_invalid or run_builder or blocked_guidance or builder_agent_blocked or unit_plan_approval'` -> `18 passed, 221 deselected`。
+  - 标准命令 `python -m pytest workflow_controller/tests -q` 无法执行：当前 shell 中 `python` 命令不存在。
+  - `python3 -m pytest workflow_controller/tests -q` -> `813 passed in 82.23s`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q` -> `6 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py -q` -> `4 passed`。
+  - `python3 -m py_compile workflow_controller/unit_handoff.py workflow_controller/gates/validators/__init__.py workflow_controller/steps/builder.py workflow_controller/rrc_controller.py workflow_controller/prompts/unit_plan.py workflow_controller/prompts/builder.py` -> passed。
+  - `git diff --check` -> passed。
+
+### tmux 2 号窗口 blocked 诊断与跨单元 lastFailure 修复
+- **状态：** implementation in progress; focused RED/GREEN passed.
+- 现场现象：`/home/lichangkun/code/classroom/.rrc-controller-v0.4/session.json` 当前为 `status=blocked`、`currentUnitId=target-v0-4-prereq-env-fixture`、`blockedReason=Exact historical failed command...`；tmux 2 号 controller pane 显示 `category=unit_plan_contract`，选择 `c` 被拒绝是当前 blocked policy 的预期行为。
+- 根因：Builder prompt 把旧单元 `target-v0-4-openmaic-course-draft` 的 verifier failed command 注入到当前 prerequisite unit；`lastFailure` 已有 `unit_id`，但 prompt 渲染和 Builder completion 的 controller failure resolution gate 没有按当前 unit 过滤。
+- 修复：新增 `_current_unit_last_failure()`，Builder prompt、Builder failure-resolution gate 和紧凑失败摘要只使用当前 `currentUnitId` 对应的 `lastFailure`；旧 session 无 `unit_id` 的 lastFailure 保持兼容。
+- 已完成 focused RED/GREEN：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_builder.py::test_prepare_builder_prompt_ignores_controller_failure_from_other_unit -q` -> failed before fix, passed after fix。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_builder_done_ignores_verifier_failure_from_other_unit -q` -> failed before fix, passed after fix。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_builder.py -q -k 'controller_verification_failure_protocol or previous_verification_failure_feedback or other_unit'` -> `3 passed, 4 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'builder_done_after_verifier_failure or ignores_verifier_failure_from_other_unit'` -> `4 passed, 236 deselected`。
+  - `python3 -m py_compile workflow_controller/steps/_common.py workflow_controller/prompts/builder.py workflow_controller/rrc_controller.py` -> passed。
+  - 标准命令 `python -m pytest workflow_controller/tests -q` 无法执行：当前 shell 中 `python` 命令不存在。
+  - `python3 -m pytest workflow_controller/tests -q` -> `815 passed in 85.45s`。
+
 ## 会话：2026-05-30
 
 ### Annotation Agent 默认代理环境透传

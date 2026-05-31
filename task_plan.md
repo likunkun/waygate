@@ -102,6 +102,7 @@
 - [x] V0.6.2b Product Design 后常驻原型预览：Product Design checkpoint 校验通过后生成 review bundle 并启动 controller 进程级 preview server；final assembly 刷新 approval metadata 并复用端口；Requirements Plannotator review 复用常驻服务，Close 后不关闭；端口占用自动递增；全量 `workflow_controller/tests` 通过 `758 passed`，版本更新为 `0.6.2b` 并重新打包。
 - [x] Blocked Assist 已并入当前 V0.6.2b 分支：为 `status=blocked` 增加受控诊断对话层、人工确认 `human_reason` 和正式恢复路线边界，版本保持 `0.6.2b`。
 - [x] V0.6.2c 中文 Checkpoint 命名与定点 Revise：用户可见 staged Requirements checkpoint 名称改为需求范围检查点、产品设计简报、技术架构简报、需求测试策略简报；`waygate revise --gate requirements --checkpoint ... --reason ...` 支持英文 key 与中文别名，定点 stale 指定 checkpoint 及下游 artifacts；Unit Plan checkpoint 参数被拒绝；全量 `workflow_controller/tests` 通过 `795 passed`，版本更新为 `0.6.2c`。
+- [x] V0.6.2d Unit Continuity Gate：多单元 Unit Plan 增加 `单元连贯性摘要`、Handoff Matrix、`depends_on` / `handoff` 结构化校验；producer Verifier 写 `handoff-evidence.json` 并把缺失/failed evidence 计入 verification failure；downstream Builder preflight 对缺失或 failed 上游证据以 `blockedContext.category=unit_handoff` 阻塞；版本更新为 `0.6.2d`。
 - **状态：** complete
 
 ### 阶段 7：控制器可靠性增强

@@ -1,6 +1,6 @@
 # Staged Requirements Package Architecture
 
-This document records the V0.6.2 architecture boundaries for Staged Requirements Package, including the V0.6.2a target-product perspective patch, V0.6.2b persistent prototype preview patch, and V0.6.2c Chinese checkpoint / targeted revise patch. It covers package helpers, target surface classification, checkpoint prompts, stage runner, controller orchestration, controller process-level prototype preview, final gate assembly, validators, Unit Plan prompt inheritance, and revision routing.
+This document records the V0.6.2 architecture boundaries for Staged Requirements Package, including the V0.6.2a target-product perspective patch, V0.6.2b persistent prototype preview patch, V0.6.2c Chinese checkpoint / targeted revise patch, and V0.6.2d unit continuity handoff gate. It covers package helpers, target surface classification, checkpoint prompts, stage runner, controller orchestration, controller process-level prototype preview, final gate assembly, validators, Unit Plan prompt inheritance, unit handoff evidence, and revision routing.
 
 ## Module Boundaries
 
@@ -17,6 +17,7 @@ This document records the V0.6.2 architecture boundaries for Staged Requirements
 | Gate generation | `workflow_controller/gates/generators/__init__.py` | Builds the final `requirements-and-acceptance.md` body from four checkpoint artifacts and records artifact hashes. |
 | Gate validation | `workflow_controller/gates/validators/__init__.py` | Validates staged package consistency, stage outputs, hash rows, appendices, E2E/browser contracts, prototype manifest references, legacy 4.9 compatibility, and Unit Plan gate requirements. |
 | Unit Plan handoff | `workflow_controller/prompts/unit_plan.py` | Injects staged package artifact path/hash/status metadata into the Unit Plan prompt and requires inherited AC, Journey, design, architecture, test strategy, E2E, UI, and risk obligations. |
+| Unit continuity gate | `workflow_controller/unit_handoff.py`, `workflow_controller/gates/validators/__init__.py`, `workflow_controller/steps/builder.py`, `workflow_controller/rrc_controller.py` | Validates `depends_on` and `handoff` metadata, writes producer `handoff-evidence.json`, and blocks downstream Builder with `unit_handoff` when dependency evidence is missing or failed. |
 
 ## State Shape
 
@@ -117,6 +118,10 @@ The Unit Plan prompt consumes the final Requirements gate plus `requirementsPack
 The Unit Plan prompt requires inherited AC, Journey, Product Design, Technical Architecture, Test Strategy, E2E method, UI obligations when explicitly declared, risk obligations, and document deliverables.
 
 The Unit Plan validator requires an `Infrastructure / Execution Context Matrix` that covers repository, runtime, debugging, reference environment, documentation, architecture/interface, and dependency facts. This is the architecture endpoint for the V0.6.2 shift away from overloading Requirements `4.9`.
+
+V0.6.2d extends the same validator chain with unit continuity checks. `validate_unit_plan_handoff_continuity()` reads the Controller State Patch after it is applied, checks dependency existence and cycles, validates producer/consumer handoff matching, rejects vague summaries, and requires ready checks to map to commands or test cases. `workflow_controller/unit_handoff.py` centralizes field aliases and evidence helpers so validator, verifier, and Builder preflight share the same interpretation.
+
+`run_verifier()` writes `handoff-evidence.json` for producer units that declare handoff metadata. The artifact records pass/fail state, produced outputs, consumed inputs, ready checks, resolved evidence artifacts, and structured issues. `RalphRefinerController` checks dependency handoff evidence before `prepare_builder_prompt()` and `run_builder()`; failed or missing evidence sets `status=blocked`, `currentStep=EXECUTE_UNIT`, and `blockedContext.category=unit_handoff`.
 
 `RalphRefinerController._apply_and_validate_unit_plan_gate()` is the single Unit Plan gate helper. The drafter path applies it before annotation or human review, and the approval path applies it again after human approval. This keeps infrastructure matrix, final evidence candidates, golden path, real E2E, Journey, prototype, AO, AC, and walkthrough validation from diverging between preflight and approval revalidation.
 

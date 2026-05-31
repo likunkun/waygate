@@ -72,6 +72,18 @@ from workflow_controller.requirements_surface import (
     requirements_surface_uses_false_flag_as_no_ui_basis,
     state_targets_waygate_controller,
 )
+from workflow_controller.unit_handoff import (
+    handoff_evidence_artifacts,
+    handoff_human_summary,
+    handoff_produces,
+    handoff_ready_checks,
+    handoff_requires,
+    handoff_summary_is_vague,
+    handoff_text_matches,
+    ready_check_is_mapped,
+    unit_depends_on,
+    unit_handoff,
+)
 
 
 VERIFICATION_EVIDENCE_SCHEMA_VERSION = 'v0.3.5'
@@ -1390,6 +1402,157 @@ def validate_unit_plan_evidence_row_preflight(state: dict[str, Any]) -> None:
                 )
     if issues:
         raise ValueError('unit plan evidence row preflight is incomplete: ' + '; '.join(issues))
+
+
+def validate_unit_plan_handoff_continuity(
+    state: dict[str, Any],
+    unit_plan_path: Path | None = None,
+) -> None:
+    units = [
+        unit for unit in state.get('units') or []
+        if isinstance(unit, dict) and str(unit.get('id') or '').strip()
+    ]
+    if not units:
+        return
+
+    units_by_id = {str(unit.get('id')).strip(): unit for unit in units}
+    issues: list[str] = []
+    dependency_graph: dict[str, list[str]] = {}
+    dependents_by_unit: dict[str, list[str]] = {unit_id: [] for unit_id in units_by_id}
+    for unit_id, unit in units_by_id.items():
+        dependencies = unit_depends_on(unit)
+        dependency_graph[unit_id] = dependencies
+        for dependency in dependencies:
+            if dependency not in units_by_id:
+                issues.append(f'unit {unit_id} depends_on unknown unit {dependency}')
+                continue
+            if dependency == unit_id:
+                issues.append(f'unit {unit_id} depends_on itself')
+                continue
+            dependents_by_unit.setdefault(dependency, []).append(unit_id)
+
+    issues.extend(_unit_handoff_cycle_issues(dependency_graph))
+
+    has_handoff_contract = any(unit_depends_on(unit) or unit_handoff(unit) for unit in units)
+    if len(units) <= 1 and not has_handoff_contract:
+        if issues:
+            raise ValueError('unit plan handoff continuity is incomplete: ' + '; '.join(issues))
+        return
+    if len(units) > 1 and has_handoff_contract and unit_plan_path is not None and unit_plan_path.exists():
+        content = gate_body(unit_plan_path.read_text(encoding='utf-8'))
+        if not _markdown_section(content, '单元连贯性摘要').strip():
+            issues.append('Unit Plan missing `## 单元连贯性摘要` for multi-unit handoff continuity')
+        if not (
+            _markdown_section(content, 'Handoff Matrix').strip()
+            or _markdown_section(content, '交接矩阵').strip()
+        ):
+            issues.append('Unit Plan missing `## Handoff Matrix` for multi-unit handoff continuity')
+
+    for unit_id, unit in units_by_id.items():
+        dependencies = [dependency for dependency in unit_depends_on(unit) if dependency in units_by_id]
+        dependents = dependents_by_unit.get(unit_id) or []
+        handoff = unit_handoff(unit)
+        participates = bool(dependencies or dependents or handoff)
+        if not participates:
+            continue
+
+        if not handoff:
+            issues.append(f'unit {unit_id} participates in dependencies but is missing handoff')
+            continue
+
+        summary = handoff_human_summary(unit)
+        if handoff_summary_is_vague(summary):
+            issues.append(f'unit {unit_id} handoff human_summary is vague: {summary or "<missing>"}')
+
+        if dependencies and not handoff_requires(unit):
+            issues.append(f'unit {unit_id} depends_on {dependencies} but handoff.requires is empty')
+        if dependents and not handoff_produces(unit):
+            issues.append(f'unit {unit_id} feeds downstream unit(s) {dependents} but handoff.produces is empty')
+
+        if not bool(unit.get('passes')):
+            if not _non_placeholder_items(unit.get('done_when') or unit.get('doneWhen')):
+                issues.append(f'unit {unit_id} handoff must be covered by concrete done_when conditions')
+            if not handoff_ready_checks(unit):
+                issues.append(f'unit {unit_id} handoff.ready_checks is empty')
+            if not handoff_evidence_artifacts(unit):
+                issues.append(f'unit {unit_id} handoff.evidence_artifacts is empty')
+            for ready_check in handoff_ready_checks(unit):
+                if not ready_check_is_mapped(unit, ready_check):
+                    issues.append(
+                        f'unit {unit_id} ready_check {ready_check} is not mapped to verification_commands or test_cases'
+                    )
+
+        required_inputs = handoff_requires(unit)
+        if dependencies and required_inputs:
+            producer_outputs_by_dependency = {
+                dependency: handoff_produces(units_by_id[dependency])
+                for dependency in dependencies
+            }
+            for required_input in required_inputs:
+                matching_dependencies = [
+                    dependency for dependency, producer_outputs in producer_outputs_by_dependency.items()
+                    if any(handoff_text_matches(required_input, produced) for produced in producer_outputs)
+                ]
+                if not matching_dependencies:
+                    if len(dependencies) == 1:
+                        issues.append(
+                            f'unit {unit_id} requires {required_input} but dependency {dependencies[0]} does not produce it'
+                        )
+                    else:
+                        issues.append(
+                            f'unit {unit_id} requires {required_input} but no dependency in {dependencies} produces it'
+                        )
+            for dependency, producer_outputs in producer_outputs_by_dependency.items():
+                if not any(
+                    handoff_text_matches(required_input, produced)
+                    for required_input in required_inputs
+                    for produced in producer_outputs
+                ):
+                    issues.append(
+                        f'unit {unit_id} depends_on {dependency} but none of its produces are required by the downstream handoff'
+                    )
+
+    if issues:
+        raise ValueError('unit plan handoff continuity is incomplete: ' + '; '.join(issues))
+
+
+def _unit_handoff_cycle_issues(dependency_graph: dict[str, list[str]]) -> list[str]:
+    issues: list[str] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(unit_id: str, stack: list[str]) -> None:
+        if unit_id in visiting:
+            cycle = stack[stack.index(unit_id):] + [unit_id] if unit_id in stack else [unit_id, unit_id]
+            issues.append('circular dependency in Unit Plan handoff graph: ' + ' -> '.join(cycle))
+            return
+        if unit_id in visited:
+            return
+        visiting.add(unit_id)
+        for dependency in dependency_graph.get(unit_id) or []:
+            if dependency not in dependency_graph:
+                continue
+            visit(dependency, [*stack, dependency])
+        visiting.remove(unit_id)
+        visited.add(unit_id)
+
+    for unit_id in dependency_graph:
+        visit(unit_id, [unit_id])
+    return issues
+
+
+def _non_placeholder_items(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw_items = [str(item).strip() for item in value if str(item).strip()]
+    elif isinstance(value, str) and value.strip():
+        raw_items = [value.strip()]
+    else:
+        raw_items = []
+    placeholders = {'tbd', 'todo', '待补', '待定', 'n/a', 'na', 'none', 'environment ready'}
+    return [
+        item for item in raw_items
+        if item.strip().lower() not in placeholders and '...' not in item
+    ]
 
 
 def validate_unit_plan_script_entry_commands(state: dict[str, Any]) -> None:

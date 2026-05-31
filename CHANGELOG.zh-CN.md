@@ -2,6 +2,14 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2d
+
+- 新增 Unit Continuity Gate：多单元 Unit Plan 必须包含 `单元连贯性摘要`、Handoff Matrix，以及结构化 `depends_on` / `handoff` metadata。
+- Unit Plan validation 新增缺失依赖、循环依赖、模糊 handoff 摘要、下游 `requires[]` 与上游 `produces[]` 不匹配、ready checks 未映射到命令或测试用例等检查。
+- Verifier 会写 `artifacts/<unit-id>/handoff-evidence.json`；声明的 handoff artifacts 或 ready checks 缺失时 producer verification 失败。
+- 下游 Builder 在依赖 handoff evidence 缺失、failed 或不匹配时，以 `blockedContext.category=unit_handoff` 阻塞执行。
+- 新增 `docs/workflow/unit-continuity-handoff-policy.md` 并将 package version metadata 更新到 `0.6.2d`。
+
 ## 0.6.2b
 
 - 新增 Blocked Assist：为 `status=blocked` workflow 提供受控诊断对话、summary artifact、人工确认的 `human_reason`，并由 controller 显式选择恢复路线。

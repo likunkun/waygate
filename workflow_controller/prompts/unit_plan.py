@@ -89,6 +89,14 @@ Verification command script-entry policy:
 - 脚本内部可以运行 pytest、Playwright、环境准备或多步 shell；Unit Plan 只声明脚本入口和脚本应覆盖的 AC/断言。
 - 不要在 Unit Plan 中写 `pytest ...`、`playwright test ...`、`bash -lc`、`python -c`、管道或内联 shell；把这些内容写入 `scripts/verify/<case>.sh` 或 `scripts/verify/<case>.py`。
 
+Unit continuity / handoff policy:
+- 多单元 Unit Plan 必须写 `## 单元连贯性摘要`，用人能读懂的话说明每个上游单元给下游单元留下什么可消费成果，以及下游如何消费。
+- 多单元 Unit Plan 必须写 `## Handoff Matrix`，列出 Upstream Unit、Downstream Unit、Produced Artifacts / Readiness、Consumed Inputs、Evidence Path、Failure Route。
+- Controller State Patch 中有依赖的 unit 必须写 `depends_on`；参与上游/下游交接的 unit 必须写 `handoff.human_summary`、`handoff.produces`、`handoff.requires`、`handoff.ready_checks`、`handoff.evidence_artifacts`。
+- `human_summary` 不能只写 “environment ready / 环境就绪 / ready / done”；必须命名具体 artifact、状态或接口。
+- 下游 `handoff.requires[]` 必须匹配其 `depends_on` 上游的 `handoff.produces[]`；`ready_checks[]` 必须映射到本 unit 的 test case id、test case command 或 `verification_commands[]`。
+- producer unit 的 verifier 会写 `artifacts/<unit-id>/handoff-evidence.json`；下游 Builder 启动前会检查依赖单元的 handoff evidence，缺失或 failed 会以 `blockedContext.category=unit_handoff` 阻止下游执行。
+
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
 - 必须沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令意图、环境类型、mock policy 和断言意图，并在 Unit Plan 中落成具体 test case、exact command、fixture 初始化脚本和 evidence row；除非创建 Requirements change request 并重新通过 Requirements gate，否则 Unit Plan 不得弱化这些前置审阅结论。
@@ -167,6 +175,16 @@ Acceptance Criterion -> Test Case -> Journey -> Layer -> Environment -> Real Ent
 E2E 层的测试用例必须有可执行 `command`（`scripts/verify/` 脚本入口），并声明 `fixture` 或测试数据准备方式；`evidence` 字段留空；`expected` 必须描述具体可断言的值，不接受"页面渲染成功"、"无报错"或"截图留存"。
 如果测试用例覆盖 Journey，在表格中写出 Journey id，并在 Controller State Patch 的对应 `test_cases[]` JSON 对象中写 `covers_journeys` 或 `journey_ids`。
 
+## 单元连贯性摘要
+
+多单元计划必须用自然语言说明上游单元完成后给下游单元留下什么具体 artifact、状态或 ready condition。单单元计划可写“不涉及跨单元 handoff”。
+
+## Handoff Matrix
+
+多单元计划必须创建一张表，表达以下精确映射：
+
+Upstream Unit -> Downstream Unit -> Produced Artifacts / Readiness -> Consumed Inputs -> Evidence Path -> Failure Route
+
 ## 文档交付矩阵（Document Deliverables Matrix）
 
 创建一张表，表达以下精确映射：
@@ -214,6 +232,14 @@ Area -> Target Path -> Action -> Required For Acceptance -> Evidence / Reason
       "scope": ["<scope item>"],
       "non_goals": ["<non-goal item>"],
       "done_when": ["<observable completion condition>"],
+      "depends_on": ["<upstream unit id, omit or [] for first independent units>"],
+      "handoff": {{
+        "human_summary": "<具体说明本 unit 产出/消费什么，不得写 environment ready 这类占位语>",
+        "produces": ["<artifact/readiness/state this unit makes available to downstream units>"],
+        "requires": ["<inputs consumed from depends_on units; [] for first producer units>"],
+        "ready_checks": ["<test case id or exact script entry command proving the handoff is ready>"],
+        "evidence_artifacts": ["<artifact path such as export.json or reports/schema-ready.json>"]
+      }},
       "workflow_validation_level": "fragment",
       "test_cases": [
         {{

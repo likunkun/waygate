@@ -93,6 +93,7 @@ def test_v061_required_formal_docs_and_registry_exist() -> None:
 
 def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
     workflow_doc = _read('docs/workflow/staged-requirements-package-policy.md')
+    handoff_doc = _read('docs/workflow/unit-continuity-handoff-policy.md')
     architecture_doc = _read('docs/architecture/staged-requirements-package-architecture.md')
     registry = _read('docs/README.md')
     roadmap = _read('ROADMAP.md')
@@ -113,6 +114,7 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
         'requirements_annotation',
         'requirementsSurfaceClassification',
         'target product UX',
+        'unit_handoff',
     ]:
         assert expected in workflow_doc
 
@@ -127,20 +129,36 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
         'artifact path/hash/status',
         'requirementsSurfaceClassification',
         'Requirements checkpoint revise',
+        'workflow_controller/unit_handoff.py',
+        'handoff-evidence.json',
     ]:
         assert expected in architecture_doc
 
+    for expected in [
+        'Unit Continuity Gate',
+        'depends_on',
+        'handoff',
+        'Handoff Matrix',
+        'handoff-evidence.json',
+        'blockedContext',
+        'unit_handoff',
+    ]:
+        assert expected in handoff_doc
+
     assert 'docs/workflow/staged-requirements-package-policy.md' in registry
+    assert 'docs/workflow/unit-continuity-handoff-policy.md' in registry
     assert 'docs/architecture/staged-requirements-package-architecture.md' in registry
-    assert 'V0.6.2c' in registry
+    assert 'V0.6.2d' in registry
     assert 'V0.6.2 - Staged Requirements Package' in roadmap
     assert 'V0.6.2a - Staged Requirements Target Product Perspective' in roadmap
     assert 'V0.6.2c - Chinese Checkpoint Names and Targeted Revise' in roadmap
+    assert 'V0.6.2d - Unit Continuity Gate' in roadmap
     assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap
     assert 'Merge the original V0.6.2 Strict Test Presence scope into V0.6.3.' in roadmap
     assert 'V0.6.2 - Staged Requirements Package' in roadmap_zh
     assert 'V0.6.2a - Staged Requirements 目标产品视角修复' in roadmap_zh
     assert 'V0.6.2c - 中文 Checkpoint 命名与定点 Revise' in roadmap_zh
+    assert 'V0.6.2d - Unit Continuity Gate' in roadmap_zh
     assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap_zh
     assert '原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。' in roadmap_zh
 

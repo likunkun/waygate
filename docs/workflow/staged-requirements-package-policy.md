@@ -1,6 +1,6 @@
 # Staged Requirements Package Policy
 
-This document records the V0.6.2 workflow policy for Staged Requirements Package. It reduces Requirements-stage overload by splitting the old single draft into focused checkpoints, while preserving one final human Requirements approval gate.
+This document records the V0.6.2 workflow policy for Staged Requirements Package, including V0.6.2d unit continuity handoff hardening. It reduces Requirements-stage overload by splitting the old single draft into focused checkpoints, while preserving one final human Requirements approval gate.
 
 `.rrc-controller-*` directories remain run audit evidence. Long-lived policy lives here and is registered from `docs/README.md`.
 
@@ -130,6 +130,10 @@ When `requirementsPackage.version` is `v0.6.2-staged`, the Unit Plan prompt must
 - Infrastructure / Execution Context Matrix facts
 
 Natural-language summaries are not sufficient as the handoff contract. The artifact path/hash/status records are the traceable source.
+
+V0.6.2d adds a hard Unit Continuity Gate for multi-unit plans. Any unit that declares `depends_on`, or participates in handoff metadata, must declare structured `handoff` data in Controller State Patch: `human_summary`, `produces`, `requires`, `ready_checks`, and `evidence_artifacts`. The Unit Plan body must include `## 单元连贯性摘要` and `## Handoff Matrix` so human reviewers can see upstream unit, downstream unit, produced artifacts/readiness, consumed inputs, evidence path, and failure route. The validator rejects vague summaries such as `environment ready`, missing dependencies, circular dependencies, unmatched `requires[]`, dependencies that contribute no required input, and ready checks that do not map to commands or test cases. When a downstream unit depends on multiple upstream units, different dependencies may satisfy different `requires[]` entries.
+
+Producer unit verification writes `artifacts/<unit-id>/handoff-evidence.json`. Missing declared evidence artifacts or failed ready checks make producer verification fail. Before Builder starts a downstream unit, the controller checks every dependency's handoff evidence and blocks with `blockedContext.category=unit_handoff` when the upstream evidence is missing, invalid, failed, or does not produce the downstream required input. The detailed policy lives in `docs/workflow/unit-continuity-handoff-policy.md`.
 
 Unit Plan has no staged checkpoint sequence. Its deterministic gate is the same validator chain in draft preflight and approval revalidation: state patch, test strategy, test case coverage, AO/AC traceability, prototype conformance, document deliverables, infrastructure matrix, verification environment, verification-assist contract, evidence-row preflight, final evidence candidates, golden path, real E2E policy, Journey enrichment, and final walkthrough. A draft that fails this chain must not run annotation or enter human approval, and a human-approved gate is revalidated through the same helper before state advances.
 

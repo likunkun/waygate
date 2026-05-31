@@ -1053,6 +1053,63 @@ def _write_valid_unit_plan(path: Path, *, command: str = 'bash scripts/verify/te
     )
 
 
+def _write_valid_two_unit_plan(path: Path) -> None:
+    command_1 = 'bash scripts/verify/test-delivery-1.sh'
+    command_2 = 'bash scripts/verify/test-delivery-2.sh'
+    path.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Test Case Matrix\n'
+        '| Acceptance Criterion | Test Case | Layer | Command/Evidence | Expected Result |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        f'| AC-1 | TC-AC1 | integration | {command_1} | First delivery behavior works |\n'
+        f'| AC-2 | TC-AC2 | integration | {command_2} | Second delivery behavior works |\n\n'
+        '## Controller State Patch\n\n'
+        '```json\n'
+        + json.dumps(
+            {
+                'currentUnitId': 'unit-01',
+                'objectiveCoverage': [
+                    {'objective': 'Delivery objective', 'units': ['unit-01', 'unit-02'], 'status': 'partial'}
+                ],
+                'units': [
+                    {
+                        'id': 'unit-01',
+                        'name': 'Delivery unit 1',
+                        'passes': False,
+                        'test_cases': [
+                            {
+                                'id': 'TC-AC1',
+                                'acceptance_criterion': 'AC-1',
+                                'layer': 'integration',
+                                'command': command_1,
+                                'expected': 'First delivery behavior works',
+                            }
+                        ],
+                        'verification_commands': [command_1],
+                    },
+                    {
+                        'id': 'unit-02',
+                        'name': 'Delivery unit 2',
+                        'passes': False,
+                        'test_cases': [
+                            {
+                                'id': 'TC-AC2',
+                                'acceptance_criterion': 'AC-2',
+                                'layer': 'integration',
+                                'command': command_2,
+                                'expected': 'Second delivery behavior works',
+                            }
+                        ],
+                        'verification_commands': [command_2],
+                    },
+                ],
+            }
+        )
+        + '\n```\n',
+        encoding='utf-8',
+    )
+
+
 def _write_valid_unit_plan_with_manual_ac2(
     path: Path,
     *,
@@ -4669,6 +4726,59 @@ def test_builder_done_after_verifier_failure_with_matching_resolution_enters_ref
     assert state.get('blockedReason') is None
 
 
+def test_builder_done_ignores_verifier_failure_from_other_unit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    stale_failed_command = 'sh -c "old unit command that cannot pass"'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-02',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(tmp_path),
+            'lastFailure': {
+                'unit_id': 'unit-01',
+                'stage': 'VERIFY_UNIT',
+                'details': {'command': stale_failed_command, 'returncode': 1},
+            },
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01', 'unit-02'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Old unit', 'passes': False},
+                {'id': 'unit-02', 'name': 'Current unit', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+
+    def fake_run_builder(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'builder-summary.json').write_text(
+            json.dumps({
+                'runner_status': 'done',
+                'done_payload': {'status': 'done', 'summary': 'current unit implementation finished'},
+            }),
+            encoding='utf-8',
+        )
+        (unit_dir / 'changed-files.txt').write_text('src/current.py\n', encoding='utf-8')
+
+    monkeypatch.setattr(rrc_controller_module, 'run_builder', fake_run_builder)
+
+    state = controller.run_once()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'REFINE_UNIT'
+    assert state.get('blockedReason') is None
+
+
 def test_run_verifier_rejects_malformed_evidence_schema_before_unit_complete(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7463,10 +7573,174 @@ def test_unit_plan_approval_ignores_previous_builder_blocked_artifact(tmp_path: 
     state = controller.get_status()
 
     assert approved['currentStep'] == 'PLAN_APPROVED'
+    assert approved.get('unitPlanAcceptedAt')
     assert state['status'] == 'active'
     assert state['currentStep'] == 'PLAN_APPROVED'
     assert state.get('blockedReason') is None
     assert state.get('nextAction') == 'run_builder'
+
+
+def test_unit_plan_approval_ignores_builder_blocked_artifacts_for_all_approved_units(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    blocker = 'Missing PRODUCTION_WEB_BASE_URL for unit-02 production_readonly evidence.'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_UNIT_PLAN_APPROVAL',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req',
+            'unitPlanAccepted': False,
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01', 'unit-02'], 'status': 'partial'},
+            ],
+            'units': [
+                {'id': 'unit-01', 'name': 'Delivery 1', 'passes': False},
+                {'id': 'unit-02', 'name': 'Delivery 2', 'passes': False},
+            ],
+        },
+        force=True,
+    )
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n'
+        '- AC-1: First delivery behavior works.\n'
+        '- AC-2: Second delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    unit_plan_path = approvals_dir / 'unit-plan.md'
+    _write_valid_two_unit_plan(unit_plan_path)
+    approve_gate_file(unit_plan_path, actor='human')
+    unit_dir = state_dir / 'artifacts' / 'unit-02'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = unit_dir / 'builder-summary.json'
+    summary_path.write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {
+                    'status': 'blocked',
+                    'summary': blocker,
+                    'run_id': 'builder-run-before-revision-unit-02',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    approved = controller.run_once()
+    assert approved['currentStep'] == 'PLAN_APPROVED'
+    assert approved.get('unitPlanAcceptedAt')
+    assert any(
+        entry.get('unit_id') == 'unit-02'
+        for entry in approved.get('ignoredBuilderBlockedContexts') or []
+        if isinstance(entry, dict)
+    )
+
+    persisted = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    persisted['currentUnitId'] = 'unit-02'
+    persisted['currentStep'] = 'PLAN_APPROVED'
+    persisted['status'] = 'active'
+    (state_dir / 'session.json').write_text(json.dumps(persisted), encoding='utf-8')
+
+    state = controller.get_status()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'PLAN_APPROVED'
+    assert state.get('blockedReason') is None
+    assert state.get('nextAction') == 'run_builder'
+
+
+def test_status_clears_stale_builder_agent_blocked_state_after_unit_plan_approval(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    blocker = 'Missing PRODUCTION_WEB_BASE_URL for production_readonly evidence.'
+    approvals_dir = state_dir / 'approvals'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    (approvals_dir / 'requirements-and-acceptance.md').write_text(
+        '# Requirements & Acceptance Confirmation\n\n- AC-1: Delivery behavior works.\n',
+        encoding='utf-8',
+    )
+    unit_plan_path = approvals_dir / 'unit-plan.md'
+    _write_valid_unit_plan(unit_plan_path)
+    approve_gate_file(unit_plan_path, actor='human')
+    gate = rrc_controller_module.check_gate_file(unit_plan_path)
+    os.utime(unit_plan_path, (2000, 2000))
+    unit_dir = state_dir / 'artifacts' / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = unit_dir / 'builder-summary.json'
+    summary_path.write_text(
+        json.dumps(
+            {
+                'runner_status': 'blocked',
+                'done_payload': {
+                    'status': 'blocked',
+                    'summary': blocker,
+                    'run_id': 'builder-run-before-latest-unit-plan',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+    os.utime(summary_path, (1000, 1000))
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': blocker,
+            'blockedContext': {
+                'source': 'builder_agent',
+                'category': 'environment',
+                'unit_id': 'unit-01',
+                'summary': blocker,
+                'summary_path': str(summary_path),
+                'run_id': 'builder-run-before-latest-unit-plan',
+            },
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'requirementsAcceptedHash': 'sha256:req',
+            'unitPlanAccepted': True,
+            'unitPlanAcceptedHash': gate.content_hash,
+            'unitPlanAcceptedBy': 'human',
+            'scopeApproved': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+
+    state = controller.get_status()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'EXECUTE_UNIT'
+    assert state.get('blockedReason') is None
+    assert state.get('blockedContext') is None
+    assert state.get('nextAction') == 'run_builder'
+    persisted = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert persisted['status'] == 'active'
+    assert persisted.get('blockedReason') is None
+    assert persisted.get('blockedContext') is None
+    events = [
+        json.loads(line)
+        for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert any(event['type'] == 'stale_builder_agent_blocked_context_cleared' for event in events)
 
 
 def test_unblock_rejects_unit_plan_contract_blocked_state(tmp_path: Path) -> None:

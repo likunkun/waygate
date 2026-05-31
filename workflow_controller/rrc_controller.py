@@ -70,6 +70,7 @@ from workflow_controller.gates.validators import (
     validate_unit_plan_final_evidence_candidates,
     validate_unit_plan_final_acceptance_walkthrough,
     validate_unit_plan_golden_path,
+    validate_unit_plan_handoff_continuity,
     validate_unit_plan_infrastructure_execution_context_matrix,
     validate_unit_plan_prototype_conformance,
     validate_unit_plan_real_e2e_evidence_policy,
@@ -139,6 +140,7 @@ from workflow_controller.steps._common import (
     RecoverableAgentWait,
     TestStrategistBlocked,
     TestStrategistFallbackBlocked,
+    _current_unit_last_failure,
 )
 from workflow_controller.steps.builder import (
     ask_human_release_approval,
@@ -168,6 +170,13 @@ from workflow_controller.steps.requirements_package import (
     run_requirements_package_stage,
 )
 from workflow_controller.steps.unit_plan import run_unit_plan_drafter
+from workflow_controller.unit_handoff import (
+    handoff_evidence_path,
+    handoff_requires,
+    handoff_text_matches,
+    load_handoff_evidence,
+    unit_depends_on,
+)
 
 
 DEFAULT_INITIAL_STATE: dict[str, Any] = {
@@ -540,6 +549,7 @@ class RalphRefinerController:
         )
         annotation_config_migrated = migrate_legacy_annotation_agent_configs(state)
         annotation_blocker_reconciled = self._reconcile_annotation_runtime_blocker_state(state)
+        stale_builder_blocker_cleared = self._clear_stale_builder_agent_blocked_state(state)
         builder_blocked_reconciled = self._reconcile_builder_agent_blocked_state(state)
         before_requirements_validation = _requirements_validation_state_key(state)
         before_validation = _unit_plan_validation_state_key(state)
@@ -549,6 +559,7 @@ class RalphRefinerController:
             agent_target_changed
             or annotation_config_migrated
             or annotation_blocker_reconciled
+            or stale_builder_blocker_cleared
             or builder_blocked_reconciled
             or generated_ao_cleanup_changed
             or generated_ao_blocker_cleared
@@ -692,6 +703,7 @@ class RalphRefinerController:
         validate_unit_plan_verification_environment(candidate_state)
         validate_unit_plan_verification_assist_contract(candidate_state, artifacts_dir=self.artifacts_dir)
         validate_unit_plan_evidence_row_preflight(candidate_state)
+        validate_unit_plan_handoff_continuity(candidate_state, unit_plan_path=gate_path)
         validate_unit_plan_final_evidence_candidates(
             self.approvals_dir / 'requirements-and-acceptance.md',
             candidate_state,
@@ -1463,12 +1475,59 @@ class RalphRefinerController:
             f'Builder artifact: {summary_path}\n'
         )
 
-    def _builder_agent_blocked_context(self, state: dict[str, Any]) -> dict[str, Any] | None:
-        current_unit_id = str(state.get('currentUnitId') or '').strip()
+    def _unit_plan_approval_cutoff_timestamp(self, state: dict[str, Any]) -> float | None:
+        accepted_at = str(state.get('unitPlanAcceptedAt') or '').strip()
+        if accepted_at:
+            try:
+                parsed = datetime.fromisoformat(accepted_at.replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.timestamp()
+            except ValueError:
+                pass
+
+        accepted_hash = str(state.get('unitPlanAcceptedHash') or '').strip()
+        if not accepted_hash:
+            return None
+        gate_path = self.approvals_dir / 'unit-plan.md'
+        if not gate_path.exists():
+            return None
+        try:
+            gate = check_gate_file(gate_path)
+        except Exception:
+            return None
+        if not gate.approved or gate.content_hash != accepted_hash:
+            return None
+        return gate_path.stat().st_mtime
+
+    def _builder_summary_is_stale_after_unit_plan_approval(
+        self,
+        state: dict[str, Any],
+        summary_path: Path,
+    ) -> bool:
+        cutoff = self._unit_plan_approval_cutoff_timestamp(state)
+        if cutoff is None:
+            return False
+        try:
+            return summary_path.stat().st_mtime < cutoff
+        except OSError:
+            return False
+
+    def _builder_agent_blocked_context_for_unit(
+        self,
+        state: dict[str, Any],
+        unit_id: str,
+        *,
+        respect_ignored: bool = True,
+        respect_freshness: bool = True,
+    ) -> dict[str, Any] | None:
+        current_unit_id = str(unit_id or '').strip()
         if not current_unit_id:
             return None
         summary_path = self.artifacts_dir / current_unit_id / 'builder-summary.json'
         if not summary_path.exists():
+            return None
+        if respect_freshness and self._builder_summary_is_stale_after_unit_plan_approval(state, summary_path):
             return None
         try:
             builder_summary = json.loads(summary_path.read_text(encoding='utf-8'))
@@ -1497,9 +1556,15 @@ class RalphRefinerController:
             'done_status': done_status or None,
             'run_id': done_payload.get('run_id'),
         }
-        if _builder_blocked_context_is_ignored(state, context):
+        if respect_ignored and _builder_blocked_context_is_ignored(state, context):
             return None
         return context
+
+    def _builder_agent_blocked_context(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        return self._builder_agent_blocked_context_for_unit(
+            state,
+            str(state.get('currentUnitId') or ''),
+        )
 
     def _apply_builder_agent_blocked_state(
         self,
@@ -1532,10 +1597,182 @@ class RalphRefinerController:
         self._apply_builder_agent_blocked_state(state, context)
         return True
 
+    def _builder_blocked_context_is_stale(self, state: dict[str, Any], context: dict[str, Any]) -> bool:
+        summary_path_text = str(context.get('summary_path') or '').strip()
+        summary_path = Path(summary_path_text) if summary_path_text else None
+        if summary_path is None:
+            unit_id = str(context.get('unit_id') or state.get('currentUnitId') or '').strip()
+            if unit_id:
+                summary_path = self.artifacts_dir / unit_id / 'builder-summary.json'
+        if summary_path is None:
+            return False
+        return self._builder_summary_is_stale_after_unit_plan_approval(state, summary_path)
+
+    def _clear_stale_builder_agent_blocked_state(self, state: dict[str, Any]) -> bool:
+        if state.get('status') != 'blocked':
+            return False
+        context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
+        if str(context.get('source') or '') != 'builder_agent':
+            return False
+        ignored = _builder_blocked_context_is_ignored(state, context)
+        stale = self._builder_blocked_context_is_stale(state, context)
+        if not ignored and not stale:
+            return False
+
+        previous_reason = str(state.get('blockedReason') or '').strip()
+        if stale:
+            _remember_ignored_builder_blocked_context(state, context, reason='stale_unit_plan_approval')
+        state['status'] = 'active'
+        state['currentStep'] = 'EXECUTE_UNIT'
+        state['blockedReason'] = None
+        state.pop('blockedContext', None)
+        self.store.append_event('stale_builder_agent_blocked_context_cleared', {
+            'task_id': state.get('task_id'),
+            'unit_id': context.get('unit_id') or state.get('currentUnitId'),
+            'previous_blocked_reason': previous_reason,
+            'context': context,
+            'ignored': ignored,
+            'stale': stale,
+        })
+        return True
+
+    def _unit_handoff_blocked_context(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        current_unit_id = str(state.get('currentUnitId') or '').strip()
+        if not current_unit_id:
+            return None
+        current_unit = next(
+            (
+                unit for unit in state.get('units') or []
+                if isinstance(unit, dict) and str(unit.get('id') or '').strip() == current_unit_id
+            ),
+            None,
+        )
+        if not isinstance(current_unit, dict):
+            return None
+        dependencies = unit_depends_on(current_unit)
+        if not dependencies:
+            return None
+
+        issues: list[str] = []
+        evidence_paths: list[str] = []
+        required_inputs = handoff_requires(current_unit)
+        produced_outputs_by_dependency: dict[str, list[str]] = {}
+        for dependency in dependencies:
+            evidence_path = handoff_evidence_path(self.artifacts_dir, dependency)
+            evidence_paths.append(str(evidence_path))
+            if not evidence_path.exists():
+                issues.append(
+                    f'上游单元 {dependency} 缺少交接证据 `{evidence_path}`；下游单元 {current_unit_id} 不能开始。'
+                )
+                continue
+            evidence = load_handoff_evidence(evidence_path)
+            if not evidence:
+                issues.append(f'上游单元 {dependency} 的交接证据不是有效 JSON：`{evidence_path}`。')
+                continue
+            if evidence.get('passed') is not True:
+                upstream_issues = evidence.get('issues') if isinstance(evidence.get('issues'), list) else []
+                issue_summary = '; '.join(
+                    str(issue.get('message') or issue.get('type') or issue)
+                    for issue in upstream_issues[:3]
+                    if isinstance(issue, dict)
+                )
+                issues.append(
+                    f'上游单元 {dependency} 的交接证据未通过：{issue_summary or evidence_path}'
+                )
+            produced_outputs = [
+                str(item).strip()
+                for item in evidence.get('produces') or []
+                if str(item).strip()
+            ]
+            produced_outputs_by_dependency[dependency] = produced_outputs
+
+        for required_input in required_inputs:
+            matching_dependencies = [
+                dependency
+                for dependency, produced_outputs in produced_outputs_by_dependency.items()
+                if any(handoff_text_matches(required_input, produced) for produced in produced_outputs)
+            ]
+            if matching_dependencies:
+                continue
+            issues.append(
+                f'下游单元 {current_unit_id} 需要 `{required_input}`，但所有上游单元的交接证据都没有产出匹配项。'
+            )
+
+        for dependency, produced_outputs in produced_outputs_by_dependency.items():
+            if any(
+                handoff_text_matches(required_input, produced)
+                for required_input in required_inputs
+                for produced in produced_outputs
+            ):
+                continue
+            issues.append(
+                f'下游单元 {current_unit_id} 依赖上游单元 {dependency}，但该上游交接证据没有匹配任何下游 requires[]。'
+            )
+
+        if not issues:
+            return None
+        return {
+            'source': 'unit_handoff_preflight',
+            'category': 'unit_handoff',
+            'unit_id': current_unit_id,
+            'dependencies': dependencies,
+            'evidence_paths': evidence_paths,
+            'summary': ' '.join(issues),
+        }
+
+    def _apply_unit_handoff_blocked_state(
+        self,
+        state: dict[str, Any],
+        context: dict[str, Any],
+    ) -> None:
+        blocked_reason = str(context.get('summary') or '').strip() or 'Unit handoff evidence is incomplete.'
+        state['status'] = 'blocked'
+        state['currentStep'] = 'EXECUTE_UNIT'
+        state['blockedReason'] = blocked_reason
+        state['blockedContext'] = dict(context)
+        self.store.append_event('unit_handoff_blocked', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'stage': 'EXECUTE_UNIT',
+            'reason': blocked_reason,
+            'context': context,
+        })
+
     def _ignore_current_builder_blocked_context(self, state: dict[str, Any], *, reason: str) -> None:
-        context = self._builder_agent_blocked_context(state)
+        context = self._builder_agent_blocked_context_for_unit(
+            state,
+            str(state.get('currentUnitId') or ''),
+            respect_ignored=False,
+            respect_freshness=False,
+        )
         if context:
             _remember_ignored_builder_blocked_context(state, context, reason=reason)
+
+    def _ignore_builder_blocked_contexts_for_approved_units(
+        self,
+        state: dict[str, Any],
+        *,
+        reason: str,
+    ) -> None:
+        unit_ids: list[str] = []
+        current_unit_id = str(state.get('currentUnitId') or '').strip()
+        if current_unit_id:
+            unit_ids.append(current_unit_id)
+        for unit in state.get('units') or []:
+            if not isinstance(unit, dict):
+                continue
+            unit_id = str(unit.get('id') or '').strip()
+            if unit_id and unit_id not in unit_ids:
+                unit_ids.append(unit_id)
+        for unit_id in unit_ids:
+            context = self._builder_agent_blocked_context_for_unit(
+                state,
+                unit_id,
+                respect_ignored=False,
+                respect_freshness=False,
+            )
+            if context:
+                _remember_ignored_builder_blocked_context(state, context, reason=reason)
 
     def _requirements_change_revision_feedback(
         self,
@@ -1907,6 +2144,7 @@ class RalphRefinerController:
         state.pop('requirementsAcceptedBy', None)
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
+        state.pop('unitPlanAcceptedAt', None)
         state['requirementsDraftGenerated'] = False
         state['unitPlanDraftGenerated'] = False
         (self.approvals_dir / 'unit-plan.md').unlink(missing_ok=True)
@@ -1957,6 +2195,7 @@ class RalphRefinerController:
         state['unitPlanAccepted'] = False
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
+        state.pop('unitPlanAcceptedAt', None)
         state['unitPlanDraftGenerated'] = False
 
         try:
@@ -2132,6 +2371,7 @@ class RalphRefinerController:
         state.pop('requirementsAcceptedBy', None)
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
+        state.pop('unitPlanAcceptedAt', None)
         state['requirementsDraftGenerated'] = False
         state['unitPlanDraftGenerated'] = False
         state['status'] = 'active'
@@ -2299,6 +2539,7 @@ class RalphRefinerController:
         state['unitPlanAccepted'] = False
         state.pop('unitPlanAcceptedHash', None)
         state.pop('unitPlanAcceptedBy', None)
+        state.pop('unitPlanAcceptedAt', None)
         state['unitPlanDraftGenerated'] = False
         state['status'] = 'active'
         state['blockedReason'] = None
@@ -3490,9 +3731,10 @@ class RalphRefinerController:
             gate_path = ensure_unit_plan_gate(state, self.approvals_dir)
             if self._unsafe_skip_gate(state, 'unit_plan', gate_path):
                 state['unitPlanAccepted'] = True
+                state['unitPlanAcceptedAt'] = datetime.now(timezone.utc).isoformat()
                 state['lastVerifiedStep'] = 'PLAN_CREATED'
                 state['currentStep'] = 'PLAN_APPROVED' if state.get('scopeApproved') else 'PLAN_CREATED'
-                self._ignore_current_builder_blocked_context(state, reason='unit_plan_approved')
+                self._ignore_builder_blocked_contexts_for_approved_units(state, reason='unit_plan_approved')
                 self._save_state(state)
                 return state
             gate = check_gate_file(gate_path)
@@ -3508,15 +3750,17 @@ class RalphRefinerController:
                     return state
                 state['unitPlanAcceptedHash'] = gate.content_hash
                 state['unitPlanAcceptedBy'] = gate.confirmed_by
+                state['unitPlanAcceptedAt'] = datetime.now(timezone.utc).isoformat()
                 state['blockedReason'] = None
                 state['lastVerifiedStep'] = 'PLAN_CREATED'
                 state['currentStep'] = 'PLAN_APPROVED' if state.get('scopeApproved') else 'PLAN_CREATED'
-                self._ignore_current_builder_blocked_context(state, reason='unit_plan_approved')
+                self._ignore_builder_blocked_contexts_for_approved_units(state, reason='unit_plan_approved')
                 self.store.append_event('unit_plan_approved', {
                     'task_id': state.get('task_id'),
                     'path': str(gate_path),
                     'content_hash': gate.content_hash,
                     'confirmed_by': gate.confirmed_by,
+                    'accepted_at': state.get('unitPlanAcceptedAt'),
                 })
             else:
                 if not self._rerun_pending_annotation_before_human_gate(
@@ -3770,6 +4014,11 @@ class RalphRefinerController:
             return state
 
         if action == 'run_builder':
+            handoff_context = self._unit_handoff_blocked_context(state)
+            if handoff_context:
+                self._apply_unit_handoff_blocked_state(state, handoff_context)
+                self._save_state(state)
+                return state
             prepare_builder_prompt(state, self.approvals_dir, unit_dir)
             try:
                 run_builder(state, unit_dir, dry_run=self.dry_run)
@@ -5834,6 +6083,37 @@ def format_stop_guidance(
                     ),
                 ]
             )
+        elif category == 'unit_handoff':
+            evidence_paths = context.get('evidence_paths') if isinstance(context.get('evidence_paths'), list) else []
+            lines.extend(
+                [
+                    _guidance_line(
+                        '下一步',
+                        '这是上游/下游单元交接证据问题；下游 Builder 已被阻止，直到上游 `handoff-evidence.json` 存在且 passed=true。',
+                        label_style='yellow',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_line(
+                        '处理方式',
+                        '先让上游单元重新完成验证并产出明确 artifacts/readiness 证据；如果 Unit Plan 的依赖或 Handoff Matrix 写错，回到 Unit Plan 修订。',
+                        label_style='yellow',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_command_line(
+                        f'waygate revise --gate unit-plan --state-dir {_state_dir_arg(state_dir)} --reason "修正单元依赖、Handoff Matrix 或上游交接证据"',
+                        color_enabled=color_enabled,
+                    ),
+                ]
+            )
+            if evidence_paths:
+                lines.append(
+                    _guidance_line(
+                        '证据',
+                        ', '.join(str(path) for path in evidence_paths[:3]),
+                        label_style='cyan',
+                        color_enabled=color_enabled,
+                    )
+                )
         elif category == 'unit_plan_contract':
             lines.extend(
                 [
@@ -6785,7 +7065,7 @@ def _uses_default_run_once(controller: RalphRefinerController) -> bool:
 
 
 def _builder_controller_failure_resolution_issue(state: dict[str, Any], unit_dir: Path) -> str | None:
-    last_failure = state.get('lastFailure')
+    last_failure = _current_unit_last_failure(state)
     if not isinstance(last_failure, dict) or last_failure.get('stage') != 'VERIFY_UNIT':
         return None
     details = last_failure.get('details') if isinstance(last_failure.get('details'), dict) else {}
@@ -7275,7 +7555,7 @@ def _display_units_for_state(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _compact_failure_reason(state: dict[str, Any]) -> str | None:
-    last_failure = state.get('lastFailure')
+    last_failure = _current_unit_last_failure(state)
     if not isinstance(last_failure, dict):
         return None
     details = last_failure.get('details')

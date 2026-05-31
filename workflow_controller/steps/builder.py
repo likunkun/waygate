@@ -26,6 +26,7 @@ from workflow_controller.runners import make_runner, run_agent_backend, RunnerRe
 from workflow_controller.gates import check_gate_file
 from workflow_controller.gates.parsers import _unit_test_cases
 from workflow_controller.gates.validators import VERIFICATION_EVIDENCE_SCHEMA_VERSION
+from workflow_controller.unit_handoff import build_handoff_evidence_payload
 from workflow_controller.rrc_real_runtime import (
     collect_git_changed_files,
     run_agent_for_current_step,
@@ -736,6 +737,15 @@ def run_verifier(
             ),
             'verified_at': _now_iso(),
         }
+        handoff_payload = _write_handoff_evidence_for_current_unit(
+            state=state,
+            unit_dir=unit_dir,
+            results=[],
+        )
+        if handoff_payload:
+            verification_payload['handoff_evidence_path'] = str(unit_dir / 'handoff-evidence.json')
+            verification_payload['passed'] = verification_payload['passed'] and bool(handoff_payload.get('passed'))
+            verification_payload.setdefault('issues', []).extend(_handoff_payload_issues(handoff_payload))
         _add_journey_evidence(
             state=state,
             unit_dir=unit_dir,
@@ -784,6 +794,13 @@ def run_verifier(
         )
         issues.extend(_evidence_row_policy_issues(evidence_rows))
         issues.extend(_agent_assisted_case_policy_issues(evidence_rows))
+        handoff_payload = _write_handoff_evidence_for_current_unit(
+            state=state,
+            unit_dir=unit_dir,
+            results=results,
+        )
+        if handoff_payload:
+            issues.extend(_handoff_payload_issues(handoff_payload))
         combined_stdout = '\n'.join(result['stdout'] for result in results if result.get('stdout'))
         combined_stderr = '\n'.join(result['stderr'] for result in results if result.get('stderr'))
         evidence = 'PASSED\n' if not issues else 'FAILED\n'
@@ -801,6 +818,7 @@ def run_verifier(
             'evidence_files': ['green-test.txt'],
             'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
             'evidence_rows': evidence_rows,
+            'handoff_evidence_path': str(unit_dir / 'handoff-evidence.json') if handoff_payload else None,
             'verified_at': _now_iso(),
         }
         _add_journey_evidence(
@@ -836,6 +854,13 @@ def run_verifier(
         workspace_dir=None,
     )
     issues.extend(_evidence_row_policy_issues(evidence_rows))
+    handoff_payload = _write_handoff_evidence_for_current_unit(
+        state=state,
+        unit_dir=unit_dir,
+        results=[],
+    )
+    if handoff_payload:
+        issues.extend(_handoff_payload_issues(handoff_payload))
     verification_payload = {
         'unit_id': current_unit_id,
         'passed': not issues,
@@ -844,6 +869,7 @@ def run_verifier(
         'evidence_files': evidence_files,
         'evidence_schema_version': VERIFICATION_EVIDENCE_SCHEMA_VERSION,
         'evidence_rows': evidence_rows,
+        'handoff_evidence_path': str(unit_dir / 'handoff-evidence.json') if handoff_payload else None,
         'verified_at': _now_iso(),
     }
     _add_journey_evidence(
@@ -855,6 +881,37 @@ def run_verifier(
     )
     _write_json(unit_dir / 'verification.json', verification_payload)
     return StepResult(summary='verification passed' if not issues else 'verification failed', outputs=['verification.json'])
+
+
+def _write_handoff_evidence_for_current_unit(
+    *,
+    state: dict[str, Any],
+    unit_dir: Path,
+    results: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    unit = _find_unit(state, state.get('currentUnitId'))
+    payload = build_handoff_evidence_payload(unit=unit, unit_dir=unit_dir, results=results)
+    if not payload:
+        return None
+    payload['generated_at'] = _now_iso()
+    _write_json(unit_dir / 'handoff-evidence.json', payload)
+    return payload
+
+
+def _handoff_payload_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
+    if payload.get('passed') is True:
+        return []
+    issues: list[dict[str, str]] = []
+    for issue in payload.get('issues') or []:
+        if not isinstance(issue, dict):
+            continue
+        issues.append(_issue(
+            str(issue.get('type') or 'unit_handoff_evidence_failed'),
+            str(issue.get('message') or 'Unit handoff evidence failed'),
+        ))
+    if not issues:
+        issues.append(_issue('unit_handoff_evidence_failed', 'Unit handoff evidence failed'))
+    return issues
 
 
 def _has_verification_assist_cases(state: dict[str, Any]) -> bool:

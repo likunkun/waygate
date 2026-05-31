@@ -2,6 +2,14 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2d
+
+- Added a Unit Continuity Gate for multi-unit Unit Plans, including `单元连贯性摘要`, Handoff Matrix expectations, and structured `depends_on` / `handoff` metadata.
+- Added Unit Plan validation for missing dependencies, circular dependencies, vague handoff summaries, unmatched downstream `requires[]`, and ready checks not mapped to commands or test cases.
+- Made Verifier write `artifacts/<unit-id>/handoff-evidence.json` and fail producer verification when declared handoff artifacts or ready checks are missing.
+- Block downstream Builder execution with `blockedContext.category=unit_handoff` when dependency handoff evidence is missing, failed, or mismatched.
+- Documented the workflow policy in `docs/workflow/unit-continuity-handoff-policy.md` and updated package version metadata to `0.6.2d`.
+
 ## 0.6.2c
 
 - Made the public staged Requirements checkpoint names Chinese-primary: 需求范围检查点, 产品设计简报, 技术架构简报, and 需求测试策略简报, while keeping internal stage keys unchanged.

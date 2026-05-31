@@ -1,5 +1,29 @@
 # 发现与决策
 
+## 2026-05-31 stale Builder blocked artifact 恢复边界
+
+- `artifacts/<unit>/builder-summary.json` 是 Builder run 的审计 artifact，不是跨 Unit Plan revision 永久有效的阻塞事实。Unit Plan 重新批准后，早于本次 approval 的 Builder `blocked` summary 必须视为 stale audit context，不能在 `status` / `go` 中重新升级为官方 `blocked`。
+- freshness cutoff 优先使用 `state.unitPlanAcceptedAt`。为了兼容旧 session，若只有 `unitPlanAcceptedHash`，且 `approvals/unit-plan.md` 仍为 approved 并且 body hash 匹配，则用该 gate 文件 mtime 作为 cutoff。没有 cutoff 的 legacy session 继续保留旧行为，避免误放过真实当前 Builder blocked。
+- Unit Plan approval 后的 ignored context 不能只覆盖当时的 `currentUnitId`。Approved Unit Plan 可能包含多个 unit，旧 blocker 可以藏在下游 unit 的 artifact 中；approval 成功路径必须扫描 `units[].id` 与 `currentUnitId`，把已存在 Builder blocked summaries 全部记入 `ignoredBuilderBlockedContexts`。
+- 已处于 `status=blocked` 的 live session 也应通过正常 `waygate status/go` 恢复：如果 `blockedContext.source=builder_agent` 已 ignored 或其 summary 早于 Unit Plan approval cutoff，controller 可以清理 `blockedReason/blockedContext` 并回到 `EXECUTE_UNIT`。这不是绕过 Unit Plan 合同，而是撤销 stale audit artifact 对新批准 Unit Plan 的误阻塞。
+- 真实合同类 blocker 边界保持不变：`unit_plan_contract`、`unit_handoff`、Requirements contract、Final Acceptance blocker 等不因这条 stale Builder summary 规则放宽。
+
+## 2026-05-31 V0.6.2d Unit Continuity Gate
+
+- 多单元 Unit Plan 的自然语言“前置环境就绪”不能作为下游启动依据。只要 unit 之间存在 `depends_on` 或 handoff 关系，Controller State Patch 必须记录结构化 `handoff`：`human_summary`、`produces`、`requires`、`ready_checks`、`evidence_artifacts`。
+- `human_summary` 是人工审阅入口，但不能单独作为完成依据。Producer readiness 必须由 mapped ready check 和具体 evidence artifact 证明；下游 `requires[]` 必须能匹配依赖单元 `produces[]`。
+- 多上游依赖可以拆分满足下游 `requires[]`，例如一个 upstream 产出 schema、另一个 upstream 产出 fixture；正确规则是每个 required input 至少由一个依赖产出，且每个声明的依赖至少贡献一个 required input，不能要求每个依赖都产出所有 input。
+- Producer handoff evidence 属于 producer unit verification 的一部分，而不是 downstream unit 的猜测责任。Verifier 写 `artifacts/<unit-id>/handoff-evidence.json`，并在声明证据缺失或 ready check 未通过时让 producer verification fail。
+- Downstream Builder preflight 必须在 prompt 生成和 agent dispatch 前检查上游 handoff evidence。缺失、无效、failed 或产出不匹配时进入 `blockedContext.category=unit_handoff`，避免 Builder 在模糊前置条件下启动。
+- `unit_handoff` blocker 的恢复边界是先让上游产出 passed handoff evidence；若依赖、Handoff Matrix 或 requires/produces 本身写错，则走 `waygate revise --gate unit-plan --reason ...`，不能用普通 `go` 绕过。
+
+## 2026-05-31 tmux 2 号窗口 blocked 诊断
+
+- Classroom V0.4 live session 中，`target-v0-4-prereq-env-fixture` 的 Builder prompt 被旧的 `target-v0-4-openmaic-course-draft` verifier failure 污染：`lastFailure.unit_id` 已记录旧 unit，但 Builder prompt 渲染和 Builder done 后的 controller failure resolution 检查没有按 `currentUnitId` 过滤。
+- 结果是当前 prerequisite 单元收到旧 secret scan 内联命令的 `Controller Verification Failure Protocol`，agent 按 protocol 判断“历史命令无法在 dash 下变成 0”，于是返回 `status=blocked` / `category=unit_plan_contract`。这属于 controller bug：跨单元 stale `lastFailure` 不应约束新单元。
+- `blocked` 菜单里选择 `c` 不能继续是设计行为：`unit_plan_contract` 类 blocked 不能通过普通 continue/unblock 清除，必须走 Unit Plan/Requirements/Final Acceptance 正式路线。和 agent 继续聊天、或让 agent 直接编辑 `session.json`，不会被 controller 当作 gate transition，也可能留下 `status=blocked` 但 `blockedContext=null` 的不一致状态。
+- 修复边界：同一 unit 的 verifier failure 仍必须注入 Builder prompt 并要求 `done_payload.controller_failure_resolution`；不同 unit 的 stale `lastFailure` 必须在 prompt 和 resolution gate 中忽略。
+
 ## 2026-05-30 Annotation Agent 默认代理环境
 
 - Annotation Agent subprocess 的网络代理应来自启动 `waygate` 的父进程环境，而不是要求用户把代理 key 写进 `--annotation-agent-env-key`。默认继承范围固定为 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写形式；父进程不存在的代理 key 不会凭空新增。
