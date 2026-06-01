@@ -431,6 +431,53 @@ def test_run_verifier_writes_passed_handoff_evidence_for_producer(
     assert evidence['evidence_artifacts'][0]['exists'] is True
 
 
+def test_run_verifier_accepts_workspace_relative_controller_handoff_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unit_dir = tmp_path / '.rrc-controller-v0.5' / 'artifacts' / 'target-v0-5'
+    unit_dir.mkdir(parents=True)
+    (unit_dir / 'readiness.json').write_text('{"ready": true}\n', encoding='utf-8')
+    command = 'bash scripts/verify/v0-5-readiness.sh'
+    state = {
+        'currentUnitId': 'target-v0-5',
+        'workspacePath': str(tmp_path),
+        'units': [
+            {
+                'id': 'target-v0-5',
+                'passes': False,
+                'test_cases': [_case('TC-V05-READINESS', command)],
+                'verification_commands': [command],
+                'handoff': {
+                    'human_summary': 'target-v0-5 exports verified readiness JSON for downstream units',
+                    'produces': ['verified readiness JSON'],
+                    'requires': [],
+                    'ready_checks': ['TC-V05-READINESS'],
+                    'evidence_artifacts': [
+                        '.rrc-controller-v0.5/artifacts/target-v0-5/readiness.json',
+                    ],
+                },
+            }
+        ],
+    }
+
+    monkeypatch.setattr(
+        builder_module,
+        'run_verification_commands',
+        lambda state, workspace, progress_callback=None: [
+            {'command': command, 'ok': True, 'returncode': 0, 'stdout': 'passed', 'stderr': ''}
+        ],
+    )
+
+    result = run_verifier(state, unit_dir)
+
+    assert result.summary == 'verification passed'
+    evidence = json.loads((unit_dir / 'handoff-evidence.json').read_text(encoding='utf-8'))
+    assert evidence['passed'] is True
+    assert evidence['evidence_artifacts'][0]['exists'] is True
+    assert evidence['evidence_artifacts'][0]['resolved_path'] == str(unit_dir / 'readiness.json')
+
+
 def test_downstream_builder_blocks_when_dependency_handoff_evidence_is_missing(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)

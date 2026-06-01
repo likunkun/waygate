@@ -217,10 +217,16 @@ def resolve_handoff_artifact_path(path_text: str, unit_dir: Path) -> Path:
         unit_dir.parent / candidate,
         unit_dir.parent.parent / candidate,
     ]
+    if _is_workspace_relative_controller_artifact(candidate):
+        candidates.append(unit_dir.parent.parent.parent / candidate)
     for path in candidates:
         if path.exists():
             return path
     return candidates[0]
+
+
+def _is_workspace_relative_controller_artifact(candidate: Path) -> bool:
+    return bool(candidate.parts) and candidate.parts[0].startswith('.rrc-controller-')
 
 
 def load_handoff_evidence(path: Path) -> dict[str, Any] | None:
