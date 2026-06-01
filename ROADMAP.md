@@ -324,6 +324,20 @@ Delivered work:
 - Block downstream Builder preflight with `blockedContext.category=unit_handoff` when dependency handoff evidence is missing, invalid, failed, or does not satisfy downstream `requires[]`.
 - Document the long-lived workflow policy in `docs/workflow/unit-continuity-handoff-policy.md`.
 
+### V0.6.2e - Requirements Package Directory Intake
+
+Goal: make `--spec` accept real requirements/spec document package directories while avoiding accidental imports of tool roots or ordinary docs folders.
+
+Status: patch release implemented in package `0.6.2e`.
+
+Delivered work:
+
+- Add `sourceType=open-spec-package` for Open Spec package directories with `01-requirements.md` plus at least one supporting document: `02-specification.md`, `03-technical-solution.md`, `04-storage-design.md`, or `08-stage-handoff.md`.
+- Store the package directory path and directory content hash in `requirementsSpec`, and write conversion artifacts with package entrypoints.
+- Extend Spec Kit feature package detection to arbitrary directory names when `spec.md` is accompanied by `plan.md`, `tasks.md`, `research.md`, `data-model.md`, `quickstart.md`, or `contracts/`.
+- Reject `.specify` workspace/tool roots and plain docs directories with guidance to pass `specs/<feature>/` or a concrete `spec.md`.
+- Update Requirements prompt/brief wording and the external spec intake workflow/architecture docs so package directories are treated as document packages, not single Markdown files.
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.

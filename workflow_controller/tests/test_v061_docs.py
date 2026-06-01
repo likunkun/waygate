@@ -148,17 +148,20 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
     assert 'docs/workflow/staged-requirements-package-policy.md' in registry
     assert 'docs/workflow/unit-continuity-handoff-policy.md' in registry
     assert 'docs/architecture/staged-requirements-package-architecture.md' in registry
-    assert 'V0.6.2d' in registry
+    assert 'V0.6.2e' in registry
+    assert 'open-spec-package' in registry
     assert 'V0.6.2 - Staged Requirements Package' in roadmap
     assert 'V0.6.2a - Staged Requirements Target Product Perspective' in roadmap
     assert 'V0.6.2c - Chinese Checkpoint Names and Targeted Revise' in roadmap
     assert 'V0.6.2d - Unit Continuity Gate' in roadmap
+    assert 'V0.6.2e - Requirements Package Directory Intake' in roadmap
     assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap
     assert 'Merge the original V0.6.2 Strict Test Presence scope into V0.6.3.' in roadmap
     assert 'V0.6.2 - Staged Requirements Package' in roadmap_zh
     assert 'V0.6.2a - Staged Requirements 目标产品视角修复' in roadmap_zh
     assert 'V0.6.2c - 中文 Checkpoint 命名与定点 Revise' in roadmap_zh
     assert 'V0.6.2d - Unit Continuity Gate' in roadmap_zh
+    assert 'V0.6.2e - Requirements Package Directory Intake' in roadmap_zh
     assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap_zh
     assert '原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。' in roadmap_zh
 

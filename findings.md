@@ -1,5 +1,13 @@
 # 发现与决策
 
+## 2026-06-02 V0.6.2e `--spec` 文档包目录 intake
+
+- Open Spec 文档包目录与 OpenAPI/OpenSpec API 文档语义不同。`openspec` 继续表示 OpenAPI/OpenSpec API source；Open Spec skill 产出的 01-08 文档包使用新增 `sourceType=open-spec-package`，避免 prompt、artifact 和审计记录混淆。
+- Open Spec package 的导入边界是 `01-requirements.md` 加至少一个支撑文档。只存在普通 docs/README 或单个任意 Markdown 文件的目录不能被猜测为需求源；否则 controller 会把长期文档目录误导入为当前版本需求。
+- Spec Kit 支持的是 feature package，不是 `.specify` 工具/工作区根目录。任意目录名可以被识别为 Spec Kit feature package，但需要 `spec.md` 和同目录 feature companion（如 `plan.md`、`tasks.md`、`contracts/`）；`.specify` root 必须提示传 `specs/<feature>/` 或具体 `spec.md`。
+- 对 package directory 的 `requirementsSpec.hash` 必须使用目录内容 hash；只 hash 目录名或单一 entrypoint 会漏掉 specification / technical solution / handoff 等补充事实变化。
+- Package directory conversion artifacts 可以记录 entrypoint path、source map 和 normalized summaries，但不能写入 secret value、token、database URL 或环境变量值。脱敏仍在转换层执行，避免后续 prompt/annotation 读取 artifact 时泄露敏感内容。
+
 ## 2026-06-01 Verifier 环境占位值与重复失败保护
 
 - `verification_env` 是可执行环境值合同，不能承载 `required key name only`、`optional key name only`、`value must not be recorded` 或 `<...>` 这类说明性占位。只声明变量名时必须使用 `env_keys`，避免 controller 把占位说明注入 subprocess 并覆盖父进程真实环境。

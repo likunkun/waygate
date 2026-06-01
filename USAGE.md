@@ -12,7 +12,7 @@ V0.6.0m moves golden-path E2E mistakes earlier: Unit Plan approval rejects `gold
 
 V0.6.1 adds OpenSpec/OpenAPI and Spec Kit spec intake, non-approving annotation / verification-assist passes before human gates, and flexible verifier evidence rows with `human_review_required`.
 
-V0.6.2 splits Requirements drafting into focused scope, product design, architecture, and test strategy checkpoints, then assembles one final Requirements approval package with checkpoint hashes. V0.6.2a adds target surface classification so staged Product Design and Architecture stay centered on the target product/system. V0.6.2b starts a persistent prototype preview after Product Design succeeds and keeps that URL available through Requirements review. V0.6.2c uses Chinese-primary checkpoint names and supports targeted Requirements checkpoint revise. V0.6.2d adds hard Unit Plan handoff continuity checks so downstream Builder execution waits for passed upstream `handoff-evidence.json`.
+V0.6.2 splits Requirements drafting into focused scope, product design, architecture, and test strategy checkpoints, then assembles one final Requirements approval package with checkpoint hashes. V0.6.2a adds target surface classification so staged Product Design and Architecture stay centered on the target product/system. V0.6.2b starts a persistent prototype preview after Product Design succeeds and keeps that URL available through Requirements review. V0.6.2c uses Chinese-primary checkpoint names and supports targeted Requirements checkpoint revise. V0.6.2d adds hard Unit Plan handoff continuity checks so downstream Builder execution waits for passed upstream `handoff-evidence.json`. V0.6.2e extends `--spec` to real requirements package directories.
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.2d_all.deb
+sudo apt install ./dist/waygate_0.6.2e_all.deb
 waygate --help
 waygate doctor
 waygate doctor --color auto
@@ -82,7 +82,7 @@ waygate go V1.0 --runner subprocess --dry-run --max-steps 20
 # Run from outside the target project.
 waygate go V1.0 --workspace-dir /path/to/target-project
 
-# Start from a supported Waygate Markdown requirements spec.
+# Start from a supported requirements spec file or package directory.
 waygate go V1.0 --spec ./requirements.md
 
 # Enable non-approving Codex annotation agents for all review roles.
@@ -128,7 +128,7 @@ Create `session.json`, `approvals/`, `artifacts/`, and initial target state.
 waygate init --target V1.0 --workspace-dir . --spec ./requirements.md
 ```
 
-`--spec <path>` currently imports only a readable local Waygate Markdown spec file. Waygate stores path, SHA-256 hash, source type, and import time in `session.json`; it does not store the full spec text. OpenSpec and Spec Kit paths are detected as future external spec intake and rejected/deferred in this version.
+`--spec <path>` imports a readable local Waygate Markdown spec file, a supported OpenSpec/OpenAPI document, an Open Spec package directory, or a Spec Kit feature package directory. Waygate stores path, SHA-256 hash, source type, import time, and conversion artifact paths in `session.json`; it does not store the full spec text. Open Spec packages are directories with `01-requirements.md` plus at least one supporting package doc such as `02-specification.md`, `03-technical-solution.md`, `04-storage-design.md`, or `08-stage-handoff.md`. Spec Kit feature packages are directories with `spec.md` plus `plan.md`, `tasks.md`, `research.md`, `data-model.md`, `quickstart.md`, or `contracts/`; pass `specs/<feature>/` or a concrete `spec.md`, not a `.specify` workspace/tool root.
 
 ### Annotation Agent Options
 

@@ -1,6 +1,6 @@
 # Staged Requirements Package Architecture
 
-This document records the V0.6.2 architecture boundaries for Staged Requirements Package, including the V0.6.2a target-product perspective patch, V0.6.2b persistent prototype preview patch, V0.6.2c Chinese checkpoint / targeted revise patch, and V0.6.2d unit continuity handoff gate. It covers package helpers, target surface classification, checkpoint prompts, stage runner, controller orchestration, controller process-level prototype preview, final gate assembly, validators, Unit Plan prompt inheritance, unit handoff evidence, and revision routing.
+This document records the V0.6.2 architecture boundaries for Staged Requirements Package, including the V0.6.2a target-product perspective patch, V0.6.2b persistent prototype preview patch, V0.6.2c Chinese checkpoint / targeted revise patch, V0.6.2d unit continuity handoff gate, and V0.6.2e package-directory intake extension. It covers package helpers, target surface classification, checkpoint prompts, stage runner, controller orchestration, controller process-level prototype preview, final gate assembly, validators, Unit Plan prompt inheritance, unit handoff evidence, and revision routing.
 
 ## Module Boundaries
 

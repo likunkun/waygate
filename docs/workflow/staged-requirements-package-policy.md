@@ -1,6 +1,6 @@
 # Staged Requirements Package Policy
 
-This document records the V0.6.2 workflow policy for Staged Requirements Package, including V0.6.2d unit continuity handoff hardening. It reduces Requirements-stage overload by splitting the old single draft into focused checkpoints, while preserving one final human Requirements approval gate.
+This document records the V0.6.2 workflow policy for Staged Requirements Package, including V0.6.2d unit continuity handoff hardening and the V0.6.2e requirements package directory intake extension. It reduces Requirements-stage overload by splitting the old single draft into focused checkpoints, while preserving one final human Requirements approval gate.
 
 `.rrc-controller-*` directories remain run audit evidence. Long-lived policy lives here and is registered from `docs/README.md`.
 

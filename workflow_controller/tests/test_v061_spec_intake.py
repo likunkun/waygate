@@ -21,9 +21,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _run_rrc(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env['PYTHONPATH'] = str(ROOT) + (os.pathsep + env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
     return subprocess.run(
         [sys.executable, '-m', 'workflow_controller.rrc_controller', *args],
         cwd=str(cwd or ROOT),
+        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -95,6 +98,33 @@ def _write_spec_kit(path: Path) -> Path:
         '- Do not approve requirements automatically.\n\n'
         '## Assumptions\n\n'
         '- Local filesystem input only.\n',
+        encoding='utf-8',
+    )
+    return path
+
+
+def _write_open_spec_package(path: Path, *, secret_value: str | None = None) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    secret_line = f'\n- Database URL: postgres://user:{secret_value}@db.example.test/app\n' if secret_value else ''
+    (path / '01-requirements.md').write_text(
+        '# Course Draft Delivery Learning MVP\n\n'
+        '## Requirements\n\n'
+        '- FR-001: Learners can submit a draft and receive structured feedback.\n'
+        f'{secret_line}\n'
+        '## Acceptance Criteria\n\n'
+        '- AC-001: Given a submitted draft, the system records feedback status.\n',
+        encoding='utf-8',
+    )
+    (path / '02-specification.md').write_text(
+        '# Specification\n\n'
+        '## Behavior\n\n'
+        '- Draft submissions preserve author and course context.\n',
+        encoding='utf-8',
+    )
+    (path / '03-technical-solution.md').write_text(
+        '# Technical Solution\n\n'
+        '## Components\n\n'
+        '- Use the existing controller intake path.\n',
         encoding='utf-8',
     )
     return path
@@ -180,6 +210,76 @@ def test_v061_speckit_import_writes_normalized_acceptance_candidates(tmp_path: P
         assert payloads['validationReport']['status'] == 'passed'
 
 
+def test_v062e_open_spec_package_classifies_and_writes_conversion_artifacts(tmp_path: Path) -> None:
+    package_dir = _write_open_spec_package(tmp_path / 'docs' / 'v1.0-course-draft-delivery-learning-mvp')
+
+    assert classify_requirements_spec_path(package_dir)['sourceType'] == 'open-spec-package'
+
+    metadata = requirements_spec_metadata(package_dir, artifacts_dir=tmp_path / 'artifacts', target='V0.6.2e')
+    assert metadata['path'] == str(package_dir.resolve())
+    assert metadata['sourceType'] == 'open-spec-package'
+    assert metadata['hash'].startswith('sha256:')
+
+    payloads = _artifact_payloads(metadata)
+    normalized = payloads['normalizedRequirements']
+    assert payloads['importSummary']['sourceType'] == 'open-spec-package'
+    assert payloads['importSummary']['entrypoints']['requirements'].endswith('01-requirements.md')
+    assert payloads['sourceMap']['entrypoints']['technicalSolution'].endswith('03-technical-solution.md')
+    assert normalized['sourceType'] == 'open-spec-package'
+    assert normalized['requirements'][0]['text'].startswith('Learners can submit a draft')
+    assert normalized['acceptanceCandidates'][0]['text'].startswith('Given a submitted draft')
+    assert payloads['validationReport']['status'] == 'passed'
+
+
+def test_v062e_open_spec_package_artifacts_redact_sensitive_values(tmp_path: Path) -> None:
+    secret = 'supersecret-value'
+    package_dir = _write_open_spec_package(tmp_path / 'open-spec-package', secret_value=secret)
+
+    metadata = requirements_spec_metadata(package_dir, artifacts_dir=tmp_path / 'artifacts', target='V0.6.2e')
+
+    for path in metadata['conversionArtifacts'].values():
+        content = Path(path).read_text(encoding='utf-8')
+        assert secret not in content
+        assert 'postgres://user:' not in content
+    payloads = _artifact_payloads(metadata)
+    assert payloads['validationReport']['redactions']
+
+
+def test_v062e_arbitrary_spec_kit_feature_directory_imports_with_companions(tmp_path: Path) -> None:
+    feature_dir = tmp_path / 'course-draft-review'
+    feature_dir.mkdir()
+    _write_spec_kit(feature_dir / 'spec.md')
+    (feature_dir / 'plan.md').write_text('# Plan\n', encoding='utf-8')
+    (feature_dir / 'tasks.md').write_text('# Tasks\n', encoding='utf-8')
+
+    assert classify_requirements_spec_path(feature_dir)['sourceType'] == 'spec-kit'
+
+    metadata = requirements_spec_metadata(feature_dir, artifacts_dir=tmp_path / 'artifacts', target='V0.6.2e')
+    payloads = _artifact_payloads(metadata)
+    assert metadata['sourceType'] == 'spec-kit'
+    assert payloads['importSummary']['entrypoint'].endswith('spec.md')
+    assert payloads['normalizedRequirements']['requirements'][0]['text'] == 'Import external specs into normalized requirements.'
+
+
+def test_v062e_spec_kit_workspace_root_and_plain_docs_directory_are_not_imported(tmp_path: Path) -> None:
+    workspace_root = tmp_path / 'workspace'
+    workspace_root.mkdir()
+    (workspace_root / '.specify').mkdir()
+    (workspace_root / 'specs').mkdir()
+
+    with pytest.raises(ValueError, match=r'specs/<feature>/.*spec\.md'):
+        classify_requirements_spec_path(workspace_root)
+    with pytest.raises(ValueError, match=r'specs/<feature>/.*spec\.md'):
+        requirements_spec_metadata(workspace_root, artifacts_dir=tmp_path / 'workspace-artifacts', target='V0.6.2e')
+
+    plain_docs = tmp_path / 'docs'
+    plain_docs.mkdir()
+    (plain_docs / 'README.md').write_text('# Docs\n', encoding='utf-8')
+    (plain_docs / 'architecture.md').write_text('# Architecture\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='spec path must be a readable Markdown file'):
+        classify_requirements_spec_path(plain_docs)
+
+
 def test_v061_cli_spec_flow_injects_conversion_artifact_refs(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -259,6 +359,34 @@ def test_v061_cli_spec_flow_injects_conversion_artifact_refs(tmp_path: Path) -> 
     go_state = json.loads((go_workspace / '.rrc-controller-v0.6.1' / 'session.json').read_text(encoding='utf-8'))
     assert go_state['requirementsSpec']['sourceType'] == 'openspec'
     assert Path(go_state['requirementsSpec']['conversionArtifacts']['validationReport']).exists()
+
+
+def test_v062e_go_accepts_open_spec_package_directory(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    package_dir = _write_open_spec_package(workspace / 'docs' / 'v1.0-course-draft-delivery-learning-mvp')
+    workspace.mkdir(exist_ok=True)
+
+    result = _run_rrc(
+        'go',
+        'V1.0',
+        '--workspace-dir',
+        str(workspace),
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        '--spec',
+        'docs/v1.0-course-draft-delivery-learning-mvp',
+        cwd=workspace,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads((workspace / '.rrc-controller-v1.0' / 'session.json').read_text(encoding='utf-8'))
+    spec = state['requirementsSpec']
+    assert spec['path'] == str(package_dir.resolve())
+    assert spec['sourceType'] == 'open-spec-package'
+    assert Path(spec['conversionArtifacts']['validationReport']).exists()
 
 
 def test_v061_spec_errors_are_clear_and_do_not_create_bad_sessions(tmp_path: Path) -> None:

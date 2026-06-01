@@ -2,6 +2,14 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2e
+
+- Added `open-spec-package` intake for Open Spec document package directories containing `01-requirements.md` plus at least one supporting package document.
+- Extended Spec Kit feature package detection to arbitrary directory names when `spec.md` is accompanied by feature artifacts such as `plan.md`, `tasks.md`, or `contracts/`.
+- Reject `.specify` workspace/tool roots and ordinary docs directories with guidance to pass `specs/<feature>/` or a concrete `spec.md`.
+- Wrote conversion artifacts for package-directory imports, including package entrypoints in `import-summary.json`, `source-map.json`, and `validation-report.json`.
+- Updated Requirements prompt/brief wording, README/USAGE, workflow/architecture docs, and package version metadata to `0.6.2e`.
+
 ## 0.6.2d
 
 - Added a Unit Continuity Gate for multi-unit Unit Plans, including `单元连贯性摘要`, Handoff Matrix expectations, and structured `depends_on` / `handoff` metadata.

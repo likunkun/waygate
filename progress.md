@@ -1,5 +1,23 @@
 # 进度日志
 
+## 会话：2026-06-02
+
+### V0.6.2e `--spec` 文档包目录 intake
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt as `0.6.2e`.
+- 修复：`--spec` 现在可导入 Open Spec 文档包目录，要求 `01-requirements.md` 且至少包含 `02-specification.md`、`03-technical-solution.md`、`04-storage-design.md` 或 `08-stage-handoff.md` 之一；`requirementsSpec.path` 保存目录路径，hash 覆盖目录内容。
+- 修复：新增 `sourceType=open-spec-package` conversion artifacts：`import-summary.json`、`normalized-requirements.json`、`source-map.json`、`validation-report.json`，并记录 package entrypoints；artifact 输出会脱敏 token / database URL 等敏感值。
+- 修复：Spec Kit feature package 支持任意目录名，只要 `spec.md` 同目录存在 `plan.md`、`tasks.md`、`research.md`、`data-model.md`、`quickstart.md` 或 `contracts/`；保留 legacy `spec-kit` / `specify` 目录和 `feature.specify.md` 文件兼容。
+- 修复：`.specify` workspace/tool root 和普通 docs 目录不会被误判为需求源；错误提示要求传入 `specs/<feature>/` 或具体 `spec.md`。
+- 文档/版本：同步 README/USAGE/CHANGELOG/ROADMAP、external spec intake workflow/architecture docs、Requirements prompt/brief 文案和 package version 到 `0.6.2e`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_spec_intake.py -q -k 'v062e'` -> 新增用例按预期失败。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_v061_spec_intake.py -q` -> `11 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'spec or requirementsSpec'` -> `6 passed, 239 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py workflow_controller/tests/test_v061_docs.py -q` -> `10 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `838 passed, 1 skipped in 82.88s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2e_all.deb`；`dpkg-deb --field` 和解包后 `waygate --version` 均为 `0.6.2e`。
+
 ## 会话：2026-06-01
 
 ### Verifier 环境占位值与重复失败保护修复

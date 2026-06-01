@@ -2,6 +2,14 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2e
+
+- 新增 `open-spec-package` intake，支持包含 `01-requirements.md` 且至少包含一个支撑文档的 Open Spec 文档包目录。
+- 扩展 Spec Kit feature package 识别：任意目录只要 `spec.md` 同目录有 `plan.md`、`tasks.md` 或 `contracts/` 等 feature artifact，即可导入。
+- `.specify` 工具/工作区根目录和普通 docs 目录会被拒绝，并提示传入 `specs/<feature>/` 或具体 `spec.md`。
+- package directory 导入会生成 conversion artifacts，并在 `import-summary.json`、`source-map.json` 和 `validation-report.json` 中记录 package entrypoints。
+- 同步 Requirements prompt/brief、README/USAGE、workflow/architecture 文档和 package version metadata 到 `0.6.2e`。
+
 ## 0.6.2d
 
 - 新增 Unit Continuity Gate：多单元 Unit Plan 必须包含 `单元连贯性摘要`、Handoff Matrix，以及结构化 `depends_on` / `handoff` metadata。

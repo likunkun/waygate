@@ -271,7 +271,12 @@ def _requirements_spec_summary(state: dict[str, Any]) -> str:
         lines.append('- Conversion artifacts:')
         for key, value in sorted(conversion_artifacts.items()):
             lines.append(f"  - {key}: `{value}`")
-        lines.append('- Read the conversion artifacts during Requirements Draft; do not re-parse or guess the external source from the original path.')
+        if spec.get('sourceType') == 'open-spec-package':
+            lines.append('- Read the Open Spec package docs and conversion artifacts during Requirements Draft; the path is a package directory, not a single Markdown file.')
+        elif spec.get('sourceType') == 'spec-kit':
+            lines.append('- Read the Spec Kit feature package docs and conversion artifacts during Requirements Draft; pass workspace roots as specs/<feature>/ or spec.md.')
+        else:
+            lines.append('- Read the conversion artifacts during Requirements Draft; do not re-parse or guess the external source from the original path.')
     elif spec.get('sourceType') == 'waygate-markdown':
         lines.append('- Read the Waygate Markdown spec file during Requirements Draft; do not store spec full text in session.json.')
     else:

@@ -324,6 +324,20 @@
 - 下游 Builder preflight 在依赖 handoff evidence 缺失、无效、failed 或无法满足下游 `requires[]` 时，以 `blockedContext.category=unit_handoff` 阻塞。
 - 长期 workflow 规则沉淀到 `docs/workflow/unit-continuity-handoff-policy.md`。
 
+### V0.6.2e - Requirements Package Directory Intake
+
+目标：让 `--spec` 接受真实需求/spec 文档包目录，同时避免误导入工具根目录或普通 docs 目录。
+
+状态：patch release 已在 package `0.6.2e` 实施。
+
+已交付：
+
+- 新增 `sourceType=open-spec-package`，支持包含 `01-requirements.md` 且至少包含 `02-specification.md`、`03-technical-solution.md`、`04-storage-design.md` 或 `08-stage-handoff.md` 之一的 Open Spec package directory。
+- `requirementsSpec` 保存 package directory path 和目录内容 hash，并生成记录 package entrypoints 的 conversion artifacts。
+- 扩展 Spec Kit feature package 识别：任意目录只要 `spec.md` 同目录有 `plan.md`、`tasks.md`、`research.md`、`data-model.md`、`quickstart.md` 或 `contracts/` 即可识别。
+- `.specify` 工具/工作区根目录和普通 docs 目录会被拒绝，并提示传入 `specs/<feature>/` 或具体 `spec.md`。
+- 更新 Requirements prompt/brief 以及 external spec intake workflow/architecture 文档，明确目录输入是文档包，不是单个 Markdown 文件。
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。

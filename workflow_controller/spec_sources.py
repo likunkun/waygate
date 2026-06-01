@@ -11,12 +11,34 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 SUPPORTED_SOURCE_TYPE = 'waygate-markdown'
 OPENSPEC_SOURCE_TYPE = 'openspec'
+OPEN_SPEC_PACKAGE_SOURCE_TYPE = 'open-spec-package'
 SPEC_KIT_SOURCE_TYPE = 'spec-kit'
 ASYNCAPI_SOURCE_TYPE = 'asyncapi'
-SUPPORTED_EXTERNAL_SOURCE_TYPES = {OPENSPEC_SOURCE_TYPE, SPEC_KIT_SOURCE_TYPE}
+SUPPORTED_EXTERNAL_SOURCE_TYPES = {OPENSPEC_SOURCE_TYPE, OPEN_SPEC_PACKAGE_SOURCE_TYPE, SPEC_KIT_SOURCE_TYPE}
 SENSITIVE_KEY_PATTERN = re.compile(r'(token|password|secret|api[_-]?key|signature|database[_-]?url)', re.I)
 DATABASE_URL_PATTERN = re.compile(r'\b[a-z][a-z0-9+.-]*://[^@\s:/]+:[^@\s]+@[^)\]\s,;]+', re.I)
 HTTP_METHODS = {'get', 'post', 'put', 'delete', 'patch', 'options', 'head'}
+OPEN_SPEC_PACKAGE_DOCS = {
+    'requirements': '01-requirements.md',
+    'specification': '02-specification.md',
+    'technicalSolution': '03-technical-solution.md',
+    'storageDesign': '04-storage-design.md',
+    'stageHandoff': '08-stage-handoff.md',
+}
+OPEN_SPEC_PACKAGE_SUPPORTING_DOCS = {
+    '02-specification.md',
+    '03-technical-solution.md',
+    '04-storage-design.md',
+    '08-stage-handoff.md',
+}
+SPEC_KIT_FEATURE_COMPANIONS = {
+    'plan.md',
+    'tasks.md',
+    'research.md',
+    'data-model.md',
+    'quickstart.md',
+    'contracts',
+}
 
 
 def requirements_spec_metadata(
@@ -33,7 +55,7 @@ def requirements_spec_metadata(
                 status='missing',
                 path=path,
                 reason=f'spec path does not exist: {path}',
-                next_action='provide an existing Waygate Markdown, OpenSpec/OpenAPI, or Spec Kit path',
+                next_action='provide an existing Waygate Markdown file, Open Spec package directory, OpenSpec/OpenAPI path, or Spec Kit feature package',
             )
         )
 
@@ -46,7 +68,7 @@ def requirements_spec_metadata(
                 status='unsupported',
                 path=path,
                 reason=classification['label'],
-                next_action='use Waygate Markdown, OpenSpec/OpenAPI, or Spec Kit input, or convert this source first',
+                next_action='use Waygate Markdown, Open Spec package, OpenSpec/OpenAPI, or Spec Kit input, or convert this source first',
             )
         )
     if source_type == ASYNCAPI_SOURCE_TYPE:
@@ -106,12 +128,16 @@ def requirements_spec_metadata(
 
 def classify_requirements_spec_path(path: Path) -> dict[str, str]:
     if path.is_dir():
+        if _looks_like_open_spec_package_dir(path):
+            return {'sourceType': OPEN_SPEC_PACKAGE_SOURCE_TYPE, 'label': 'Open Spec package path'}
         if _looks_like_openspec_dir(path):
             return {'sourceType': OPENSPEC_SOURCE_TYPE, 'label': 'OpenSpec-like spec path'}
-        if _looks_like_spec_kit_dir(path):
-            return {'sourceType': SPEC_KIT_SOURCE_TYPE, 'label': 'Spec Kit-like spec path'}
         if _looks_like_asyncapi_dir(path):
             return {'sourceType': ASYNCAPI_SOURCE_TYPE, 'label': 'AsyncAPI-like spec path'}
+        if _looks_like_spec_kit_workspace_root(path):
+            _raise_spec_kit_workspace_root(path)
+        if _looks_like_spec_kit_dir(path):
+            return {'sourceType': SPEC_KIT_SOURCE_TYPE, 'label': 'Spec Kit-like spec path'}
         raise ValueError(f'spec path must be a readable Markdown file: {path}')
 
     if not path.is_file():
@@ -151,6 +177,8 @@ def _convert_external_spec(
 ) -> dict[str, Any]:
     if source_type == OPENSPEC_SOURCE_TYPE:
         payloads = _convert_openspec(path, source_hash=source_hash, imported_at=imported_at)
+    elif source_type == OPEN_SPEC_PACKAGE_SOURCE_TYPE:
+        payloads = _convert_open_spec_package(path, source_hash=source_hash, imported_at=imported_at)
     elif source_type == SPEC_KIT_SOURCE_TYPE:
         payloads = _convert_spec_kit(path, source_hash=source_hash, imported_at=imported_at)
     else:
@@ -160,7 +188,7 @@ def _convert_external_spec(
                 status='unsupported',
                 path=path,
                 reason='no converter registered for source type',
-                next_action='use OpenSpec/OpenAPI, Spec Kit, or Waygate Markdown input',
+                next_action='use Open Spec package, OpenSpec/OpenAPI, Spec Kit, or Waygate Markdown input',
             )
         )
 
@@ -279,6 +307,143 @@ def _convert_openspec(path: Path, *, source_hash: str, imported_at: str) -> dict
     )
 
 
+def _convert_open_spec_package(path: Path, *, source_hash: str, imported_at: str) -> dict[str, Any]:
+    entrypoint_paths = _open_spec_package_entrypoints(path)
+    source_file = entrypoint_paths['requirements']
+    contents: dict[str, str] = {}
+    for key, entrypoint in entrypoint_paths.items():
+        try:
+            contents[key] = entrypoint.read_text(encoding='utf-8')
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                _spec_error(
+                    source_type=OPEN_SPEC_PACKAGE_SOURCE_TYPE,
+                    status='unreadable',
+                    path=entrypoint,
+                    reason=f'Open Spec package markdown is not valid UTF-8: {exc}',
+                    next_action='save the Open Spec package markdown files as UTF-8 text and retry',
+                )
+            ) from exc
+        except OSError as exc:
+            raise ValueError(
+                _spec_error(
+                    source_type=OPEN_SPEC_PACKAGE_SOURCE_TYPE,
+                    status='unreadable',
+                    path=entrypoint,
+                    reason=str(exc),
+                    next_action='make the Open Spec package markdown files readable and retry',
+                )
+            ) from exc
+
+    redactions: list[dict[str, str]] = []
+    requirements_content = contents.get('requirements', '')
+    title = _markdown_title(requirements_content) or path.name
+    requirement_items = _open_spec_package_items(
+        contents,
+        'requirements',
+        'requirement',
+        'functional requirements',
+        'business requirements',
+        'feature requirements',
+        '需求',
+        '需求清单',
+        '功能需求',
+        '业务需求',
+        '用户需求',
+    )
+    if not requirement_items:
+        requirement_items = [
+            {'text': item, 'entrypointKey': 'requirements', 'sourcePointer': f'#requirements-fallback/{index}'}
+            for index, item in enumerate(_markdown_fallback_items(requirements_content), start=1)
+        ]
+    acceptance_items = _open_spec_package_items(
+        contents,
+        'acceptance criteria',
+        'acceptance',
+        'acceptance standards',
+        '验收',
+        '验收标准',
+        '验收条件',
+        '验收准则',
+    )
+    if not requirement_items and not acceptance_items:
+        _raise_invalid(OPEN_SPEC_PACKAGE_SOURCE_TYPE, path, 'Open Spec package 01-requirements.md must include requirement or acceptance content')
+
+    normalized_requirements: list[dict[str, Any]] = []
+    mappings: list[dict[str, str]] = []
+    for index, item in enumerate(requirement_items, start=1):
+        req_id = f'REQ-{index:03d}'
+        entrypoint_key = str(item['entrypointKey'])
+        source_path = entrypoint_paths[entrypoint_key]
+        normalized_requirements.append({
+            'id': req_id,
+            'text': _redact_text(_strip_markdown_item_id(str(item['text'])), redactions, f'requirements.{req_id}'),
+            'sourcePointer': str(item['sourcePointer']),
+        })
+        mappings.append({
+            'target': f'normalizedRequirements.requirements.{req_id}',
+            'sourcePath': str(source_path),
+            'sourcePointer': str(item['sourcePointer']),
+        })
+
+    acceptance_candidates: list[dict[str, Any]] = []
+    for index, item in enumerate(acceptance_items, start=1):
+        candidate_id = f'AC-CANDIDATE-{index:03d}'
+        entrypoint_key = str(item['entrypointKey'])
+        source_path = entrypoint_paths[entrypoint_key]
+        acceptance_candidates.append({
+            'id': candidate_id,
+            'text': _redact_text(_strip_markdown_item_id(str(item['text'])), redactions, f'acceptanceCandidates.{candidate_id}'),
+            'sourcePointer': str(item['sourcePointer']),
+        })
+        mappings.append({
+            'target': f'normalizedRequirements.acceptanceCandidates.{candidate_id}',
+            'sourcePath': str(source_path),
+            'sourcePointer': str(item['sourcePointer']),
+        })
+
+    requirement_sections = _markdown_sections(requirements_content)
+    non_goals = _section_bullets(requirement_sections, 'non-goals', 'non goals', 'out of scope', '非目标', '不做范围')
+    assumptions = _section_bullets(requirement_sections, 'assumptions', '假设', '关键假设')
+    entrypoints = {key: str(entrypoint) for key, entrypoint in entrypoint_paths.items()}
+    normalized = {
+        'sourceType': OPEN_SPEC_PACKAGE_SOURCE_TYPE,
+        'title': title,
+        'requirements': normalized_requirements,
+        'acceptanceCandidates': acceptance_candidates,
+        'nonGoals': [_redact_text(_strip_markdown_item_id(item), redactions, f'nonGoals.{index}') for index, item in enumerate(non_goals, start=1)],
+        'assumptions': [_redact_text(_strip_markdown_item_id(item), redactions, f'assumptions.{index}') for index, item in enumerate(assumptions, start=1)],
+        'entrypoints': entrypoints,
+    }
+    source_metadata = {
+        'title': title,
+        'entrypoint': str(source_file),
+        'entrypoints': entrypoints,
+        'requirementCount': len(normalized_requirements),
+        'acceptanceCandidateCount': len(acceptance_candidates),
+    }
+    sanitized_source = {
+        'markdownTitles': {
+            key: _markdown_title(content) or entrypoint_paths[key].name
+            for key, content in contents.items()
+        },
+        'entrypoints': entrypoints,
+    }
+    return _conversion_payloads(
+        source_type=OPEN_SPEC_PACKAGE_SOURCE_TYPE,
+        source_path=path,
+        source_file=source_file,
+        source_hash=source_hash,
+        imported_at=imported_at,
+        source_metadata=source_metadata,
+        normalized_requirements=normalized,
+        mappings=mappings,
+        redactions=redactions,
+        sanitized_source=sanitized_source,
+        entrypoints=entrypoints,
+    )
+
+
 def _convert_spec_kit(path: Path, *, source_hash: str, imported_at: str) -> dict[str, Any]:
     source_file = _spec_kit_entrypoint(path)
     try:
@@ -383,6 +548,7 @@ def _conversion_payloads(
     mappings: list[dict[str, str]],
     redactions: list[dict[str, str]],
     sanitized_source: Any,
+    entrypoints: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     validation_report = {
         'status': 'passed',
@@ -393,6 +559,8 @@ def _conversion_payloads(
         'warnings': [],
         'redactions': redactions,
     }
+    if entrypoints:
+        validation_report['entrypoints'] = entrypoints
     if redactions:
         validation_report['warnings'].append('Sensitive values were redacted from conversion artifacts.')
     import_summary = {
@@ -404,12 +572,16 @@ def _conversion_payloads(
         'sourceMetadata': source_metadata,
         'redactionCount': len(redactions),
     }
+    if entrypoints:
+        import_summary['entrypoints'] = entrypoints
     source_map = {
         'sourceType': source_type,
         'sourcePath': str(source_path),
         'entrypoint': str(source_file),
         'mappings': mappings,
     }
+    if entrypoints:
+        source_map['entrypoints'] = entrypoints
     if isinstance(sanitized_source, dict):
         source_map['sanitizedSourceSummary'] = sanitized_source
     return {
@@ -566,6 +738,11 @@ def _openspec_entrypoint(path: Path) -> Path:
 def _spec_kit_entrypoint(path: Path) -> Path:
     if path.is_file():
         return path
+    spec_file = path / 'spec.md'
+    if spec_file.exists() and spec_file.is_file():
+        return spec_file
+    if not _is_named_spec_kit_dir(path):
+        _raise_invalid(SPEC_KIT_SOURCE_TYPE, path, 'Spec Kit feature directory must include spec.md')
     for name in ('spec.md', 'requirements.md', 'feature.md'):
         candidate = path / name
         if candidate.exists() and candidate.is_file():
@@ -606,6 +783,47 @@ def _section_bullets(sections: dict[str, list[str]], *names: str) -> list[str]:
             if match:
                 result.append(match.group(1).strip())
     return result
+
+
+def _open_spec_package_items(contents: dict[str, str], *section_names: str) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    for entrypoint_key, content in contents.items():
+        sections = _markdown_sections(content)
+        normalized_names = {_normalize_section_name(name) for name in section_names}
+        for section_name, lines in sections.items():
+            if section_name not in normalized_names:
+                continue
+            item_index = 0
+            for line in lines:
+                match = re.match(r'\s*[-*]\s+(.+?)\s*$', line)
+                if not match:
+                    continue
+                item_index += 1
+                result.append({
+                    'text': match.group(1).strip(),
+                    'entrypointKey': entrypoint_key,
+                    'sourcePointer': f'#{section_name}/{item_index}',
+                })
+    return result
+
+
+def _markdown_fallback_items(content: str) -> list[str]:
+    items: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith('#'):
+            continue
+        if re.fullmatch(r'\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?', stripped):
+            continue
+        if stripped.startswith('|'):
+            cells = [cell.strip() for cell in stripped.strip('|').split('|') if cell.strip()]
+            if cells:
+                items.append(' | '.join(cells))
+            continue
+        items.append(re.sub(r'^\s*[-*]\s+', '', stripped))
+    return items[:12]
 
 
 def _normalize_section_name(value: str) -> str:
@@ -690,11 +908,47 @@ def _raise_invalid(source_type: str, path: Path, reason: str) -> None:
     )
 
 
+def _raise_spec_kit_workspace_root(path: Path) -> None:
+    raise ValueError(
+        _spec_error(
+            source_type=SPEC_KIT_SOURCE_TYPE,
+            status='unsupported',
+            path=path,
+            reason='Spec Kit workspace/tool root is not a feature package',
+            next_action='pass a Spec Kit feature directory such as specs/<feature>/ or the concrete spec.md file',
+        )
+    )
+
+
 def _spec_error(*, source_type: str, status: str, path: Path, reason: str, next_action: str) -> str:
     return (
         f'spec intake error: sourceType={source_type} status={status} path={path} '
         f'reason={reason}; next action: {next_action}'
     )
+
+
+def _looks_like_open_spec_package_dir(path: Path) -> bool:
+    names = {child.name.lower() for child in path.iterdir()}
+    return '01-requirements.md' in names and bool(OPEN_SPEC_PACKAGE_SUPPORTING_DOCS & names)
+
+
+def _open_spec_package_entrypoints(path: Path) -> dict[str, Path]:
+    if not path.is_dir():
+        _raise_invalid(OPEN_SPEC_PACKAGE_SOURCE_TYPE, path, 'Open Spec package source must be a directory')
+    entrypoints = {
+        key: path / filename
+        for key, filename in OPEN_SPEC_PACKAGE_DOCS.items()
+        if (path / filename).exists() and (path / filename).is_file()
+    }
+    if 'requirements' not in entrypoints:
+        _raise_invalid(OPEN_SPEC_PACKAGE_SOURCE_TYPE, path, 'Open Spec package directory must include 01-requirements.md')
+    if not any((path / name).exists() and (path / name).is_file() for name in OPEN_SPEC_PACKAGE_SUPPORTING_DOCS):
+        _raise_invalid(
+            OPEN_SPEC_PACKAGE_SOURCE_TYPE,
+            path,
+            'Open Spec package directory must include at least one of 02-specification.md, 03-technical-solution.md, 04-storage-design.md, or 08-stage-handoff.md',
+        )
+    return entrypoints
 
 
 def _looks_like_openspec_dir(path: Path) -> bool:
@@ -703,11 +957,31 @@ def _looks_like_openspec_dir(path: Path) -> bool:
 
 
 def _looks_like_spec_kit_dir(path: Path) -> bool:
-    names = {child.name.lower() for child in path.iterdir()}
-    if '.specify' in names or 'specify' in path.name.lower() or 'spec-kit' in path.name.lower():
+    if _has_spec_kit_feature_entrypoint(path):
         return True
+    if _is_named_spec_kit_dir(path) and any((path / name).exists() and (path / name).is_file() for name in ('spec.md', 'requirements.md', 'feature.md')):
+        return True
+    return False
+
+
+def _looks_like_spec_kit_workspace_root(path: Path) -> bool:
+    names = {child.name.lower() for child in path.iterdir()}
+    if _has_spec_kit_feature_entrypoint(path):
+        return False
+    return path.name.lower() == '.specify' or '.specify' in names
+
+
+def _has_spec_kit_feature_entrypoint(path: Path) -> bool:
     spec_file = path / 'spec.md'
-    return spec_file.exists() and _looks_like_spec_kit_file(spec_file)
+    if not spec_file.exists() or not spec_file.is_file():
+        return False
+    names = {child.name.lower() for child in path.iterdir()}
+    return bool(SPEC_KIT_FEATURE_COMPANIONS & names)
+
+
+def _is_named_spec_kit_dir(path: Path) -> bool:
+    name = path.name.lower()
+    return 'specify' in name or 'spec-kit' in name
 
 
 def _looks_like_asyncapi_dir(path: Path) -> bool:

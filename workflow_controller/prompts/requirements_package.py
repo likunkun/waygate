@@ -268,13 +268,19 @@ def _render_requirements_spec_section(state: dict[str, Any]) -> str:
     spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
     if not spec:
         return 'Supported Requirements Spec: 未提供；必须使用目标项目上下文和人工反馈作为事实源。'
+    source_type = str(spec.get('sourceType') or '')
+    source_instruction = '- 读取上述 spec 或 conversion artifacts，作为目标产品/目标系统事实源；不要只根据 controller 版本或最近聊天推断范围。'
+    if source_type == 'open-spec-package':
+        source_instruction = '- Path 是 Open Spec package directory；必须读取 package docs 和 conversion artifacts，作为目标产品/目标系统事实源。'
+    elif source_type == 'spec-kit':
+        source_instruction = '- Path 是 Spec Kit feature package 或 spec.md；必须读取 feature docs 和 conversion artifacts，作为目标产品/目标系统事实源。'
     lines = [
         'Supported Requirements Spec:',
         f"- Path: `{spec.get('path')}`",
         f"- Hash: `{spec.get('hash')}`",
         f"- Source type: `{spec.get('sourceType')}`",
         f"- Imported at: `{spec.get('importedAt')}`",
-        '- 读取上述 spec 或 conversion artifacts，作为目标产品/目标系统事实源；不要只根据 controller 版本或最近聊天推断范围。',
+        source_instruction,
     ]
     conversion_artifacts = spec.get('conversionArtifacts') if isinstance(spec.get('conversionArtifacts'), dict) else None
     if conversion_artifacts:

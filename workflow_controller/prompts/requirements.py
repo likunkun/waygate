@@ -97,15 +97,34 @@ Controller 会记录本轮 requirements revision diff artifact；请解决这些
         if requirements_spec.get('sourceType') == 'waygate-markdown':
             spec_source_instruction = 'Read the Waygate Markdown spec file at the path above as a requirements fact source.'
             clarification_spec_source = 'Read the Waygate Markdown spec file before writing the Requirements Gate.'
+        elif requirements_spec.get('sourceType') == 'open-spec-package':
+            spec_source_instruction = 'Read the Open Spec package directory docs at the path above as requirements fact sources.'
+            clarification_spec_source = 'Read the Open Spec package docs before writing the Requirements Gate.'
+        elif requirements_spec.get('sourceType') == 'spec-kit':
+            spec_source_instruction = 'Read the Spec Kit feature package or spec.md at the path above as a requirements fact source.'
+            clarification_spec_source = 'Read the Spec Kit feature package docs before writing the Requirements Gate.'
         if conversion_artifacts:
             conversion_artifact_lines = '\n'.join(
                 f"- Conversion artifact {key}: `{value}`" for key, value in sorted(conversion_artifacts.items())
             )
-            spec_source_instruction = (
-                'Read the conversion artifacts above as requirements fact sources, especially normalizedRequirements, '
-                'sourceMap, importSummary, and validationReport. Do not re-parse or guess the external source from the original path.'
-            )
-            clarification_spec_source = 'Read the supported requirements spec conversion artifacts before writing the Requirements Gate.'
+            if requirements_spec.get('sourceType') == 'open-spec-package':
+                spec_source_instruction = (
+                    'Read the Open Spec package docs at the path above together with the conversion artifacts, especially '
+                    'normalizedRequirements, sourceMap, importSummary, and validationReport.'
+                )
+                clarification_spec_source = 'Read the Open Spec package docs and conversion artifacts before writing the Requirements Gate.'
+            elif requirements_spec.get('sourceType') == 'spec-kit':
+                spec_source_instruction = (
+                    'Read the Spec Kit feature package docs together with the conversion artifacts, especially '
+                    'normalizedRequirements, sourceMap, importSummary, and validationReport.'
+                )
+                clarification_spec_source = 'Read the Spec Kit feature package docs and conversion artifacts before writing the Requirements Gate.'
+            else:
+                spec_source_instruction = (
+                    'Read the conversion artifacts above as requirements fact sources, especially normalizedRequirements, '
+                    'sourceMap, importSummary, and validationReport. Do not re-parse or guess the external source from the original path.'
+                )
+                clarification_spec_source = 'Read the supported requirements spec conversion artifacts before writing the Requirements Gate.'
         spec_section = f"""
 Supported Requirements Spec:
 - Path: `{requirements_spec.get('path')}`

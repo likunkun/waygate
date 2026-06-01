@@ -4,7 +4,7 @@ This document records the V0.6.1 workflow rules for external spec intake, gate o
 
 ## Scope
 
-V0.6.1 keeps Waygate Markdown intake compatible while adding supported OpenSpec and Spec Kit import paths. Supported imports produce normalized requirements artifacts and source maps; unsupported, deferred, unreadable, missing, or invalid sources must fail clearly instead of being silently treated as Waygate Markdown.
+V0.6.1 keeps Waygate Markdown intake compatible while adding supported OpenSpec and Spec Kit import paths. V0.6.2e extends that contract to real document package directories: Open Spec packages and Spec Kit feature packages. Supported imports produce normalized requirements artifacts and source maps; unsupported, deferred, unreadable, missing, or invalid sources must fail clearly instead of being silently treated as Waygate Markdown.
 
 The same policy also applies to the approval flow around imported specs:
 
@@ -14,7 +14,7 @@ The same policy also applies to the approval flow around imported specs:
 
 ## External Spec Intake
 
-OpenSpec and Spec Kit imports must produce auditable conversion artifacts before Requirements drafting uses them. The expected artifact set is:
+OpenSpec, Open Spec package, and Spec Kit imports must produce auditable conversion artifacts before Requirements drafting uses them. The expected artifact set is:
 
 - `import-summary.json`
 - `normalized-requirements.json`
@@ -22,6 +22,10 @@ OpenSpec and Spec Kit imports must produce auditable conversion artifacts before
 - `validation-report.json`
 
 Artifacts may record source paths, hashes, sourceType values, validation issues, and mapping references. They must not record token, password, secret, api_key, signature, database URL, or environment variable values.
+
+`sourceType=open-spec-package` is reserved for Open Spec document package directories. A valid package directory contains `01-requirements.md` and at least one supporting package document: `02-specification.md`, `03-technical-solution.md`, `04-storage-design.md`, or `08-stage-handoff.md`. `requirementsSpec.path` records the directory, not a single Markdown file, and the hash covers package file contents. Conversion artifacts record package entrypoints so Requirements drafting can read the package docs and normalized artifacts together.
+
+Spec Kit feature package directories are valid when `spec.md` is accompanied by a feature artifact such as `plan.md`, `tasks.md`, `research.md`, `data-model.md`, `quickstart.md`, or `contracts/`. A `.specify` workspace/tool root is not a requirements source by itself; operators must pass `specs/<feature>/` or a concrete `spec.md`. Ordinary docs directories must not be guessed as requirements packages.
 
 ## Gate Ordering
 
