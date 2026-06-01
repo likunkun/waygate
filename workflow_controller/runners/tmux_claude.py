@@ -111,13 +111,14 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
     last_returncode = 0
+    command_timeout = min(request.timeout_seconds, 30) if request.timeout_seconds is not None else 30
     for command in commands:
         completed = subprocess.run(
             command,
             cwd=request.workspace_dir,
             text=True,
             capture_output=True,
-            timeout=min(request.timeout_seconds, 30),
+            timeout=command_timeout,
             check=False,
             env=env,
         )
@@ -189,7 +190,7 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
         events_path=events_path,
     )
 
-    deadline = time.monotonic() + request.timeout_seconds
+    deadline = time.monotonic() + request.timeout_seconds if request.timeout_seconds is not None else None
     next_idle_check = time.monotonic() + _tmux_idle_grace_seconds()
     idle_poll_seconds = _tmux_idle_poll_seconds()
     nudge_seconds = _tmux_idle_nudge_seconds()
@@ -198,7 +199,7 @@ def _run_tmux_agent(request: RunnerRequest, *, backend: str) -> RunnerResult:
     last_pane_content: str | None = None
     last_pane_change_time = time.monotonic()
     pending_seen = False
-    while time.monotonic() < deadline:
+    while deadline is None or time.monotonic() < deadline:
         if done_path.exists():
             payload = _read_done_payload(done_path)
             if payload.get('status') == 'invalid_done_file':
@@ -804,11 +805,11 @@ def _wait_for_tmux_agent_idle_after_done(
     workspace_dir: Path,
     env: dict[str, str],
     events_path: Path,
-    deadline: float,
+    deadline: float | None,
 ) -> dict[str, Any] | None:
     saw_busy = False
     poll_seconds = _tmux_post_done_idle_poll_seconds()
-    while time.monotonic() < deadline:
+    while deadline is None or time.monotonic() < deadline:
         pane_tail = _capture_tmux_pane(
             tmux_command=tmux_command,
             tmux_target=tmux_target,

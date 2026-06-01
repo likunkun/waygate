@@ -3276,7 +3276,8 @@ class RalphRefinerController:
                     tmux_target=runner.tmux_target,
                     role='blocked_assist',
                     env=runner.env,
-                    timeout_seconds=int(state.get('blockedAssistTimeoutSeconds') or 1800),
+                    timeout_seconds=None,
+                    idle_monitor_enabled=False,
                 ))
             except Exception as exc:
                 self._mark_blocked_assist_failed(

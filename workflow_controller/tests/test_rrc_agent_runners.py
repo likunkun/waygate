@@ -1409,6 +1409,75 @@ def test_tmux_claude_runner_idle_poll_default_is_60s(
     assert _tmux_idle_poll_seconds() == 60.0
 
 
+def test_tmux_claude_runner_allows_no_hard_timeout_when_waiting_for_done(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    prompt_path = workspace / 'prompt.md'
+    _write(prompt_path, 'Diagnose the blocked workflow and wait for human input if needed.')
+    tmux_log = tmp_path / 'tmux.log'
+    fake_tmux = _make_executable(
+        tmp_path / 'tmux',
+        f"""#!/usr/bin/env python3
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(" ".join(args) + "\\n")
+if args[:1] == ["send-keys"] and args[-1:] == ["C-m"]:
+    subprocess.Popen([
+        sys.executable,
+        "-c",
+        (
+            "import json, os, time; "
+            "time.sleep(0.2); "
+            "open(os.environ['RRC_RUN_DONE_FILE'], 'w', encoding='utf-8').write("
+            "json.dumps({{"
+            "'status': 'done', "
+            "'summary': 'assist completed after human reply', "
+            "'run_id': os.environ['RRC_RUN_ID']"
+            "}}))"
+        ),
+    ], env=os.environ.copy())
+raise SystemExit(0)
+""",
+    )
+    monkeypatch.setenv('RRC_TMUX_IDLE_GRACE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_POLL_SECONDS', '0.1')
+    monkeypatch.setenv('RRC_TMUX_IDLE_NUDGE_SECONDS', '0')
+    monkeypatch.setenv('RRC_TMUX_IDLE_MAX_NUDGES', '0')
+
+    request = RunnerRequest(
+        backend='tmux-claude',
+        workspace_dir=workspace,
+        prompt_path=prompt_path,
+        artifact_dir=tmp_path / 'artifacts',
+        unit_id='blocked-assist',
+        agent_command=str(fake_tmux),
+        tmux_target='1.2',
+        timeout_seconds=None,
+        idle_monitor_enabled=False,
+    )
+
+    result = run_agent_backend(request)
+
+    assert result.status == 'done'
+    log = tmux_log.read_text(encoding='utf-8')
+    assert 'send-keys -t 1.2 继续' not in log
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'events.log').read_text(encoding='utf-8').splitlines()
+    ]
+    assert not any(event.get('event') == 'agent_nudge_sent' for event in events)
+    assert not any(event.get('event') == 'agent_idle_without_done' for event in events)
+    assert not any(event.get('event') == 'timeout' for event in events)
+
+
 
 
 

@@ -39,7 +39,7 @@ class RunnerRequest:
     tmux_target: str | None = None
     role: str | None = None
     env: dict[str, str] = field(default_factory=dict)
-    timeout_seconds: int = DEFAULT_AGENT_TIMEOUT_SECONDS
+    timeout_seconds: int | None = DEFAULT_AGENT_TIMEOUT_SECONDS
     idle_monitor_enabled: bool = True
 
 

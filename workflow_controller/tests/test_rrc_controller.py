@@ -6974,6 +6974,81 @@ def test_drive_blocked_assist_dry_run_writes_summary_without_unblocking(tmp_path
     assert any('Blocked Assist' in line for line in outputs)
 
 
+def test_drive_blocked_assist_runner_disables_idle_and_timeout_only_for_assist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'EXECUTE_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'blocked',
+            'blockedReason': 'Missing PRODUCTION_API_BASE_URL for production_readonly verification.',
+            'blockedContext': {'category': 'environment', 'source': 'builder'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'agentRunner': 'tmux-claude',
+            'tmuxTarget': '1.2',
+            'workspacePath': str(workspace),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    captured_requests = []
+
+    def fake_run_agent_backend(request):
+        captured_requests.append(request)
+        summary_path = request.artifact_dir.parent / 'blocked-assist-summary.json'
+        summary_path.write_text(
+            json.dumps(
+                {
+                    'diagnosed_category': 'environment',
+                    'resolved_claim': False,
+                    'human_actions_taken': [],
+                    'recommended_route': 'continue',
+                    'route_reason': 'Human needs to provide the missing API base URL.',
+                    'evidence_refs': [],
+                    'remaining_risks': ['API URL still missing.'],
+                    'safe_to_continue_reason': '',
+                }
+            ),
+            encoding='utf-8',
+        )
+        return _fake_agent_result(request)
+
+    monkeypatch.setattr(rrc_controller_module, 'run_agent_backend', fake_run_agent_backend)
+    outputs: list[str] = []
+    choices = iter(['d', 'k'])
+
+    state = controller.drive(
+        input_func=lambda _prompt: next(choices),
+        output_func=outputs.append,
+        timestamp_output=False,
+        print_agent_target=False,
+    )
+
+    assert state['status'] == 'blocked'
+    assert len(captured_requests) == 1
+    assist_request = captured_requests[0]
+    assert assist_request.role == 'blocked_assist'
+    assert assist_request.idle_monitor_enabled is False
+    assert assist_request.timeout_seconds is None
+    saved = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert saved['blockedAssist']['status'] == 'completed'
+    assert 'blockedAssistTimeoutSeconds' not in saved
+    assert any('summary 已写入' in line for line in outputs)
+
+
 def test_drive_blocked_assist_continue_requires_human_reason_and_unblocks_environment(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -7141,8 +7216,10 @@ def test_drive_blocked_assist_unit_plan_rework_requires_human_reason_and_injects
         encoding='utf-8',
     )
     planner_prompts: list[str] = []
+    planner_requests = []
 
     def fake_run_agent_backend(request):
+        planner_requests.append(request)
         planner_prompts.append(request.prompt_path.read_text(encoding='utf-8'))
         _write_valid_unit_plan(request.artifact_dir / 'unit-plan-body.md')
         return _fake_agent_result(request)
@@ -7160,6 +7237,9 @@ def test_drive_blocked_assist_unit_plan_rework_requires_human_reason_and_injects
 
     assert state['currentStep'] == 'WAITING_UNIT_PLAN_APPROVAL'
     assert planner_prompts
+    assert planner_requests[0].role is None
+    assert planner_requests[0].idle_monitor_enabled is True
+    assert planner_requests[0].timeout_seconds == 1800
     prompt = planner_prompts[0]
     assert 'Replace the impossible fixture with a seeded local fixture.' in prompt
     assert str(assist_summary) in prompt
