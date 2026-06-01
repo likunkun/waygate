@@ -1742,6 +1742,92 @@ def test_package_consistency_rejects_missing_appendix_hash_and_conflicts(tmp_pat
         validate_staged_requirements_package_consistency(conflicting_gate, state)
 
 
+def test_package_consistency_ignores_rejected_word_outside_journey_status_column(
+    tmp_path: Path,
+) -> None:
+    state = _complete_checkpoint_artifacts_with_content(tmp_path)
+
+    scope_path = Path(state['requirementsPackage']['artifacts']['scope']['path'])
+    scope_path.write_text(
+        scope_path.read_text(encoding='utf-8')
+        + (
+            '\n| Journey | Title | Status | Steps | AC | Verification Layer |\n'
+            '| --- | --- | --- | --- | --- | --- |\n'
+            '| J-V062E-004 | Requirements checkpoint validation | active | '
+            'Open staged final preflight -> inspect controller feedback | AC-07 | functional |\n'
+        ),
+        encoding='utf-8',
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+
+    product_path = Path(state['requirementsPackage']['artifacts']['product_design']['path'])
+    product_path.write_text(
+        product_path.read_text(encoding='utf-8')
+        + (
+            '\n| Journey | Product behavior | Rejection copy |\n'
+            '| --- | --- | --- |\n'
+            '| J-V062E-004 | Final preflight keeps scope facts | '
+            'The invalid checkpoint form is rejected before human approval. |\n'
+        ),
+        encoding='utf-8',
+    )
+    mark_stage_artifact(state, 'product_design', product_path)
+
+    strategy_path = Path(state['requirementsPackage']['artifacts']['test_strategy']['path'])
+    strategy_path.write_text(
+        strategy_path.read_text(encoding='utf-8')
+        + (
+            '\n| Journey | Test observation | Expected result |\n'
+            '| --- | --- | --- |\n'
+            '| J-V062E-004 | Submit an invalid checkpoint form | '
+            'The command/form is rejected and no Status column is declared here. |\n'
+        ),
+        encoding='utf-8',
+    )
+    mark_stage_artifact(state, 'test_strategy', strategy_path)
+
+    gate = render_staged_requirements_package_gate_body(state)
+
+    validate_staged_requirements_package_consistency(gate, state)
+
+
+def test_package_consistency_rejects_conflicting_journey_status_column(
+    tmp_path: Path,
+) -> None:
+    state = _complete_checkpoint_artifacts_with_content(tmp_path)
+
+    scope_path = Path(state['requirementsPackage']['artifacts']['scope']['path'])
+    scope_path.write_text(
+        scope_path.read_text(encoding='utf-8')
+        + (
+            '\n| Journey | Title | Status | Steps | AC | Verification Layer |\n'
+            '| --- | --- | --- | --- | --- | --- |\n'
+            '| J-V062E-004 | Requirements checkpoint validation | active | '
+            'Open staged final preflight -> inspect controller feedback | AC-07 | functional |\n'
+        ),
+        encoding='utf-8',
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+
+    strategy_path = Path(state['requirementsPackage']['artifacts']['test_strategy']['path'])
+    strategy_path.write_text(
+        strategy_path.read_text(encoding='utf-8')
+        + (
+            '\n| Journey | Title | Status | Steps | AC | Verification Layer |\n'
+            '| --- | --- | --- | --- | --- | --- |\n'
+            '| J-V062E-004 | Requirements checkpoint validation | rejected | '
+            'Reject invalid package state -> report controller feedback | AC-07 | functional |\n'
+        ),
+        encoding='utf-8',
+    )
+    mark_stage_artifact(state, 'test_strategy', strategy_path)
+
+    gate = render_staged_requirements_package_gate_body(state)
+
+    with pytest.raises(ValueError, match='conflicting Journey status.*J-V062E-004'):
+        validate_staged_requirements_package_consistency(gate, state)
+
+
 def test_package_consistency_prefers_explicit_verification_tag_over_api_text(
     tmp_path: Path,
 ) -> None:
@@ -2619,6 +2705,27 @@ def test_journey_contract_required_reason_routes_to_scope_with_minimal_header_fe
     assert 'Missing fields:' in feedback
     assert 'Journey Acceptance Matrix' in feedback
     assert '| Journey | Title | Status | Steps | AC | Verification Layer |' in feedback
+
+
+def test_conflicting_journey_status_reason_routes_to_scope_with_status_feedback() -> None:
+    reason = (
+        "requirements gate invalid: staged requirements package conflicting Journey status "
+        "for J-V062E-004: ['active', 'rejected']"
+    )
+
+    assert select_requirements_revision_stage(reason) == 'scope'
+    assert requirements_auto_revision_semantic_key(reason) == 'scope:journey_status_conflict'
+
+    feedback = rrc_controller_module._requirements_controller_validation_revision_feedback(
+        reason=reason,
+        stage='scope',
+        reason_key='scope:journey_status_conflict',
+    )
+
+    assert 'Journey Status' in feedback
+    assert 'Status column' in feedback
+    assert 'maps each E2E/Web/prototype review obligation' not in feedback
+    assert 'E2E mapping' not in feedback
 
 
 def test_requirements_revision_staged_routes_unknown_ac_prototype_reason_to_scope(

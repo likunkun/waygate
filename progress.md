@@ -2,6 +2,20 @@
 
 ## 会话：2026-06-01
 
+### Verifier 环境占位值与重复失败保护修复
+- **状态：** implementation verified; focused/full regression passed.
+- 根因：`verification_env` 把 `required key name only`、`<...>` 等 key-only 说明当作真实值覆盖父进程环境；同时 `REFINE_UNIT` / `REVIEW_UNIT` 成功后全局清理 `lastFailure`，导致同一 `VERIFY_UNIT` failure fingerprint 经过 Builder/Refiner/Reviewer 后丢失计数。
+- 修复：Verifier runtime 跳过 key-only 占位 value；父进程存在同名真实环境变量时使用父环境值，否则不注入，保留脚本自身 `.env` / 默认加载逻辑。`env_keys` 作为只声明变量名的合同，不记录 value。
+- 修复：Unit Plan validator 拒绝 `verification_env` 中的 key-only prose / `<...>` 占位 value，支持 state/unit 级 `env_keys`，并拒绝 `env_keys` 中包含 `=`、URL 或其他非变量名条目；Unit Plan prompt 同步说明 `verification_env` 与 `env_keys` 边界。
+- 修复：新增 stage-aware `lastFailure` 清理；Refiner/Reviewer 成功只清同 stage failure，`VERIFY_UNIT` failure 会保留到下一次 verifier 通过或相同 fingerprint 再次触发 repeated failure block。
+- 打包：`bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2d_all.deb`；`dpkg-deb --field` 与解包后的 `waygate --version` 均确认为 `0.6.2d`。
+- 验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q` -> `26 passed in 5.63s`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'repeated_verification_failure or lastFailure or verifier'` -> `8 passed, 237 deselected`。
+  - `python3 -m pytest workflow_controller/tests/gates/test_gates_structure.py -q` -> `22 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `830 passed in 82.74s`。
+  - `git diff --check` -> passed。
+
 ### Staged Requirements 无 spec Scope 首轮澄清修复
 - **状态：** implementation verified; focused/full regression passed.
 - 根因：legacy `REQUIREMENTS_DRAFT` 已对无 `--spec` 首轮关闭 idle monitor 并要求先问人工，但 V0.6.2 staged 默认入口 `REQUIREMENTS_SCOPE_DRAFT` 只注入 Scope 生成要求，没有强制先问人工确认版本目标、非目标、验收重点和事实来源。

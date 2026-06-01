@@ -224,6 +224,49 @@ class TestValidatorsLayer:
         }
         validate_unit_plan_verification_environment(state)  # no DATABASE_URL needed
 
+    def test_validate_unit_plan_verification_environment_rejects_key_only_placeholder_value(self) -> None:
+        state = {
+            'units': [
+                {
+                    'id': 'u1',
+                    'verification_commands': ['bash scripts/verify/openmaic.sh'],
+                    'verification_env': {
+                        'OPENMAIC_BASE_URL': 'required key name only',
+                    },
+                }
+            ]
+        }
+
+        with pytest.raises(ValueError, match='env_keys'):
+            validate_unit_plan_verification_environment(state)
+
+    def test_validate_unit_plan_verification_environment_accepts_env_keys_declaration(self) -> None:
+        state = {
+            'units': [
+                {
+                    'id': 'u1',
+                    'verification_commands': ['pnpm exec playwright test tests/e2e/openmaic.spec.ts'],
+                    'env_keys': ['DATABASE_URL'],
+                }
+            ]
+        }
+
+        validate_unit_plan_verification_environment(state)
+
+    def test_validate_unit_plan_verification_environment_rejects_env_keys_values(self) -> None:
+        state = {
+            'units': [
+                {
+                    'id': 'u1',
+                    'verification_commands': ['bash scripts/verify/openmaic.sh'],
+                    'env_keys': ['OPENMAIC_BASE_URL=http://127.0.0.1:18080'],
+                }
+            ]
+        }
+
+        with pytest.raises(ValueError, match='names only'):
+            validate_unit_plan_verification_environment(state)
+
     def test_validate_unit_plan_test_strategy_no_requirements(self, tmp_path: Path) -> None:
         state = _minimal_state()
         requirements = tmp_path / 'req.md'

@@ -4544,6 +4544,125 @@ def test_repeated_playwright_timeout_fingerprint_ignores_volatile_output_tail() 
     assert 'production readonly reference' in first_details['stable_failure_features']
 
 
+def test_verifier_failure_survives_refiner_and_reviewer_success_until_next_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    failed_command = 'bash scripts/verify/openmaic.sh'
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'VERIFY_UNIT',
+            'lastVerifiedStep': 'PLAN_CREATED',
+            'status': 'active',
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'workspacePath': str(workspace),
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'Delivery',
+                    'passes': False,
+                    'verification_commands': [failed_command],
+                },
+            ],
+        },
+        force=True,
+    )
+
+    def fake_run_verifier(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'verification.json').write_text(
+            json.dumps({
+                'unit_id': 'unit-01',
+                'passed': False,
+                'commands': [failed_command],
+                'results': [
+                    {
+                        'command': failed_command,
+                        'returncode': 1,
+                        'ok': False,
+                        'stdout': 'OpenMAIC base URL returned 503\n',
+                        'stderr': '',
+                    }
+                ],
+                'issues': [
+                    {
+                        'type': 'verification_command_failed',
+                        'message': f'Command failed: {failed_command}',
+                    }
+                ],
+            }),
+            encoding='utf-8',
+        )
+
+    def fake_run_builder(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'builder-summary.json').write_text(
+            json.dumps({
+                'runner_status': 'done',
+                'done_payload': {
+                    'status': 'done',
+                    'summary': 'controller failure reproduced and fixed',
+                    'controller_failure_resolution': {
+                        'failed_command': failed_command,
+                        'reproduced': True,
+                        'reproduction_exit_code': 1,
+                        'root_cause': 'Verifier reached the wrong OpenMAIC base URL.',
+                        'fix_summary': 'Preserved external environment URL handling.',
+                        'rerun_exit_code': 1,
+                        'full_verification_run': 'approved verification command still fails in controller',
+                    },
+                },
+            }),
+            encoding='utf-8',
+        )
+        (unit_dir / 'changed-files.txt').write_text('workflow_controller/rrc_real_runtime.py\n', encoding='utf-8')
+
+    def fake_run_refiner(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> None:
+        _write_simplifier_result(unit_dir, 'ok')
+
+    def fake_run_reviewer(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'review.json').write_text(json.dumps({'passed': True, 'issues': []}), encoding='utf-8')
+
+    monkeypatch.setattr(rrc_controller_module, 'run_verifier', fake_run_verifier)
+    monkeypatch.setattr(rrc_controller_module, 'run_builder', fake_run_builder)
+    monkeypatch.setattr(rrc_controller_module, 'run_refiner', fake_run_refiner)
+    monkeypatch.setattr(rrc_controller_module, 'run_reviewer', fake_run_reviewer)
+
+    first = controller.run_once()
+    assert first['currentStep'] == 'EXECUTE_UNIT'
+    assert first['lastFailure']['stage'] == 'VERIFY_UNIT'
+    assert first['lastFailure']['count'] == 1
+
+    after_builder = controller.run_once()
+    assert after_builder['currentStep'] == 'REFINE_UNIT'
+    assert after_builder['lastFailure']['stage'] == 'VERIFY_UNIT'
+
+    after_refiner = controller.run_once()
+    assert after_refiner['currentStep'] == 'REVIEW_UNIT'
+    assert after_refiner['lastFailure']['stage'] == 'VERIFY_UNIT'
+
+    after_reviewer = controller.run_once()
+    assert after_reviewer['currentStep'] == 'VERIFY_UNIT'
+    assert after_reviewer['lastFailure']['stage'] == 'VERIFY_UNIT'
+
+    second = controller.run_once()
+    assert second['status'] == 'blocked'
+    assert second['currentStep'] == 'VERIFY_UNIT'
+    assert second['lastFailure']['count'] == 2
+    assert 'Repeated VERIFY_UNIT failure' in second['blockedReason']
+
+
 def test_builder_done_after_verifier_failure_requires_controller_failure_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4879,7 +4998,14 @@ def test_controller_routes_ok_simplifier_result_to_reviewer(tmp_path: Path, monk
     workspace.mkdir()
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
-    controller.init_state(_refiner_controller_state(workspace), force=True)
+    initial_state = _refiner_controller_state(workspace)
+    initial_state['lastFailure'] = {
+        'unit_id': 'unit-01',
+        'stage': 'REFINE_UNIT',
+        'fingerprint': 'refiner-fingerprint',
+        'count': 1,
+    }
+    controller.init_state(initial_state, force=True)
 
     def fake_run_refiner(state: dict[str, Any], unit_dir: Path, dry_run: bool = False) -> None:
         _write_simplifier_result(unit_dir, 'ok')
@@ -4890,6 +5016,38 @@ def test_controller_routes_ok_simplifier_result_to_reviewer(tmp_path: Path, monk
 
     assert state['currentStep'] == 'REVIEW_UNIT'
     assert state['status'] == 'active'
+    assert 'lastFailure' not in state
+
+
+def test_controller_clears_reviewer_failure_after_passing_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    state = _refiner_controller_state(workspace)
+    state['currentStep'] = 'REVIEW_UNIT'
+    state['lastFailure'] = {
+        'unit_id': 'unit-01',
+        'stage': 'REVIEW_UNIT',
+        'fingerprint': 'reviewer-fingerprint',
+        'count': 1,
+    }
+    controller.init_state(state, force=True)
+
+    def fake_run_reviewer(state: dict[str, Any], unit_dir: Path, **_: Any) -> None:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / 'review.json').write_text(json.dumps({'passed': True, 'issues': []}), encoding='utf-8')
+
+    monkeypatch.setattr(rrc_controller_module, 'run_reviewer', fake_run_reviewer)
+
+    result = controller.run_once()
+
+    assert result['currentStep'] == 'VERIFY_UNIT'
+    assert result['status'] == 'active'
+    assert 'lastFailure' not in result
 
 
 def test_controller_routes_changes_requested_simplifier_result_back_to_builder(

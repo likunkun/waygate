@@ -282,17 +282,29 @@ def verification_env_for_state(state: dict[str, Any]) -> dict[str, str]:
         for key, value in source.items():
             key_text = str(key).strip()
             if key_text and value is not None:
+                if _is_key_only_env_value(value):
+                    parent_value = _parent_env_value(key_text)
+                    if parent_value is not None:
+                        env[key_text] = parent_value
+                    continue
                 env[key_text] = str(value)
+    for key in _verification_env_key_declarations(state):
+        if key in env:
+            continue
+        parent_value = _parent_env_value(key)
+        if parent_value is not None:
+            env[key] = parent_value
     return env
 
 
 def ensure_verification_env_for_state(state: dict[str, Any], workspace_dir: Path) -> dict[str, str]:
     env = verification_env_for_state(state)
+    declared_env_keys = _verification_env_key_declarations(state)
     inferred: dict[str, str] = {}
     missing: list[str] = []
     for command in verification_commands_for_state(state):
         for key in sorted(_required_env_keys_for_verification_command(command)):
-            if key in env or _command_sets_env(command, key):
+            if key in env or key in declared_env_keys or _command_sets_env(command, key):
                 continue
             inferred_value = _infer_verification_env_value(key, workspace_dir)
             if inferred_value:
@@ -313,6 +325,48 @@ def ensure_verification_env_for_state(state: dict[str, Any], workspace_dir: Path
             + '. Add verification_env or inline the variable in the verification command.'
         )
     return env
+
+
+def _verification_env_key_declarations(state: dict[str, Any]) -> set[str]:
+    unit = _find_unit(state, state.get('currentUnitId'))
+    keys: set[str] = set()
+    for payload in (state, unit):
+        for field in ('env_keys', 'envKeys'):
+            value = payload.get(field)
+            if not isinstance(value, list):
+                continue
+            keys.update(str(key).strip() for key in value if str(key).strip())
+        for field in ('verification_env', 'verificationEnv'):
+            value = payload.get(field)
+            if not isinstance(value, dict):
+                continue
+            for key, env_value in value.items():
+                key_text = str(key).strip()
+                if key_text and _is_key_only_env_value(env_value):
+                    keys.add(key_text)
+    return keys
+
+
+def _parent_env_value(key: str) -> str | None:
+    value = os.environ.get(key)
+    if value and not _is_key_only_env_value(value):
+        return value
+    return None
+
+
+def _is_key_only_env_value(value: Any) -> bool:
+    text = str(value).strip()
+    if not text:
+        return False
+    normalized = re.sub(r'[\s_-]+', ' ', text.lower()).strip()
+    key_only_phrases = (
+        'required key name only',
+        'optional key name only',
+        'value must not be recorded',
+    )
+    if any(phrase in normalized for phrase in key_only_phrases):
+        return True
+    return bool(re.fullmatch(r'<[^<>]+>', text))
 
 
 def run_verification_commands(

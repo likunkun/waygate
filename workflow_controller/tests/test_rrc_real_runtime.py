@@ -1091,6 +1091,74 @@ def test_run_verifier_injects_unit_verification_env_without_inlining_it_in_comma
     assert verification['results'][0]['env_keys'] == ['DATABASE_URL']
 
 
+def test_run_verifier_skips_key_only_placeholder_verification_env(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv('OPENMAIC_BASE_URL', raising=False)
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_env': {
+                    'OPENMAIC_BASE_URL': 'required key name only',
+                },
+                'verification_commands': [
+                    "python -c \"import os; from pathlib import Path; "
+                    "Path('openmaic-url.txt').write_text("
+                    "os.environ.get('OPENMAIC_BASE_URL', '<unset>'), encoding='utf-8')\"",
+                ],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    assert (workspace / 'openmaic-url.txt').read_text(encoding='utf-8') == '<unset>'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['results'][0]['env_keys'] == []
+
+
+def test_run_verifier_uses_parent_env_for_key_only_placeholder(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv('OPENMAIC_BASE_URL', 'http://127.0.0.1:18080')
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_env': {
+                    'OPENMAIC_BASE_URL': '<required key name only>',
+                },
+                'verification_commands': [
+                    "python -c \"import os; from pathlib import Path; "
+                    "Path('openmaic-url.txt').write_text("
+                    "os.environ['OPENMAIC_BASE_URL'], encoding='utf-8')\"",
+                ],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    assert (workspace / 'openmaic-url.txt').read_text(encoding='utf-8') == 'http://127.0.0.1:18080'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['results'][0]['env_keys'] == ['OPENMAIC_BASE_URL']
+
+
 def test_run_verifier_infers_database_url_for_legacy_playwright_session(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     (workspace / 'prisma').mkdir(parents=True)

@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-06-01 Verifier 环境占位值与重复失败保护
+
+- `verification_env` 是可执行环境值合同，不能承载 `required key name only`、`optional key name only`、`value must not be recorded` 或 `<...>` 这类说明性占位。只声明变量名时必须使用 `env_keys`，避免 controller 把占位说明注入 subprocess 并覆盖父进程真实环境。
+- key-only 环境声明的运行时边界是：父进程已有同名真实值时 verifier 继承该值并只记录 key 名；父环境没有值时 controller 不注入，让验证脚本自己的默认值或 `.env` 加载逻辑决定。controller artifact 仍不能记录 secret 或外部 URL value。
+- Unit Plan gate 应在人工批准前拒绝 `verification_env` 占位 value 和 `env_keys` 中的 `KEY=value` / URL / 非变量名条目；`env_keys` 可以满足“该验证依赖外部环境变量名已声明”的计划合同，但不代表 controller 持有可执行 value。
+- `lastFailure` 是按 unit/stage/fingerprint 计数的重复失败事实源。`REFINE_UNIT` / `REVIEW_UNIT` 成功只能清理同 stage failure，不能清掉前一轮 `VERIFY_UNIT` failure；否则同一 verifier failure 会在 Builder/Refiner/Reviewer 成功路径中丢失计数并绕过 repeated-failure block。
+
 ## 2026-06-01 Staged Requirements 无 spec Scope 首轮澄清
 
 - Staged Requirements 的默认入口是 `REQUIREMENTS_SCOPE_DRAFT`，不能只继承 legacy `REQUIREMENTS_DRAFT` 的首轮澄清策略。无 supported `requirementsSpec`、无 `requirementsRevisionFeedback`、且 Scope artifact 尚未 complete 时，Scope prompt 必须先要求 agent 在 tmux pane 向人工提一个需求澄清问题。

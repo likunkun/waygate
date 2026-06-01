@@ -109,6 +109,14 @@ def _append_scope_issues(
         _append_issue(issues, 'scope', 'journey_contract_required', 'Journey contract requires active Journey rows')
 
     if _has_any(compact, (
+        'conflictingjourneystatus',
+        'journeystatusconflict',
+        'stagedrequirementspackageconflictingjourneystatus',
+        '旅程状态冲突',
+    )):
+        _append_issue(issues, 'scope', 'journey_status_conflict', 'Journey status conflicts across staged requirements')
+
+    if _has_any(compact, (
         'accontractchange',
         'acceptancecriteriacontractchange',
         'journeycontractchange',

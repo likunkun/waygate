@@ -4058,7 +4058,7 @@ class RalphRefinerController:
             simplifier = validate_simplifier_result(unit_dir / 'simplifier-result.json')
             simplifier_status = simplifier.get('status')
             if simplifier_status in {'ok', 'skipped'}:
-                _clear_last_failure(state)
+                _clear_last_failure_for_stage(state, 'REFINE_UNIT')
                 state['currentStep'] = 'REVIEW_UNIT'
             elif simplifier_status == 'changes_requested':
                 _record_or_block_repeated_failure(
@@ -4081,7 +4081,7 @@ class RalphRefinerController:
             run_reviewer(state, unit_dir, dry_run=self.dry_run)
             review = validate_review_verdict(unit_dir / 'review.json')
             if review['passed']:
-                _clear_last_failure(state)
+                _clear_last_failure_for_stage(state, 'REVIEW_UNIT')
                 state['currentStep'] = 'VERIFY_UNIT'
             else:
                 _record_or_block_repeated_failure(
@@ -4125,7 +4125,7 @@ class RalphRefinerController:
                     }
                 )
             if verification['passed']:
-                _clear_last_failure(state)
+                _clear_last_failure_for_stage(state, 'VERIFY_UNIT')
                 state['lastVerifiedStep'] = 'VERIFY_UNIT'
                 state['currentStep'] = 'UNIT_COMPLETE'
             else:
@@ -5710,7 +5710,7 @@ def _requirements_controller_validation_revision_feedback(
     reason_key: str,
 ) -> str:
     missing_fields = _requirements_controller_validation_missing_fields(reason)
-    example = _requirements_controller_validation_expected_example(stage, missing_fields)
+    example = _requirements_controller_validation_expected_example(stage, missing_fields, reason=reason)
     lines = [
         '## Controller validation feedback',
         '',
@@ -5734,6 +5734,7 @@ def _requirements_controller_validation_missing_fields(reason: str) -> list[str]
     text = reason.lower()
     fields: list[str] = []
     for field, markers in (
+        ('Journey Status column', ('conflicting journey status', 'journey status conflict', 'status column')),
         ('Journey Acceptance Matrix', ('journey contract required', 'journey acceptance matrix', 'active journey rows', 'journey rows', '旅程合同', '旅程契约')),
         ('Journey / Title / Status / Steps / AC / Verification Layer', ('journey contract required', 'journey acceptance matrix', 'active journey rows', 'journey rows', 'missing steps', 'missing linked ac', 'missing valid verification layer')),
         ('prototype-manifest.json', ('prototype manifest', 'prototype-manifest', 'manifest')),
@@ -5748,13 +5749,24 @@ def _requirements_controller_validation_missing_fields(reason: str) -> list[str]
     return fields
 
 
-def _requirements_controller_validation_expected_example(stage: str, missing_fields: list[str]) -> str:
+def _requirements_controller_validation_expected_example(
+    stage: str,
+    missing_fields: list[str],
+    *,
+    reason: str = '',
+) -> str:
     if stage == 'product_design':
         return (
             '- `artifacts/requirements-draft/prototype-manifest.json` contains an html/url prototype with '
             '`page_states`, `click_path`, linked AC/Journey ids, and production `implementation_targets`.'
         )
     if stage == 'scope':
+        if _requirements_controller_validation_is_journey_status_conflict(reason):
+            return (
+                '- Resolve the Journey Status conflict in the canonical Journey table: each Journey ID has one '
+                '`Status` column value across the staged package, and the complete cell value is one of '
+                '`active`, `inactive`, `deferred`, or `rejected`.'
+            )
         return (
             '- Scope maps each E2E/Web/prototype review obligation to an `AC-... [verification: e2e]` '
             'or an active Journey with `Verification Layer=e2e`.\n'
@@ -5773,6 +5785,11 @@ def _requirements_controller_validation_expected_example(stage: str, missing_fie
     if missing_fields:
         return f"- Add the missing fields: {', '.join(missing_fields)}."
     return '- Address the controller validation reason in the routed checkpoint output.'
+
+
+def _requirements_controller_validation_is_journey_status_conflict(reason: str) -> bool:
+    text = str(reason or '').lower()
+    return 'conflicting journey status' in text or 'journey status conflict' in text
 
 
 def _blocked_category(state: dict[str, Any]) -> str:
@@ -7224,6 +7241,14 @@ def _simplifier_failure_verdict(result: dict[str, Any]) -> dict[str, Any]:
 
 def _clear_last_failure(state: dict[str, Any]) -> None:
     state.pop('lastFailure', None)
+    if state.get('status') != 'blocked':
+        state['blockedReason'] = None
+
+
+def _clear_last_failure_for_stage(state: dict[str, Any], stage: str) -> None:
+    last_failure = state.get('lastFailure')
+    if isinstance(last_failure, dict) and last_failure.get('stage') == stage:
+        state.pop('lastFailure', None)
     if state.get('status') != 'blocked':
         state['blockedReason'] = None
 

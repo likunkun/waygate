@@ -1192,24 +1192,62 @@ def _staged_requirements_conflict_issues(content: str) -> list[str]:
             issues.append(f'staged requirements package conflicting AC verification layers for {ac_id}: {sorted(layers)}')
 
     journey_statuses: dict[str, set[str]] = {}
-    for row in _markdown_table_rows(content):
-        row_text = ' '.join(row)
-        journey_ids = _requirements_journey_ids_in_text(row_text)
-        if not journey_ids:
-            continue
-        normalized_row = _normalized_requirements_text(row_text)
-        statuses = {
-            status
-            for status in ('active', 'inactive', 'deferred', 'rejected')
-            if status in normalized_row
-        }
-        for journey_id in journey_ids:
-            journey_statuses.setdefault(journey_id, set()).update(statuses)
+    for journey_id, status in _requirements_journey_status_pairs(content):
+        journey_statuses.setdefault(journey_id, set()).add(status)
     for journey_id, statuses in sorted(journey_statuses.items()):
         if 'active' in statuses and statuses & {'inactive', 'deferred', 'rejected'}:
             issues.append(f'staged requirements package conflicting Journey status for {journey_id}: {sorted(statuses)}')
     return issues
 
+
+def _requirements_journey_status_pairs(content: str) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    allowed_statuses = {'active', 'inactive', 'deferred', 'rejected'}
+    for rows in _markdown_table_row_groups(content):
+        if not rows:
+            continue
+        indices = _requirements_journey_status_table_indices(rows[0])
+        if not indices:
+            continue
+        for row in rows[1:]:
+            status = _normalized_table_value(_cell_at(row, indices.get('status')))
+            if status not in allowed_statuses:
+                continue
+            journey_cell = _cell_at(row, indices.get('journey'))
+            for journey_id in _requirements_journey_ids_in_text(journey_cell):
+                pairs.append((journey_id, status))
+    return pairs
+
+
+def _requirements_journey_status_table_indices(cells: list[str]) -> dict[str, int]:
+    indices: dict[str, int] = {}
+    for index, cell in enumerate(cells):
+        normalized = _normalized_table_header(cell)
+        if normalized in {'journey', 'journeyid', 'journeyids', 'id', '旅程', '旅程id'}:
+            indices['journey'] = index
+        elif normalized in {'status', 'journeystatus', '状态', '旅程状态'}:
+            indices['status'] = index
+    if 'journey' not in indices or 'status' not in indices:
+        return {}
+    return indices
+
+
+def _markdown_table_row_groups(content: str) -> list[list[list[str]]]:
+    groups: list[list[list[str]]] = []
+    current: list[list[str]] = []
+    for line in content.splitlines():
+        cells = _markdown_table_cells(line)
+        if cells:
+            current.append(cells)
+            continue
+        if _is_markdown_table_separator(line):
+            continue
+        if current:
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups
 
 
 def validate_unit_plan_golden_path(state: dict[str, Any]) -> None:
@@ -1291,12 +1329,15 @@ def validate_final_acceptance_manual_observation_record(gate_path: Path) -> None
 
 
 def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
+    issues: list[str] = []
+    issues.extend(_verification_env_declaration_issues('state', state))
     missing: list[str] = []
     state_env_keys = _verification_env_keys(state)
     for unit in state.get('units') or []:
         if not isinstance(unit, dict):
             continue
         unit_id = str(unit.get('id') or 'unknown-unit')
+        issues.extend(_verification_env_declaration_issues(f'unit {unit_id}', unit))
         env_keys = state_env_keys | _verification_env_keys(unit)
         commands = unit.get('verification_commands') or []
         for command in commands:
@@ -1308,6 +1349,8 @@ def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
                     f'unit {unit_id} command requires {required_key}; '
                     f'add {required_key} to verification_env or inline it in the command: {command_text}'
                 )
+    if issues:
+        raise ValueError('unit plan verification environment is invalid: ' + '; '.join(issues))
     if missing:
         raise ValueError('unit plan verification_env is incomplete: ' + '; '.join(missing))
 
@@ -4320,7 +4363,59 @@ def _verification_env_keys(payload: dict[str, Any]) -> set[str]:
         value = payload.get(field)
         if isinstance(value, dict):
             keys.update(str(key).strip() for key in value if str(key).strip())
+    for field in ('env_keys', 'envKeys'):
+        value = payload.get(field)
+        if isinstance(value, list):
+            keys.update(str(key).strip() for key in value if _valid_env_key_name(str(key).strip()))
     return keys
+
+
+def _verification_env_declaration_issues(label: str, payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for field in ('verification_env', 'verificationEnv'):
+        value = payload.get(field)
+        if not isinstance(value, dict):
+            continue
+        for key, env_value in value.items():
+            key_text = str(key).strip()
+            if key_text and _is_key_only_env_value(env_value):
+                issues.append(
+                    f'{label} {field}.{key_text} uses a key-only placeholder value; '
+                    'move the variable name to env_keys and store only real non-sensitive values in verification_env'
+                )
+    for field in ('env_keys', 'envKeys'):
+        value = payload.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, list):
+            issues.append(f'{label} {field} must be a list of environment variable names')
+            continue
+        for env_key in value:
+            key_text = str(env_key).strip()
+            if not _valid_env_key_name(key_text):
+                issues.append(
+                    f'{label} {field} must contain names only, not assignments or values: {key_text}'
+                )
+    return issues
+
+
+def _valid_env_key_name(value: str) -> bool:
+    return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', value))
+
+
+def _is_key_only_env_value(value: Any) -> bool:
+    text = str(value).strip()
+    if not text:
+        return False
+    normalized = re.sub(r'[\s_-]+', ' ', text.lower()).strip()
+    key_only_phrases = (
+        'required key name only',
+        'optional key name only',
+        'value must not be recorded',
+    )
+    if any(phrase in normalized for phrase in key_only_phrases):
+        return True
+    return bool(re.fullmatch(r'<[^<>]+>', text))
 
 
 def _required_env_keys_for_verification_command(command: str) -> set[str]:
