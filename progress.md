@@ -1,5 +1,21 @@
 # 进度日志
 
+## 会话：2026-06-01
+
+### Staged Requirements 无 spec Scope 首轮澄清修复
+- **状态：** implementation verified; focused/full regression passed.
+- 根因：legacy `REQUIREMENTS_DRAFT` 已对无 `--spec` 首轮关闭 idle monitor 并要求先问人工，但 V0.6.2 staged 默认入口 `REQUIREMENTS_SCOPE_DRAFT` 只注入 Scope 生成要求，没有强制先问人工确认版本目标、非目标、验收重点和事实来源。
+- 修复：新增 staged Scope 首轮澄清判定：无 supported `requirementsSpec`、无 `requirementsRevisionFeedback`、Scope artifact 尚未 complete 时，Scope prompt 明确要求先在 tmux agent pane 提 1 个需求澄清问题，等待人工回答后再读项目上下文并写 `requirements-scope.md`；`--auto-approve` 不跳过该步骤。
+- 修复：tmux-backed no-spec Scope 首轮 runner request 使用 `idle_monitor_enabled=False`，timeout 仍为 `DEFAULT_AGENT_TIMEOUT_SECONDS=7200`；有 spec、已有 revision feedback、或 Scope 已完成后的后续 run 保持默认 idle monitor。
+- 文档：同步 `docs/workflow/staged-requirements-package-policy.md`，记录 no-spec Scope clarification 与 auto-approve 边界。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'scope_prompt_without_spec or scope_prompt_with_spec or scope_stage_without_spec or scope_stage_with_spec'` -> 新增用例按预期失败。
+  - GREEN: 同一命令 -> `4 passed, 81 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'scope_prompt_without_spec or scope_stage_without_spec or scope_stage_with_spec'` -> `3 passed, 82 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_draft_uses_two_hour_timeout_by_default or requirements_draft_with_spec_keeps_idle_monitor_enabled'` -> `2 passed, 241 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `822 passed, 1 skipped in 82.46s`。
+  - `git diff --check` -> passed。
+
 ## 会话：2026-05-31
 
 ### stale Builder blocked artifact 恢复修复

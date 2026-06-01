@@ -19,6 +19,14 @@ The staged package contains four checkpoint artifacts:
 
 Scope must stay focused. It must not ask the drafter to produce the complete product design, architecture, test strategy, or full `## 4.9 目标项目基础设施信息` inventory in the same checkpoint.
 
+## No-Spec Scope Clarification
+
+Staged Requirements inherit the legacy no-`--spec` first-turn clarification rule. When a target uses staged Requirements, has no supported `requirementsSpec`, has no `requirementsRevisionFeedback`, and the 需求范围检查点 artifact is not complete yet, the first Scope runner must ask the human one clarification question in the tmux agent pane before writing `artifacts/requirements-scope/requirements-scope.md`.
+
+That question must confirm the current-version goal, explicit non-goals, acceptance focus, and the fact sources or documentation entry points to use. The agent must wait for the human answer, then read the project facts and write the Scope artifact. It must not immediately read project context and draft an artifact before the answer.
+
+`--auto-approve` does not skip this clarification. It only affects later approval behavior after the required human clarification and checkpoint generation path have produced reviewable artifacts. If a supported spec exists, revision feedback already exists, or the Scope artifact is already complete, this first-turn clarification rule does not trigger for later checkpoint runs.
+
 ## Target Surface Classification
 
 V0.6.2a adds `requirementsSurfaceClassification` to prevent staged checkpoints from designing Waygate/controller itself when Waygate is driving a target product. The classification is derived from `--spec`, target context, unit metadata, and human revision feedback. It records:

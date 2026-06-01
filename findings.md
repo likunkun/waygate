@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-06-01 Staged Requirements 无 spec Scope 首轮澄清
+
+- Staged Requirements 的默认入口是 `REQUIREMENTS_SCOPE_DRAFT`，不能只继承 legacy `REQUIREMENTS_DRAFT` 的首轮澄清策略。无 supported `requirementsSpec`、无 `requirementsRevisionFeedback`、且 Scope artifact 尚未 complete 时，Scope prompt 必须先要求 agent 在 tmux pane 向人工提一个需求澄清问题。
+- 这个首轮问题的职责是确认当前版本目标、明确非目标、验收重点和事实来源/文档入口。人工回答前不能立即读取项目上下文并写 `requirements-scope.md`；人工回答后再读取项目事实源并生成 Scope artifact。
+- `--auto-approve` 不是需求澄清跳过开关。它只能影响后续 gate 自动确认倾向，不能跳过无 spec Requirements 首轮人工澄清。
+- tmux-backed no-spec Scope 首轮等待人工回答时应关闭 idle monitor，并保留 7200 秒 agent timeout，与 legacy Requirements Draft 等待语义一致。有 supported spec、已有 revision feedback、或 Scope 已完成的后续 checkpoint run 保持默认 idle monitor，避免扩大到 Product Design、Architecture、Test Strategy、Builder 或 Unit Plan。
+
 ## 2026-05-31 stale Builder blocked artifact 恢复边界
 
 - `artifacts/<unit>/builder-summary.json` 是 Builder run 的审计 artifact，不是跨 Unit Plan revision 永久有效的阻塞事实。Unit Plan 重新批准后，早于本次 approval 的 Builder `blocked` summary 必须视为 stale audit context，不能在 `status` / `go` 中重新升级为官方 `blocked`。

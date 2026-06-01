@@ -14,6 +14,7 @@ from workflow_controller.requirements_package import (
     STAGE_ARTIFACT_FILENAMES,
     STAGE_LABELS,
     mark_stage_artifact,
+    scope_requires_initial_human_clarification,
 )
 from workflow_controller.runners import RunnerRequest, make_runner, run_agent_backend
 from workflow_controller.runners.base import DEFAULT_AGENT_TIMEOUT_SECONDS
@@ -100,6 +101,7 @@ def run_requirements_package_stage(
         role=runner.role,
         env=runner.env,
         timeout_seconds=DEFAULT_AGENT_TIMEOUT_SECONDS,
+        idle_monitor_enabled=_stage_idle_monitor_enabled(state, stage=stage, backend=runner.backend),
     ))
     summary_payload = {
         'status': result.status,
@@ -176,6 +178,16 @@ def _validate_stage_contract_outputs(state: dict[str, Any], artifacts_dir: Path,
         stage,
         artifact_path=artifact_path,
     )
+
+
+def _stage_idle_monitor_enabled(state: dict[str, Any], *, stage: str, backend: str) -> bool:
+    if (
+        stage == 'scope'
+        and backend in {'tmux-claude', 'tmux-codex'}
+        and scope_requires_initial_human_clarification(state)
+    ):
+        return False
+    return True
 
 
 def _local_template_artifact(stage: str, state: dict[str, Any]) -> str:

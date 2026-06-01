@@ -109,6 +109,23 @@ def staged_requirements_enabled(state: dict[str, Any]) -> bool:
     return state.get('currentStep') in STEP_TO_STAGE
 
 
+def scope_requires_initial_human_clarification(state: dict[str, Any]) -> bool:
+    spec = state.get('requirementsSpec')
+    if isinstance(spec, dict) and spec:
+        return False
+
+    if str(state.get('requirementsRevisionFeedback') or '').strip():
+        return False
+
+    package = state.get('requirementsPackage')
+    artifacts = package.get('artifacts') if isinstance(package, dict) else None
+    scope_record = artifacts.get('scope') if isinstance(artifacts, dict) else None
+    if isinstance(scope_record, dict) and scope_record.get('status') == 'complete':
+        return False
+
+    return True
+
+
 def checkpoint_cli_name(stage: str) -> str:
     _validate_checkpoint_stage(stage)
     return stage.replace('_', '-')

@@ -370,6 +370,53 @@ def test_scope_prompt_is_focused_on_scope_and_acceptance() -> None:
     assert '目标项目基础设施信息' not in prompt
 
 
+def test_scope_prompt_without_spec_requires_initial_human_clarification() -> None:
+    prompt = render_scope_prompt(
+        {
+            'task_id': 'target-v0-5',
+            'requestedOutcome': 'Classroom V0.5',
+            'feasibleOutcome': 'Classroom V0.5',
+            'currentUnitId': 'target-v0-5',
+            'autoApprove': True,
+            'stagedRequirementsEnabled': True,
+            'requirementsPackage': {'version': 'v0.6.2-staged', 'artifacts': {}},
+        },
+        output_path=Path('/tmp/requirements-scope.md'),
+    )
+
+    assert '无 supported `requirementsSpec` 的 Scope 首轮人工澄清' in prompt
+    assert '先在 tmux agent pane 向人工提 1 个需求澄清问题' in prompt
+    assert '等待人工回答后' in prompt
+    assert '不要立即读取项目上下文' in prompt
+    assert '不要立即写 `requirements-scope.md`' in prompt
+    assert '`--auto-approve` 不能跳过这一步' in prompt
+
+
+def test_scope_prompt_with_spec_does_not_require_initial_clarification(tmp_path: Path) -> None:
+    spec_path = _classroom_v04_spec(tmp_path)
+    prompt = render_scope_prompt(
+        {
+            'task_id': 'target-v0-5',
+            'requestedOutcome': 'Classroom V0.5',
+            'feasibleOutcome': 'Classroom V0.5',
+            'currentUnitId': 'target-v0-5',
+            'autoApprove': True,
+            'stagedRequirementsEnabled': True,
+            'requirementsSpec': {
+                'path': str(spec_path),
+                'hash': 'sha256:spec',
+                'sourceType': 'waygate-markdown',
+                'importedAt': '2026-05-18T00:00:00Z',
+            },
+            'requirementsPackage': {'version': 'v0.6.2-staged', 'artifacts': {}},
+        },
+        output_path=Path('/tmp/requirements-scope.md'),
+    )
+
+    assert '无 supported `requirementsSpec` 的 Scope 首轮人工澄清' not in prompt
+    assert '先在 tmux agent pane 向人工提 1 个需求澄清问题' not in prompt
+
+
 def test_requirements_surface_classification_detects_classroom_visible_surfaces(
     tmp_path: Path,
 ) -> None:
@@ -869,6 +916,128 @@ def test_local_template_writes_artifact_and_summary(tmp_path: Path) -> None:
     assert summary['status'] == 'ok'
     assert summary['stage'] == 'scope'
     assert summary['artifact_path'] == str(artifact_path)
+
+
+def test_scope_stage_without_spec_disables_idle_monitor_for_initial_clarification(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements_package as requirements_package_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import DEFAULT_AGENT_TIMEOUT_SECONDS, RunnerResult
+
+    artifacts_dir = tmp_path / 'artifacts'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    captured_idle_monitor_enabled: list[bool] = []
+    captured_timeout_seconds: list[int | None] = []
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='2.0')
+
+    def fake_run_agent_backend(request):
+        captured_idle_monitor_enabled.append(request.idle_monitor_enabled)
+        captured_timeout_seconds.append(request.timeout_seconds)
+        artifact_path = artifacts_dir / 'requirements-scope' / 'requirements-scope.md'
+        artifact_path.write_text(_staged_checkpoint_body('scope'), encoding='utf-8')
+        return RunnerResult(
+            backend='tmux-claude',
+            status='done',
+            command=['fake-claude'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=artifacts_dir / 'requirements-scope' / 'runs' / 'scope-run',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(requirements_package_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_package_step, 'run_agent_backend', fake_run_agent_backend)
+
+    run_requirements_package_stage(
+        {
+            'task_id': 'target-v0-5',
+            'requestedOutcome': 'Classroom V0.5',
+            'currentUnitId': 'target-v0-5',
+            'currentStep': 'REQUIREMENTS_SCOPE_DRAFT',
+            'stagedRequirementsEnabled': True,
+            'agentRunner': 'tmux-claude',
+            'workspacePath': str(workspace),
+            'agentCommand': 'claude',
+            'tmuxTarget': '2.0',
+            'requirementsPackage': {'version': 'v0.6.2-staged', 'artifacts': {}},
+        },
+        artifacts_dir,
+        stage='scope',
+    )
+
+    assert captured_idle_monitor_enabled == [False]
+    assert captured_timeout_seconds == [DEFAULT_AGENT_TIMEOUT_SECONDS]
+
+
+def test_scope_stage_with_spec_keeps_idle_monitor_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workflow_controller.steps.requirements_package as requirements_package_step
+    from workflow_controller.runners import RunnerConfig
+    from workflow_controller.runners.base import RunnerResult
+
+    artifacts_dir = tmp_path / 'artifacts'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    spec_path = _classroom_v04_spec(tmp_path)
+    captured_idle_monitor_enabled: list[bool] = []
+
+    def fake_make_runner(state: dict) -> RunnerConfig:
+        return RunnerConfig(backend='tmux-claude', agent_command='fake-claude', tmux_target='2.0')
+
+    def fake_run_agent_backend(request):
+        captured_idle_monitor_enabled.append(request.idle_monitor_enabled)
+        artifact_path = artifacts_dir / 'requirements-scope' / 'requirements-scope.md'
+        artifact_path.write_text(_staged_checkpoint_body('scope'), encoding='utf-8')
+        return RunnerResult(
+            backend='tmux-claude',
+            status='done',
+            command=['fake-claude'],
+            returncode=0,
+            stdout='ok',
+            stderr='',
+            run_dir=artifacts_dir / 'requirements-scope' / 'runs' / 'scope-run',
+            prompt_path=request.prompt_path,
+            done_payload={'status': 'done'},
+            runner_metadata={'fake': True},
+        )
+
+    monkeypatch.setattr(requirements_package_step, 'make_runner', fake_make_runner)
+    monkeypatch.setattr(requirements_package_step, 'run_agent_backend', fake_run_agent_backend)
+
+    run_requirements_package_stage(
+        {
+            'task_id': 'target-v0-5',
+            'requestedOutcome': 'Classroom V0.5',
+            'currentUnitId': 'target-v0-5',
+            'currentStep': 'REQUIREMENTS_SCOPE_DRAFT',
+            'stagedRequirementsEnabled': True,
+            'agentRunner': 'tmux-claude',
+            'workspacePath': str(workspace),
+            'agentCommand': 'claude',
+            'tmuxTarget': '2.0',
+            'requirementsSpec': {
+                'path': str(spec_path),
+                'hash': 'sha256:spec',
+                'sourceType': 'waygate-markdown',
+                'importedAt': '2026-05-18T00:00:00Z',
+            },
+            'requirementsPackage': {'version': 'v0.6.2-staged', 'artifacts': {}},
+        },
+        artifacts_dir,
+        stage='scope',
+    )
+
+    assert captured_idle_monitor_enabled == [True]
 
 
 def test_product_design_stage_requires_manifest_when_prototype_is_required(tmp_path: Path) -> None:

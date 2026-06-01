@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from workflow_controller.requirements_package import STAGE_LABELS
+from workflow_controller.requirements_package import (
+    STAGE_LABELS,
+    scope_requires_initial_human_clarification,
+)
 from workflow_controller.requirements_surface import (
     render_requirements_surface_classification_markdown,
 )
@@ -24,6 +27,8 @@ def render_scope_prompt(state: dict[str, Any], *, output_path: Path) -> str:
 - 当前单元：`{state.get('currentUnitId')}`
 
 {spec_section}
+
+{_render_initial_scope_clarification_section(state)}
 
 目标产品表面初步分类：
 {surface_section}
@@ -242,6 +247,21 @@ def _render_revision_feedback_section(state: dict[str, Any]) -> str:
             '- 不接受自然语言替代值：`Status=是`、`Verification Layer=real integration + DB assertion`、`## 6 E2E / Browser 审阅映射`。',
         ])
     return '\n'.join(lines)
+
+
+def _render_initial_scope_clarification_section(state: dict[str, Any]) -> str:
+    if not scope_requires_initial_human_clarification(state):
+        return ''
+    return (
+        '无 supported `requirementsSpec` 的 Scope 首轮人工澄清：\n'
+        '- 这是无 `--spec` 的 staged Requirements Scope 首轮；`--auto-approve` 不能跳过这一步。\n'
+        '- 先在 tmux agent pane 向人工提 1 个需求澄清问题，问题必须同时确认：'
+        '当前版本目标、明确非目标、验收重点、事实来源/文档入口。\n'
+        '- 在人工回答前，不要立即读取项目上下文，不要立即写 `requirements-scope.md`，也不要输出 artifact。\n'
+        '- 等待人工回答后，再读取 `AGENTS.md`、`ROADMAP.md`、`task_plan.md`、'
+        '`progress.md`、`findings.md`、`docs/README.md` 和 Controller state-dir `session.json`，'
+        '然后基于人工回答和事实源写 `requirements-scope.md`。\n'
+    )
 
 
 def _render_requirements_spec_section(state: dict[str, Any]) -> str:
