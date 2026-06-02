@@ -172,6 +172,7 @@ def parse_args() -> argparse.Namespace:
         help='Markdown human gate to approve',
     )
     approve_parser.add_argument('--actor', default='human', help='Name recorded in the Human Confirmation block')
+    approve_parser.add_argument('--reason', default=None, help='Human reason for adopting an edited gate body')
 
     reject_parser = subparsers.add_parser(
         'reject',
@@ -348,7 +349,12 @@ def main() -> None:
 
     if args.command == 'approve':
         try:
-            gate_path = controller.approve_human_gate(args.gate, actor=args.actor)
+            gate_path = controller.approve_human_gate(
+                args.gate,
+                actor=args.actor,
+                reason=getattr(args, 'reason', None),
+                manual_adoption=bool(str(getattr(args, 'reason', None) or '').strip()),
+            )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
@@ -366,6 +372,7 @@ def main() -> None:
 
     if args.command == 'revise':
         try:
+            pending_only = not str(getattr(args, 'reason', None) or '').strip() and not getattr(args, 'checkpoint', None)
             checkpoint = resolve_revise_checkpoint_arg(args)
             gate_path = controller.revise_human_gate(
                 args.gate,
@@ -376,7 +383,8 @@ def main() -> None:
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
-        print(f'gate={args.gate} status=revised path={gate_path}')
+        status = 'pending-approval' if pending_only else 'revised'
+        print(f'gate={args.gate} status={status} path={gate_path}')
         return
 
     if args.command == 'migrate':

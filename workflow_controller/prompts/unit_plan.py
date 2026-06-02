@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from workflow_controller.acceptance_obligations import render_acceptance_obligations_markdown
+from workflow_controller.approval_notes import render_approval_notes_context
 from workflow_controller.requirements_package import CHECKPOINT_STAGES, REQUIREMENTS_PACKAGE_VERSION
 from workflow_controller.steps._common import _find_unit
 
@@ -57,6 +58,7 @@ Acceptance Obligation Coverage:
 - 将 `currentUnitId` 设置为第一个缺陷修复单元。
 """
     staged_requirements_section = _staged_requirements_unit_plan_section(state)
+    approval_notes_section = render_approval_notes_context(state, 'requirements')
 
     return f"""为 workflow-controller 生成"单元计划确认"Markdown 正文。
 
@@ -138,6 +140,8 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - 当前单元名称：`{unit.get('name', state.get('currentUnitId'))}`
 
 {staged_requirements_section}
+
+{approval_notes_section}
 
 controller state 中的已知目标覆盖：
 

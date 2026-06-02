@@ -29,6 +29,7 @@ from workflow_controller.annotation_agents import (
     run_annotation_pass,
 )
 from workflow_controller.agent_guides import ensure_agent_operating_guides
+from workflow_controller.approval_notes import approval_notes_for_gate
 from workflow_controller.gates.generators import (
     ensure_bug_fix_gate,
     ensure_final_acceptance_gate,
@@ -570,7 +571,15 @@ class RalphRefinerController:
         state['nextAction'] = compute_next_allowed_action(state)
         return state
 
-    def approve_human_gate(self, gate: str, actor: str = 'human') -> Path:
+    def approve_human_gate(
+        self,
+        gate: str,
+        actor: str = 'human',
+        *,
+        reason: str | None = None,
+        approval_notes: dict[str, Any] | None = None,
+        manual_adoption: bool = False,
+    ) -> Path:
         state = self.store.load_state()
         current_step = state.get('currentStep')
         if gate == 'requirements':
@@ -592,8 +601,45 @@ class RalphRefinerController:
             gate_path = ensure_bug_fix_gate(state, self.approvals_dir)
         else:
             raise ValueError(f'Unknown human gate: {gate}')
+        manual_payload: dict[str, Any] | None = None
+        if manual_adoption or (reason and gate in {'requirements', 'unit-plan'}):
+            manual_payload = self._validate_manual_gate_adoption(
+                gate,
+                state,
+                gate_path,
+                reason=reason,
+                approval_notes=approval_notes,
+            )
         self._validate_human_gate_before_approval(gate, state, gate_path)
         approve_gate_file(gate_path, actor=actor)
+        approved = check_gate_file(gate_path)
+        approved_hash = approved.content_hash or hash_gate_body(gate_body(gate_path.read_text(encoding='utf-8')))
+        if approval_notes or reason:
+            self._persist_gate_approval_notes(
+                state,
+                gate,
+                gate_path,
+                actor=actor,
+                approved_body_hash=approved_hash,
+                approval_notes=approval_notes,
+                reason=reason,
+            )
+        if manual_payload is not None:
+            manual_payload.update({
+                'actor': actor,
+                'approved_body_hash': approved_hash,
+                'approved_at': datetime.now(timezone.utc).isoformat(),
+                'validator': 'passed',
+            })
+            state.setdefault('manualGateAdoption', {})[gate] = manual_payload
+            self.store.append_event('manual_adoption_approved', {
+                'task_id': state.get('task_id'),
+                'gate': gate,
+                'path': str(gate_path),
+                'before_hash': manual_payload.get('before_hash'),
+                'after_hash': manual_payload.get('after_hash'),
+                'reason': manual_payload.get('reason'),
+            })
         if gate == 'requirements':
             self._append_pending_requirements_change_request_approval(state, actor)
         self.store.append_event('human_gate_approved', {
@@ -604,6 +650,118 @@ class RalphRefinerController:
         })
         self._save_state(state)
         return gate_path
+
+    def _ensure_pending_gate_review_baseline(
+        self,
+        state: dict[str, Any],
+        gate: str,
+        gate_path: Path,
+    ) -> dict[str, Any]:
+        body_hash = hash_gate_body(gate_body(gate_path.read_text(encoding='utf-8')))
+        review = state.setdefault('pendingGateReview', {})
+        record = review.get(gate) if isinstance(review.get(gate), dict) else None
+        if record and record.get('gate_path') == str(gate_path):
+            return record
+        record = {
+            'gate': gate,
+            'gate_path': str(gate_path),
+            'baseline_body_hash': body_hash,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+        }
+        review[gate] = record
+        return record
+
+    def _validate_manual_gate_adoption(
+        self,
+        gate: str,
+        state: dict[str, Any],
+        gate_path: Path,
+        *,
+        reason: str | None,
+        approval_notes: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if gate not in {'requirements', 'unit-plan'}:
+            raise ValueError('manual adoption only applies to requirements and unit-plan gates')
+        baseline = self._ensure_pending_gate_review_baseline(state, gate, gate_path)
+        before_hash = str(baseline.get('baseline_body_hash') or '').strip()
+        after_hash = hash_gate_body(gate_body(gate_path.read_text(encoding='utf-8')))
+        if before_hash == after_hash:
+            self._record_manual_adoption_rejection(state, gate, gate_path, reason='body hash unchanged')
+            raise ValueError('manual adoption rejected: body hash unchanged')
+        human_reason = str(reason or '').strip()
+        gate_notes = approval_notes or approval_notes_for_gate(state, gate)
+        if not human_reason and not gate_notes:
+            self._record_manual_adoption_rejection(state, gate, gate_path, reason='missing human reason or approval notes')
+            raise ValueError('manual adoption rejected: missing human reason or approval notes')
+        return {
+            'gate': gate,
+            'gate_path': str(gate_path),
+            'before_hash': before_hash,
+            'after_hash': after_hash,
+            'reason': human_reason,
+            'has_approval_notes': bool(gate_notes),
+        }
+
+    def _record_manual_adoption_rejection(
+        self,
+        state: dict[str, Any],
+        gate: str,
+        gate_path: Path,
+        *,
+        reason: str,
+    ) -> None:
+        payload = {
+            'gate': gate,
+            'gate_path': str(gate_path),
+            'reason': reason,
+            'rejected_at': datetime.now(timezone.utc).isoformat(),
+        }
+        state.setdefault('manualGateAdoptionRejected', {})[gate] = payload
+        self.store.append_event('manual_adoption_rejected', {
+            'task_id': state.get('task_id'),
+            **payload,
+        })
+        self._save_state(state)
+
+    def _persist_gate_approval_notes(
+        self,
+        state: dict[str, Any],
+        gate: str,
+        gate_path: Path,
+        *,
+        actor: str,
+        approved_body_hash: str,
+        approval_notes: dict[str, Any] | None,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        notes = approval_notes if isinstance(approval_notes, dict) else {}
+        source = 'plannotator_approved' if approval_notes else 'manual_reason'
+        payload = {
+            'gate': gate,
+            'gate_path': str(gate_path),
+            'actor': actor,
+            'source': source,
+            'approved_body_hash': approved_body_hash,
+            'reason': str(reason or notes.get('reason') or '').strip(),
+            'feedback': str(notes.get('feedback') or '').strip(),
+            'annotations': notes.get('annotations') if isinstance(notes.get('annotations'), list) else [],
+            'approved_at': datetime.now(timezone.utc).isoformat(),
+        }
+        notes_dir = self.artifacts_dir / 'approval-notes'
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = notes_dir / f'{gate}-{approved_body_hash}.json'
+        payload['artifact_path'] = str(artifact_path)
+        artifact_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        state.setdefault('gateApprovalNotes', {})[gate] = payload
+        self.store.append_event('approval_notes_persisted', {
+            'task_id': state.get('task_id'),
+            'gate': gate,
+            'path': str(gate_path),
+            'artifact_path': str(artifact_path),
+            'approved_body_hash': approved_body_hash,
+            'source': source,
+        })
+        return payload
 
     def _validate_human_gate_before_approval(
         self,
@@ -1244,6 +1402,11 @@ class RalphRefinerController:
         checkpoint: str | None = None,
         require_reason_or_checkpoint: bool = False,
     ) -> Path:
+        if require_reason_or_checkpoint:
+            if checkpoint and not str(reason or '').strip():
+                raise ValueError('waygate revise requires --reason when --checkpoint is used')
+            if not checkpoint and not str(reason or '').strip():
+                return self._return_human_gate_to_approval_point(gate)
         if gate == 'requirements':
             return self._revise_requirements_gate(
                 change_reason=reason,
@@ -1255,6 +1418,39 @@ class RalphRefinerController:
                 raise ValueError('--checkpoint only applies to --gate requirements')
             return self._revise_unit_plan_gate(human_reason=reason)
         raise ValueError(f'Unsupported gate revision: {gate}')
+
+    def _return_human_gate_to_approval_point(self, gate: str) -> Path:
+        state = self.store.load_state()
+        if gate == 'requirements':
+            gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
+            if not gate_path.exists():
+                raise FileNotFoundError(f'Requirements gate not found: {gate_path}')
+            state['currentStep'] = 'WAITING_REQUIREMENTS_ACCEPTANCE'
+            state['requirementsAccepted'] = False
+            state.pop('requirementsAcceptedHash', None)
+            state.pop('requirementsAcceptedBy', None)
+        elif gate == 'unit-plan':
+            gate_path = self.approvals_dir / 'unit-plan.md'
+            if not gate_path.exists():
+                raise FileNotFoundError(f'Unit plan gate not found: {gate_path}')
+            state['currentStep'] = 'WAITING_UNIT_PLAN_APPROVAL'
+            state['unitPlanAccepted'] = False
+            state.pop('unitPlanAcceptedHash', None)
+            state.pop('unitPlanAcceptedBy', None)
+            state.pop('unitPlanAcceptedAt', None)
+        else:
+            raise ValueError(f'Unsupported gate revision: {gate}')
+        state['status'] = 'active'
+        state['blockedReason'] = None
+        state.pop('blockedContext', None)
+        self.store.append_event('human_gate_returned_to_approval_point', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'gate': gate,
+            'path': str(gate_path),
+        })
+        self._save_state(state)
+        return gate_path
 
     def _revision_feedback_for_gate(self, gate: str, gate_path: Path) -> str:
         feedback, _ = self._revision_feedback_and_annotations_for_gate(gate, gate_path)
@@ -3138,6 +3334,68 @@ class RalphRefinerController:
             self._record_recoverable_agent_wait(state, action, exc)
             self._save_state(state)
             return state
+        except KeyboardInterrupt:
+            state = self.store.load_state()
+            action = compute_next_allowed_action(state)
+            return self._record_human_interrupt(state, action=action)
+
+    def _record_human_interrupt(self, state: dict[str, Any], *, action: str | None) -> dict[str, Any]:
+        interrupted_step = str(state.get('currentStep') or '')
+        interrupted_action = str(action or compute_next_allowed_action(state) or '')
+        tmux_result = self._attempt_tmux_human_interrupt(state)
+        state['status'] = 'blocked'
+        state['blockedReason'] = (
+            'Human interrupted automatic execution with Ctrl+C; choose a recovery route before continuing.'
+        )
+        state['blockedContext'] = {
+            'category': 'human_interrupt',
+            'interrupted_step': interrupted_step,
+            'interrupted_action': interrupted_action,
+            'tmux_interruption': tmux_result,
+            'recorded_at': datetime.now(timezone.utc).isoformat(),
+        }
+        self.store.append_event('human_interrupt_recorded', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'interrupted_step': interrupted_step,
+            'interrupted_action': interrupted_action,
+            'tmux_interruption': tmux_result,
+        })
+        self._save_state(state)
+        return state
+
+    def _attempt_tmux_human_interrupt(self, state: dict[str, Any]) -> dict[str, Any]:
+        tmux_target = str(state.get('tmuxTarget') or '').strip()
+        if not tmux_target:
+            return {'status': 'missing_target'}
+        workspace_dir = _agent_guide_workspace_dir(
+            explicit_workspace=self.workspace_dir,
+            state_dir=self.state_dir,
+            state=state,
+        )
+        tmux_command = _tmux_command_for_controller(str(state.get('agentCommand') or self.agent_command or 'tmux'))
+        command = [*tmux_command, 'send-keys', '-t', tmux_target, 'C-c']
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=workspace_dir,
+                text=True,
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except Exception as exc:
+            return {
+                'status': 'failed',
+                'tmux_target': tmux_target,
+                'error': str(exc),
+            }
+        return {
+            'status': 'sent' if completed.returncode == 0 else 'failed',
+            'tmux_target': tmux_target,
+            'returncode': completed.returncode,
+            'stderr': _redact_sensitive_text((completed.stderr or '').strip()),
+        }
 
     def _auto_resume_recoverable_agent_wait(
         self,
@@ -4242,7 +4500,10 @@ class RalphRefinerController:
             action = compute_next_allowed_action(state)
             before_key = _automatic_progress_key(state, action)
             previous_step = state.get('currentStep')
-            state = self.run_once()
+            try:
+                state = self.run_once()
+            except KeyboardInterrupt:
+                state = self._record_human_interrupt(state, action=action)
             steps += 1
             if state.get('recoverableAgentWait'):
                 break
@@ -4358,10 +4619,13 @@ class RalphRefinerController:
                 if action == 'run_verifier'
                 else None
             )
-            if verification_progress_callback is not None and _uses_default_run_once(self):
-                state = self._run_once(verification_progress_callback=verification_progress_callback)
-            else:
-                state = self.run_once()
+            try:
+                if verification_progress_callback is not None and _uses_default_run_once(self):
+                    state = self._run_once(verification_progress_callback=verification_progress_callback)
+                else:
+                    state = self.run_once()
+            except KeyboardInterrupt:
+                state = self._record_human_interrupt(state, action=action)
             elapsed_seconds = time.monotonic() - started_at
             steps += 1
             if compact_reporter is not None:
@@ -4622,6 +4886,9 @@ class RalphRefinerController:
             'can_revise': can_revise,
             'can_rework': can_rework,
         }
+        if gate in {'requirements', 'unit-plan'}:
+            self._ensure_pending_gate_review_baseline(state, gate, path)
+            self._save_state(state)
         annotation_info = _annotation_review_info_for_gate(
             state,
             artifacts_dir=self.artifacts_dir,
@@ -4645,6 +4912,117 @@ class RalphRefinerController:
                 gate_info['prototype_review_manifest_path'] = prototype_review_manifest_path
                 gate_info['prototype_review_prototypes_dir'] = prototypes_dir
         return gate_info
+
+    def _merge_human_gate_review_notes_to_draft(self, gate_info: dict[str, Any]) -> dict[str, Any]:
+        gate = str(gate_info.get('gate') or '').strip()
+        if gate not in {'requirements', 'unit-plan'}:
+            raise ValueError('draft merge only applies to requirements and unit-plan gates')
+        gate_path = Path(gate_info['path'])
+        state = self.store.load_state()
+        before_body = gate_body(gate_path.read_text(encoding='utf-8'))
+        before_hash = hash_gate_body(before_body)
+        notes = approval_notes_for_gate(state, gate) or {}
+        run_id = f'{gate}-draft-merge-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+        draft_dir = self.artifacts_dir / 'gate-draft-merge' / run_id
+        draft_dir.mkdir(parents=True, exist_ok=True)
+        draft_body_path = draft_dir / 'draft-body.md'
+        prompt_path = draft_dir / 'prompt.md'
+        summary_path = draft_dir / 'summary.json'
+        prompt_path.write_text(
+            _render_gate_draft_merge_prompt(
+                gate=gate,
+                gate_path=gate_path,
+                draft_body_path=draft_body_path,
+                before_body=before_body,
+                notes=notes,
+            ),
+            encoding='utf-8',
+        )
+
+        runner_status = 'local-template'
+        if state.get('agentRunner') in {'tmux-claude', 'tmux-codex'} and (
+            state.get('executionWorkspacePath') or state.get('workspacePath')
+        ):
+            runner = make_runner(state)
+            workspace_path = Path(str(state.get('executionWorkspacePath') or state.get('workspacePath')))
+            result = run_agent_backend(RunnerRequest(
+                backend=runner.backend,
+                workspace_dir=workspace_path,
+                prompt_path=prompt_path,
+                artifact_dir=draft_dir,
+                unit_id=run_id,
+                agent_command=runner.agent_command,
+                tmux_target=runner.tmux_target,
+                role=runner.role,
+                env=runner.env,
+                timeout_seconds=int(state.get('gateDraftMergeTimeoutSeconds') or 1800),
+            ))
+            runner_status = result.status
+            summary_path.write_text(
+                json.dumps(
+                    {
+                        'status': result.status,
+                        'mode': result.backend,
+                        'runner_run_dir': str(result.run_dir),
+                        'done_path': str(result.done_path) if result.done_path else None,
+                        'done_payload': result.done_payload,
+                        'exit_code': result.returncode,
+                        'stdout': result.stdout,
+                        'stderr': result.stderr,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            if result.returncode != 0 or not draft_body_path.exists():
+                payload = {
+                    'gate': gate,
+                    'status': 'failed',
+                    'runner_status': result.status,
+                    'gate_path': str(gate_path),
+                    'prompt_path': str(prompt_path),
+                    'summary_path': str(summary_path),
+                    'before_hash': before_hash,
+                    'generated_at': datetime.now(timezone.utc).isoformat(),
+                }
+                state.setdefault('gateDraftMerge', {})[gate] = payload
+                self.store.append_event('gate_draft_merge_failed', {
+                    'task_id': state.get('task_id'),
+                    **payload,
+                })
+                self._save_state(state)
+                raise RuntimeError(f'gate draft merge runner failed: {summary_path}')
+        else:
+            draft_body_path.write_text(_local_gate_draft_merge_body(before_body, notes), encoding='utf-8')
+            summary_path.write_text(
+                json.dumps({'status': 'ok', 'mode': 'local-template'}, ensure_ascii=False, indent=2) + '\n',
+                encoding='utf-8',
+            )
+
+        draft_body = draft_body_path.read_text(encoding='utf-8')
+        after_hash = hash_gate_body(draft_body)
+        payload = {
+            'gate': gate,
+            'status': 'draft_created',
+            'runner_status': runner_status,
+            'gate_path': str(gate_path),
+            'prompt_path': str(prompt_path),
+            'summary_path': str(summary_path),
+            'draft_body_path': str(draft_body_path),
+            'before_hash': before_hash,
+            'after_hash': after_hash,
+            'gate_remains_pending': True,
+            'generated_at': datetime.now(timezone.utc).isoformat(),
+        }
+        state.setdefault('gateDraftMerge', {})[gate] = payload
+        self.store.append_event('gate_draft_merge_created', {
+            'task_id': state.get('task_id'),
+            **payload,
+        })
+        self._save_state(state)
+        return payload
 
     def _handle_drive_gate(
         self,
@@ -4684,6 +5062,8 @@ class RalphRefinerController:
         output_func('    v  使用 Plannotator 辅助审阅')
         output_func('    a  确认通过并继续')
         if gate_info.get('can_revise'):
+            output_func('    i  根据批注整理正文草案')
+            output_func('    m  采纳我已修改的正文并继续')
             output_func('    r  我已写批注，让 Claude 重新生成')
         if gate_info.get('can_rework'):
             output_func('    r  验收不通过，带批注返工')
@@ -4792,7 +5172,11 @@ class RalphRefinerController:
                     status = decision.get('status')
                     if status == 'approved':
                         try:
-                            self.approve_human_gate(str(gate_info['gate']), actor=actor)
+                            self.approve_human_gate(
+                                str(gate_info['gate']),
+                                actor=actor,
+                                approval_notes=decision,
+                            )
                         except ValueError as exc:
                             output_func(f"[确认] {gate_info['label']} 无法确认：{_gate_reason_label(str(exc))}")
                             if self._auto_revise_gate_after_validation_error(gate_info, exc, output_func):
@@ -4872,6 +5256,36 @@ class RalphRefinerController:
                     continue
                 output_func(f"[确认] {gate_info['label']} 已确认，继续推进。")
                 return True
+            if choice in {'i', 'merge-draft', 'draft'} and gate_info.get('can_revise'):
+                try:
+                    payload = self._merge_human_gate_review_notes_to_draft(gate_info)
+                except Exception as exc:
+                    output_func(f'[草案] 无法整理正文草案：{exc}')
+                    continue
+                output_func(
+                    '[草案] 已根据批注整理正文草案；gate remains pending，'
+                    f"请继续人工审阅：{payload.get('draft_body_path')}"
+                )
+                continue
+            if choice in {'m', 'manual', 'adopt'} and gate_info.get('can_revise'):
+                output_func('  采纳原因（可留空；已有 approval notes 时也可通过）：')
+                try:
+                    adoption_reason = input_func('reason> ').strip()
+                except (EOFError, StopIteration):
+                    output_func('[采纳] 未收到采纳原因，仍停在人工确认点。')
+                    return False
+                try:
+                    self.approve_human_gate(
+                        str(gate_info['gate']),
+                        actor=actor,
+                        reason=adoption_reason or None,
+                        manual_adoption=True,
+                    )
+                except ValueError as exc:
+                    output_func(f'[采纳] 无法采纳：{_gate_reason_label(str(exc))}')
+                    continue
+                output_func(f"[采纳] {gate_info['label']} 已采纳人工编辑正文并继续。")
+                return True
             if choice in {'r', 'revise'} and gate_info.get('can_revise'):
                 self._print_compact_revision_status(gate_info, source='human')
                 try:
@@ -4908,7 +5322,7 @@ class RalphRefinerController:
             if choice in {'q', 'quit', 'exit'}:
                 output_func('[退出] 已停止在人工确认点。')
                 return False
-            output_func('[提示] 请输入 v / a / r / p / q。')
+            output_func('[提示] 请输入 v / a / i / m / r / p / q。')
 
     def _send_human_review_tmux_reminder(self, state: dict[str, Any], gate: str) -> None:
         if state.get('status') in TERMINAL_WORKFLOW_STATUSES:
@@ -5411,6 +5825,7 @@ UNBLOCK_ALLOWED_CATEGORIES = {
     'environment',
     'external_dependency',
     'final_acceptance_blocked',
+    'human_interrupt',
     'requirements_stage_validation',
 }
 UNBLOCK_ALLOWED_CATEGORIES.add('annotation_runtime')
@@ -6079,6 +6494,21 @@ def format_stop_guidance(
                     ),
                 ]
             )
+        elif category == 'human_interrupt':
+            lines.extend(
+                [
+                    _guidance_line(
+                        '下一步',
+                        '这是人工 Ctrl+C 中断；确认 agent pane 已停止或已安全收敛后，可选择 c 继续同一阶段，或选择 u/r/k/q 进入 Unit Plan、Requirements、保持阻塞或退出路线。',
+                        label_style='yellow',
+                        color_enabled=color_enabled,
+                    ),
+                    _guidance_command_line(
+                        f'{_command_with_state("unblock", state_dir)} --reason "human confirmed interrupted agent is safe to resume"',
+                        color_enabled=color_enabled,
+                    ),
+                ]
+            )
         elif _blocked_category_allows_unblock(category):
             lines.extend(
                 [
@@ -6551,6 +6981,67 @@ def _markdown_section_for_index(lines: list[str], index: int) -> str:
         if re.match(r'^#{1,6}\s+\S', line):
             return line
     return '(document)'
+
+
+def _render_gate_draft_merge_prompt(
+    *,
+    gate: str,
+    gate_path: Path,
+    draft_body_path: Path,
+    before_body: str,
+    notes: dict[str, Any],
+) -> str:
+    return f"""Merge approval notes into a proposed {gate} gate body draft.
+
+Write the revised Markdown body to this exact file:
+{draft_body_path}
+
+Rules:
+- Do not approve the gate.
+- Do not write a Human Confirmation block.
+- Keep this as a draft for human review.
+- Approval notes are non-contract context. The approved or pending gate body wins on conflict.
+- Do not create Acceptance Obligations, Acceptance Criteria, Journeys, test cases, scope, or contract truth from notes unless they are explicitly edited into the body.
+
+Gate path: {gate_path}
+
+Current body:
+
+```md
+{before_body}
+```
+
+Approval notes:
+
+```json
+{json.dumps(notes, ensure_ascii=False, indent=2)}
+```
+"""
+
+
+def _local_gate_draft_merge_body(before_body: str, notes: dict[str, Any]) -> str:
+    reason = str(notes.get('reason') or '').strip()
+    feedback = str(notes.get('feedback') or '').strip()
+    annotations = notes.get('annotations') if isinstance(notes.get('annotations'), list) else []
+    lines = [before_body.rstrip(), '', '## Approval Notes Draft Merge', '']
+    lines.append('> Draft only. Gate remains pending until a human reviews and approves it.')
+    lines.append('> Approval notes are non-contract context; approved gate body wins on conflict.')
+    if reason:
+        lines.extend(['', f'- Reason: {reason}'])
+    if feedback:
+        lines.extend(['', '- Feedback:', '', feedback])
+    if annotations:
+        lines.extend([
+            '',
+            '- Annotations:',
+            '',
+            '```json',
+            json.dumps(annotations, ensure_ascii=False, indent=2),
+            '```',
+        ])
+    if not reason and not feedback and not annotations:
+        lines.extend(['', '- No approval notes were available; this draft only records a pending review pass.'])
+    return '\n'.join(lines).rstrip() + '\n'
 
 
 def _append_unique(target: list[str], values: list[str]) -> None:
@@ -8024,7 +8515,17 @@ def _extract_plannotator_decision(output: str) -> dict[str, Any]:
         saw_json = True
         decision = str(payload.get('decision') or '').strip().lower()
         if decision in {'approved', 'approve'}:
-            return {'status': 'approved'}
+            decision_payload: dict[str, Any] = {'status': 'approved'}
+            annotations = payload.get('annotations')
+            if isinstance(annotations, list):
+                decision_payload['annotations'] = annotations
+            feedback = str(payload.get('feedback') or '').strip()
+            reason = str(payload.get('reason') or '').strip()
+            if feedback:
+                decision_payload['feedback'] = feedback
+            if reason:
+                decision_payload['reason'] = reason
+            return decision_payload
         if decision in {'exit', 'closed', 'close', 'dismissed', 'cancelled', 'canceled'}:
             return {'status': 'closed'}
         annotations = payload.get('annotations')
@@ -8774,6 +9275,7 @@ def parse_args() -> argparse.Namespace:
         help='Markdown human gate to approve',
     )
     approve_parser.add_argument('--actor', default='human', help='Name recorded in the Human Confirmation block')
+    approve_parser.add_argument('--reason', default=None, help='Human reason for adopting an edited gate body')
 
     revise_parser = subparsers.add_parser(
         'revise',
@@ -9011,7 +9513,12 @@ def main() -> None:
 
     if args.command == 'approve':
         try:
-            gate_path = controller.approve_human_gate(args.gate, actor=args.actor)
+            gate_path = controller.approve_human_gate(
+                args.gate,
+                actor=args.actor,
+                reason=getattr(args, 'reason', None),
+                manual_adoption=bool(str(getattr(args, 'reason', None) or '').strip()),
+            )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
@@ -9020,6 +9527,7 @@ def main() -> None:
 
     if args.command == 'revise':
         try:
+            pending_only = not str(getattr(args, 'reason', None) or '').strip() and not getattr(args, 'checkpoint', None)
             checkpoint = resolve_revise_checkpoint_arg(args)
             gate_path = controller.revise_human_gate(
                 args.gate,
@@ -9030,7 +9538,8 @@ def main() -> None:
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
-        print(f'gate={args.gate} status=revised path={gate_path}')
+        status = 'pending-approval' if pending_only else 'revised'
+        print(f'gate={args.gate} status={status} path={gate_path}')
         return
 
     if args.command == 'migrate':

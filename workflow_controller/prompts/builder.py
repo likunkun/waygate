@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from workflow_controller.approval_notes import render_approval_notes_context
 from workflow_controller.steps._common import (
     _current_unit_last_failure,
     _find_unit,
@@ -62,6 +63,7 @@ Machine-readable DONE_FILE fields and stdout/stderr evidence markers are part of
 
 {previous_failure_feedback}
 """
+    approval_notes_section = render_approval_notes_context(state, 'requirements', 'unit-plan')
     return f"""You are executing one approved workflow-controller unit.
 
 Use the approved human gate documents as the source of truth. Do not expand scope beyond them.
@@ -97,6 +99,8 @@ Approved unit plan gate: {unit_plan_path}
 ```md
 {unit_plan_content}
 ```
+
+{approval_notes_section}
 
 Original target prompt/context: {original_prompt_path}
 
