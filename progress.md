@@ -2,6 +2,13 @@
 
 ## 会话：2026-06-02
 
+### V0.6.2f Final Acceptance 终验同步
+- **状态：** Final Acceptance approved; human-readable status synced.
+- Controller state `.rrc-controller-v0.6.2f/session.json` 显示 `finalAcceptanceAccepted=true`、确认人为 `human`，目标 `Complete V0.6.2f development acceptance using current planning progress` 已 `covered`，单元 `target-v0-6-2f` 已 `passes=true`。
+- Final Acceptance evidence matrix 中 AC-V062F-001 至 AC-V062F-009 均 passed；Final Scope Audit 显示 AC coverage `9/9`、Journey coverage `7/7`、AO coverage `1/1`、unexplained changed files `0`。
+- 必需文档 deliverables 均为 present，`docs/README.md` 已登记 V0.6.2f workflow / architecture 文档；本同步更新了 `ROADMAP.md`、`ROADMAP.zh-CN.md`、`task_plan.md` 和 `progress.md`。
+- 未发现需要新增到 `findings.md` 的 workflow decision、defect 或 risk；除本轮 `DONE_FILE` 外，本次只写 final sync summary artifact。
+
 ### V0.6.2e `--spec` 文档包目录 intake
 - **状态：** implementation verified; focused/full regression passed; Debian package rebuilt as `0.6.2e`.
 - 修复：`--spec` 现在可导入 Open Spec 文档包目录，要求 `01-requirements.md` 且至少包含 `02-specification.md`、`03-technical-solution.md`、`04-storage-design.md` 或 `08-stage-handoff.md` 之一；`requirementsSpec.path` 保存目录路径，hash 覆盖目录内容。
