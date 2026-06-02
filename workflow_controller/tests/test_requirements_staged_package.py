@@ -92,6 +92,7 @@ def _scope_with_e2e_journey(*, status: str = 'active', layer: str = 'e2e') -> st
 def _requirements_4_6_matrix(
     row_ids: str = 'J-V04-001',
     *,
+    entrypoint: str = '`/teacher/course-production` production route',
     command: str = (
         '`pnpm exec playwright test tests/e2e/classroom-v04.spec.ts '
         '--project=chromium --grep @J-V04-001`'
@@ -101,7 +102,7 @@ def _requirements_4_6_matrix(
         '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）\n'
         '| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |\n'
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
-        f'| {row_ids} | Playwright browser test in Chromium against local app | `/teacher/course-production` production route | Open `/teacher/course-production` -> inspect status row -> confirm chapter count | Seed classroom fixture `tests/fixtures/classroom-v04.json` and teacher user `teacher@example.test` | {command} | local_real | local app server and seeded SQLite test DB | No core API mocks; no `page.route("**/api/**")`; external services use test account only | Assert persisted status `ready`, chapter count 3, and visible row count 1 | Reviewer confirms route, fixture, command, env, mock policy, and assertions before approval |\n'
+        f'| {row_ids} | Playwright browser test in Chromium against local app | {entrypoint} | Open `/teacher/course-production` -> inspect status row -> confirm chapter count | Seed classroom fixture `tests/fixtures/classroom-v04.json` and teacher user `teacher@example.test` | {command} | local_real | local app server and seeded SQLite test DB | No core API mocks; no `page.route("**/api/**")`; external services use test account only | Assert persisted status `ready`, chapter count 3, and visible row count 1 | Reviewer confirms route, fixture, command, env, mock policy, and assertions before approval |\n'
     )
 
 
@@ -711,6 +712,59 @@ def test_test_strategy_stage_validation_accepts_fixed_4_6_matrix_covering_scope_
     mark_stage_artifact(state, 'test_strategy', test_strategy_path)
 
     validate_staged_requirements_stage_output(state, tmp_path / 'artifacts', 'test_strategy')
+
+
+@pytest.mark.parametrize(
+    'entrypoint',
+    [
+        '`/customer/course-production`',
+        '`/student/courses`',
+        '`/customer/courses/:courseId/progress`',
+    ],
+)
+def test_test_strategy_stage_validation_accepts_inline_code_route_entrypoint(
+    tmp_path: Path,
+    entrypoint: str,
+) -> None:
+    state: dict = {}
+    scope_path = _write_artifact(tmp_path, 'scope.md', _scope_with_e2e_journey())
+    test_strategy_path = _write_artifact(
+        tmp_path,
+        'test-strategy.md',
+        '# Requirements Test Strategy Brief\n\n'
+        + _requirements_4_6_matrix('J-V04-001', entrypoint=entrypoint),
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+    mark_stage_artifact(state, 'test_strategy', test_strategy_path)
+
+    validate_staged_requirements_stage_output(state, tmp_path / 'artifacts', 'test_strategy')
+
+
+@pytest.mark.parametrize(
+    'entrypoint',
+    [
+        '`artifacts/requirements-draft/prototype-review.html`',
+        '`artifacts/requirements-draft/prototypes/course/index.html` artifact only',
+        '`artifacts/screenshots/course-flow.png` screenshot',
+    ],
+)
+def test_test_strategy_stage_validation_rejects_artifact_only_entrypoints(
+    tmp_path: Path,
+    entrypoint: str,
+) -> None:
+    state: dict = {}
+    scope_path = _write_artifact(tmp_path, 'scope.md', _scope_with_e2e_journey())
+    test_strategy_path = _write_artifact(
+        tmp_path,
+        'test-strategy.md',
+        '# Requirements Test Strategy Brief\n\n'
+        + _requirements_4_6_matrix('J-V04-001', entrypoint=entrypoint),
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+    mark_stage_artifact(state, 'test_strategy', test_strategy_path)
+
+    with pytest.raises(ValueError, match='Real Entrypoint must be a real route'):
+        validate_staged_requirements_stage_output(state, tmp_path / 'artifacts', 'test_strategy')
 
 
 def test_test_strategy_stage_validation_accepts_4_6_command_intent_without_exact_command(
@@ -1541,6 +1595,43 @@ def test_stage_validation_auto_rework_blocks_after_same_reason_budget(
     assert len(blocked_events) == 1
     assert blocked_events[0]['payload']['consecutive_attempts'] == 3
     assert blocked_events[0]['payload']['total_attempts'] == 2
+
+
+def test_drive_stage_validation_auto_rework_prints_rework_notice(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(_stage_auto_revision_state(tmp_path), force=True)
+    reason = (
+        'J-V04-005 Requirements 4.6 Real Entrypoint must be a real route, URL, '
+        'page, command, or service entrypoint'
+    )
+
+    def fail_test_strategy_stage(*_args, stage: str, **_kwargs):
+        assert stage == 'test_strategy'
+        raise ValueError(reason)
+
+    monkeypatch.setattr(rrc_controller_module, 'run_requirements_package_stage', fail_test_strategy_stage)
+    output: list[str] = []
+
+    result = controller.drive(
+        max_steps=1,
+        input_func=lambda _prompt: (_ for _ in ()).throw(EOFError),
+        output_func=output.append,
+        timestamp_output=False,
+        print_agent_target=False,
+    )
+
+    rendered = '\n'.join(output)
+    assert result['status'] == 'active'
+    assert result['currentStep'] == 'REQUIREMENTS_TEST_STRATEGY_BRIEF'
+    assert '[修订] Requirements' in rendered
+    assert '需求测试策略简报' in rendered
+    assert '已自动打回' in rendered
+    assert 'attempt 1/2' in rendered
+    assert 'Real Entrypoint must be a real route' in rendered
 
 
 def test_stage_validation_does_not_auto_rework_after_requirements_approved(

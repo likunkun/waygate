@@ -2459,8 +2459,9 @@ def _requirements_e2e_entrypoint_is_real(value: str) -> bool:
     invalid_markers = ['requirements-draft', 'prototype-review', 'prototype manifest', 'screenshot', '截图', 'artifact only']
     if any(marker in normalized for marker in invalid_markers):
         return False
+    clean_value = re.sub(r'[`*_]+', '', str(value or '')).strip()
     return bool(
-        re.search(r'https?://|(?:^|\s)/[A-Za-z0-9_./:-]+', value)
+        re.search(r'https?://|(?:^|\s)/[A-Za-z0-9_./:-]+', clean_value)
         or any(marker in normalized for marker in ['route', 'url', 'page', 'command', 'cli', 'service', '生产', '真实'])
     )
 

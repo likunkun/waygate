@@ -601,7 +601,8 @@ def test_prototype_preview_server_allows_fixed_port_override(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv('WAYGATE_PREVIEW_PORT', '20002')
+    fixed_port = _find_free_port()
+    monkeypatch.setenv('WAYGATE_PREVIEW_PORT', str(fixed_port))
     monkeypatch.setattr(networking, 'detect_primary_ip_address', lambda: '192.0.2.44')
     draft_dir = tmp_path / 'artifacts' / 'requirements-draft'
     prototypes_dir = draft_dir / 'prototypes'
@@ -621,7 +622,7 @@ def test_prototype_preview_server_allows_fixed_port_override(
         approval_gate_path=approval_path,
     )
     try:
-        assert server.preview_url == 'http://192.0.2.44:20002/plannotator-review.html'
+        assert server.preview_url == f'http://192.0.2.44:{fixed_port}/plannotator-review.html'
     finally:
         server.close()
 

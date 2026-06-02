@@ -3112,6 +3112,17 @@ class RalphRefinerController:
             'attempt': consecutive_attempts,
             'total_attempt': total_attempts,
         })
+        output_func = getattr(self, '_drive_progress_callback', None)
+        if output_func is not None:
+            display_stage = _requirements_stage_display_name(stage)
+            output_func(
+                _format_auto_revision_message(
+                    gate_label='Requirements',
+                    action_label=f'{display_stage} 已自动打回（attempt {consecutive_attempts}/{max_revisions}）',
+                    reason=_gate_reason_label(reason),
+                    color_enabled=bool(getattr(self, '_drive_color_enabled', False)),
+                )
+            )
         self._save_state(state)
         return state
 
