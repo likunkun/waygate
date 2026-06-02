@@ -3246,10 +3246,15 @@ def test_revise_cli_rejects_checkpoint_for_unit_plan(tmp_path: Path) -> None:
     assert '--checkpoint only applies to --gate requirements' in result.stderr
 
 
-def test_revise_cli_non_tty_requires_reason_or_checkpoint(tmp_path: Path) -> None:
+def test_revise_cli_non_tty_without_reason_returns_to_approval_point(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
     _init_staged_revision_fixture(controller, state_dir, tmp_path)
+    before = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    before_statuses = {
+        stage: record['status']
+        for stage, record in before['requirementsPackage']['artifacts'].items()
+    }
 
     result = run_rrc(
         'revise',
@@ -3259,8 +3264,16 @@ def test_revise_cli_non_tty_requires_reason_or_checkpoint(tmp_path: Path) -> Non
         'requirements',
     )
 
-    assert result.returncode == 1
-    assert 'waygate revise --gate requirements --checkpoint product-design --reason' in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert 'gate=requirements status=pending-approval' in result.stdout
+    state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    after_statuses = {
+        stage: record['status']
+        for stage, record in state['requirementsPackage']['artifacts'].items()
+    }
+    assert after_statuses == before_statuses
+    assert 'requirementsRevisionCount' not in state
 
 
 def test_rrc_go_inside_tmux_auto_creates_claude_pane(

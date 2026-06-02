@@ -1337,7 +1337,15 @@ raise SystemExit(0)
         encoding='utf-8',
     )
 
-    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'requirements')
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--reason',
+        'please add retry path',
+    )
 
     assert result.returncode == 0, result.stderr
     assert 'gate=requirements status=revised' in result.stdout
@@ -1396,7 +1404,8 @@ raise SystemExit(0)
     assert change_request['source'] == 'requirements_revision'
     assert change_request['source_gate'] == 'requirements'
     assert change_request['source_ref'] == 'requirements:revision-1'
-    assert change_request['reason'].startswith('# Requirements & Acceptance Confirmation')
+    assert change_request['reason'].startswith('## Human Change Reason')
+    assert '# Requirements & Acceptance Confirmation' in change_request['reason']
     assert 'please add retry path' in change_request['reason']
     assert change_request['status'] == 'pending_requirements_approval'
     assert change_request['approver'] is None
@@ -1511,7 +1520,15 @@ raise SystemExit(0)
         encoding='utf-8',
     )
 
-    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'requirements')
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--reason',
+        'please remove the Baidu unit before regenerating requirements.',
+    )
 
     assert result.returncode == 0, result.stderr
     gate_content = (state_dir / 'approvals' / 'requirements-and-acceptance.md').read_text(encoding='utf-8')
@@ -1616,7 +1633,15 @@ raise SystemExit(0)
         encoding='utf-8',
     )
 
-    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'requirements')
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--reason',
+        'revise from Plannotator annotations',
+    )
 
     assert result.returncode == 0, result.stderr
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
@@ -1716,7 +1741,15 @@ raise SystemExit(0)
         encoding='utf-8',
     )
 
-    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'requirements')
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--reason',
+        'use Plannotator feedback for requirements obligations',
+    )
 
     assert result.returncode == 0, result.stderr
     state = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
@@ -1763,7 +1796,15 @@ def test_revise_requirements_gate_can_rewind_from_unit_plan_approval(tmp_path: P
         encoding='utf-8',
     )
 
-    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'requirements')
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'requirements',
+        '--reason',
+        'Requirements need one more revision note.',
+    )
 
     assert result.returncode == 0, result.stderr
     assert 'gate=requirements status=revised' in result.stdout
@@ -2139,7 +2180,15 @@ raise SystemExit(0)
         encoding='utf-8',
     )
 
-    result = run_rrc('revise', '--state-dir', str(state_dir), '--gate', 'unit-plan')
+    result = run_rrc(
+        'revise',
+        '--state-dir',
+        str(state_dir),
+        '--gate',
+        'unit-plan',
+        '--reason',
+        'please split closure evidence',
+    )
 
     assert result.returncode == 0, result.stderr
     assert 'gate=unit-plan status=revised' in result.stdout
