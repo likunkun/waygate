@@ -338,6 +338,24 @@ Delivered work:
 - Reject `.specify` workspace/tool roots and plain docs directories with guidance to pass `specs/<feature>/` or a concrete `spec.md`.
 - Update Requirements prompt/brief wording and the external spec intake workflow/architecture docs so package directories are treated as document packages, not single Markdown files.
 
+### V0.6.2f - Human Review Control and Interruption Recovery
+
+Goal: make human approval notes, draft adoption, interruption recovery, and review-surface evidence auditable without changing the approved body/hash contract.
+
+Status: final acceptance approved on 2026-06-02; implemented in package `0.6.2f`.
+
+Delivered work:
+
+- Persist Requirements and Unit Plan approval notes from Plannotator `decision=approved` payloads as audit artifacts and state indexes, while marking them as `non-contract context`.
+- Render approval notes into next-stage Unit Plan and Builder prompts under `Approval Notes Non-Contract Context`; approved gate body and hash remain the only contract truth.
+- Add Requirements and Unit Plan review menu actions `i` and `m`: `i` creates a pending draft from review notes, and `m` adopts a human-edited body only after hash-change, reason-or-notes, and deterministic validator checks pass.
+- Record rejected manual adoption attempts with structured reasons and keep legacy `a`, `r`, `v`, `p`, and `q` review behavior compatible.
+- Convert Ctrl+C in the controller drive loop into `status=blocked` with `blockedContext.category=human_interrupt`, interrupted step/action, tmux best-effort `C-c` result, and recovery guidance.
+- Split CLI semantics so `waygate approve --reason` enters the guarded manual adoption path, `waygate revise` without a reason returns to the existing approval point, and checkpoint revise without `--reason` is rejected.
+- Add review-bundle/prototype conformance evidence for the V0.6.2f surfaces and map each required surface to real Waygate terminal menu, CLI, state, artifact, prompt, docs, or review bundle targets.
+- Document the long-lived workflow rules in `docs/workflow/human-review-control-policy.md` and the module boundaries in `docs/architecture/human-review-control-architecture.md`.
+- Keep V0.6.3 Strict Test Presence / Per-Role Runner Configuration as future planned scope, not V0.6.2f delivery.
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.

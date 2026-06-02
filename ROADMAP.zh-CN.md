@@ -338,6 +338,24 @@
 - `.specify` 工具/工作区根目录和普通 docs 目录会被拒绝，并提示传入 `specs/<feature>/` 或具体 `spec.md`。
 - 更新 Requirements prompt/brief 以及 external spec intake workflow/architecture 文档，明确目录输入是文档包，不是单个 Markdown 文件。
 
+### V0.6.2f - Human Review Control and Interruption Recovery
+
+目标：让人工 approval notes、draft adoption、中断恢复和 review-surface evidence 可审计，同时不改变 approved body/hash 合同。
+
+状态：2026-06-02 终验已批准；已在 package `0.6.2f` 实施。
+
+已交付：
+
+- Requirements 和 Unit Plan 的 Plannotator `decision=approved` payload 中的 approval notes 会保存为 audit artifact 和 state index，并明确标记为 `non-contract context`。
+- 下一阶段 Unit Plan 和 Builder prompt 会在 `Approval Notes Non-Contract Context` 中渲染 approval notes；approved gate body 与 hash 仍是唯一合同事实。
+- Requirements / Unit Plan review menu 新增 `i` 和 `m`：`i` 根据 review notes 生成 pending draft；`m` 只在 hash changed、reason-or-notes、deterministic validator checks 三条件通过后采纳人工已编辑正文。
+- manual adoption 拒绝会记录结构化原因并保持 pending，同时兼容既有 `a`、`r`、`v`、`p`、`q` review 行为。
+- controller drive loop 中的 Ctrl+C 会写入 `status=blocked`、`blockedContext.category=human_interrupt`、interrupted step/action、tmux best-effort `C-c` 结果和恢复 guidance。
+- CLI 语义拆分：`waygate approve --reason` 走 guarded manual adoption；`waygate revise` 无 reason 返回现有 approval point；checkpoint revise 无 `--reason` 会被拒绝。
+- 新增 V0.6.2f review bundle / prototype conformance evidence，将 required surfaces 映射到真实 Waygate terminal menu、CLI、state、artifact、prompt、docs 或 review bundle targets。
+- 长期 workflow 规则沉淀到 `docs/workflow/human-review-control-policy.md`，模块边界沉淀到 `docs/architecture/human-review-control-architecture.md`。
+- V0.6.3 Strict Test Presence / Per-Role Runner Configuration 继续作为后续 planned scope，不属于 V0.6.2f 当前交付。
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。

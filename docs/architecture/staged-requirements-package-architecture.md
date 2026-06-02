@@ -1,6 +1,6 @@
 # Staged Requirements Package Architecture
 
-This document records the V0.6.2 architecture boundaries for Staged Requirements Package, including the V0.6.2a target-product perspective patch, V0.6.2b persistent prototype preview patch, V0.6.2c Chinese checkpoint / targeted revise patch, V0.6.2d unit continuity handoff gate, and V0.6.2e package-directory intake extension. It covers package helpers, target surface classification, checkpoint prompts, stage runner, controller orchestration, controller process-level prototype preview, final gate assembly, validators, Unit Plan prompt inheritance, unit handoff evidence, and revision routing.
+This document records the V0.6.2 architecture boundaries for Staged Requirements Package, including the V0.6.2a target-product perspective patch, V0.6.2b persistent prototype preview patch, V0.6.2c Chinese checkpoint / targeted revise patch, V0.6.2d unit continuity handoff gate, V0.6.2e package-directory intake extension, and V0.6.2f human review control handoff. It covers package helpers, target surface classification, checkpoint prompts, stage runner, controller orchestration, controller process-level prototype preview, final gate assembly, validators, Unit Plan prompt inheritance, unit handoff evidence, review-control prompt handoff, and revision routing.
 
 ## Module Boundaries
 
@@ -18,6 +18,7 @@ This document records the V0.6.2 architecture boundaries for Staged Requirements
 | Gate validation | `workflow_controller/gates/validators/__init__.py` | Validates staged package consistency, stage outputs, hash rows, appendices, E2E/browser contracts, prototype manifest references, legacy 4.9 compatibility, and Unit Plan gate requirements. |
 | Unit Plan handoff | `workflow_controller/prompts/unit_plan.py` | Injects staged package artifact path/hash/status metadata into the Unit Plan prompt and requires inherited AC, Journey, design, architecture, test strategy, E2E, UI, and risk obligations. |
 | Unit continuity gate | `workflow_controller/unit_handoff.py`, `workflow_controller/gates/validators/__init__.py`, `workflow_controller/steps/builder.py`, `workflow_controller/rrc_controller.py` | Validates `depends_on` and `handoff` metadata, writes producer `handoff-evidence.json`, and blocks downstream Builder with `unit_handoff` when dependency evidence is missing or failed. |
+| Human review control | `workflow_controller/approval_notes.py`, `workflow_controller/rrc_controller.py`, `workflow_controller/prompts/unit_plan.py`, `workflow_controller/prompts/builder.py`, `workflow_controller/cli.py` | Persists approval notes as non-contract audit context, renders `Approval Notes Non-Contract Context`, adds `i` draft merge and `m` guarded manual adoption, records `human_interrupt`, and splits `approve --reason` / `revise` CLI routes without changing the approved body/hash contract. |
 
 ## State Shape
 
@@ -124,6 +125,18 @@ V0.6.2d extends the same validator chain with unit continuity checks. `validate_
 `run_verifier()` writes `handoff-evidence.json` for producer units that declare handoff metadata. The artifact records pass/fail state, produced outputs, consumed inputs, ready checks, resolved evidence artifacts, and structured issues. `RalphRefinerController` checks dependency handoff evidence before `prepare_builder_prompt()` and `run_builder()`; failed or missing evidence sets `status=blocked`, `currentStep=EXECUTE_UNIT`, and `blockedContext.category=unit_handoff`.
 
 `RalphRefinerController._apply_and_validate_unit_plan_gate()` is the single Unit Plan gate helper. The drafter path applies it before annotation or human review, and the approval path applies it again after human approval. This keeps infrastructure matrix, final evidence candidates, golden path, real E2E, Journey, prototype, AO, AC, and walkthrough validation from diverging between preflight and approval revalidation.
+
+## Human Review Control Architecture
+
+V0.6.2f adds review-control state and artifacts beside the staged package state. `workflow_controller/approval_notes.py` owns normalization and rendering of approval notes. `RalphRefinerController.approve_human_gate()` accepts optional `approval_notes`, writes `.rrc-controller-*/artifacts/approval-notes/<gate>-<hash>.json`, and stores a lightweight `gateApprovalNotes.<gate>` index with the approved body hash. That hash is the boundary: notes are advisory and cannot update `requirementsAcceptedHash`, `unitPlanAcceptedHash`, AC extraction, Journey extraction, AO ledgers, or test case matrices.
+
+Prompt handoff reads `gateApprovalNotes` through `render_approval_notes_context()`. Requirements notes are rendered into the Unit Plan draft prompt, and Requirements plus Unit Plan notes are rendered into the Builder prompt under `Approval Notes Non-Contract Context`. Each block states that the approved gate body wins conflicts.
+
+The `i` review action records `gateDraftMerge.<gate>` with before/after hashes and a draft artifact path under `artifacts/gate-draft-merge/`. It keeps the gate pending and does not call the approval write path. The `m` action and `waygate approve --reason` share the guarded manual-adoption validator: current gate body hash must differ from `pendingGateReview.baseline_body_hash`, a reason or approval notes must exist, and the same deterministic gate validators must pass before the controller writes an approved hash.
+
+Ctrl+C handling is implemented at the controller loop boundary. The controller catches `KeyboardInterrupt`, records `status=blocked`, `blockedContext.category=human_interrupt`, interrupted step/action, occurred timestamp, and a best-effort tmux `send-keys C-c` result when a target pane is known. The recovery guidance treats `human_interrupt` as an auditable blocked category, not as a hidden agent failure.
+
+The dedicated architecture details live in `docs/architecture/human-review-control-architecture.md`.
 
 ## Revision Routing
 

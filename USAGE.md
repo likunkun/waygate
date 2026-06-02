@@ -12,7 +12,7 @@ V0.6.0m moves golden-path E2E mistakes earlier: Unit Plan approval rejects `gold
 
 V0.6.1 adds OpenSpec/OpenAPI and Spec Kit spec intake, non-approving annotation / verification-assist passes before human gates, and flexible verifier evidence rows with `human_review_required`.
 
-V0.6.2 splits Requirements drafting into focused scope, product design, architecture, and test strategy checkpoints, then assembles one final Requirements approval package with checkpoint hashes. V0.6.2a adds target surface classification so staged Product Design and Architecture stay centered on the target product/system. V0.6.2b starts a persistent prototype preview after Product Design succeeds and keeps that URL available through Requirements review. V0.6.2c uses Chinese-primary checkpoint names and supports targeted Requirements checkpoint revise. V0.6.2d adds hard Unit Plan handoff continuity checks so downstream Builder execution waits for passed upstream `handoff-evidence.json`. V0.6.2e extends `--spec` to real requirements package directories.
+V0.6.2 splits Requirements drafting into focused scope, product design, architecture, and test strategy checkpoints, then assembles one final Requirements approval package with checkpoint hashes. V0.6.2a adds target surface classification so staged Product Design and Architecture stay centered on the target product/system. V0.6.2b starts a persistent prototype preview after Product Design succeeds and keeps that URL available through Requirements review. V0.6.2c uses Chinese-primary checkpoint names and supports targeted Requirements checkpoint revise. V0.6.2d adds hard Unit Plan handoff continuity checks so downstream Builder execution waits for passed upstream `handoff-evidence.json`. V0.6.2e extends `--spec` to real requirements package directories. V0.6.2f adds approval-notes advisory context, guarded manual gate adoption, Ctrl+C human interruption recovery, and review-surface conformance evidence.
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.2e_all.deb
+sudo apt install ./dist/waygate_0.6.2f_all.deb
 waygate --help
 waygate doctor
 waygate doctor --color auto

@@ -2,6 +2,15 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2f
+
+- Plannotator approve payload 中的 Requirements / Unit Plan approval notes 会以 audit-only advisory context 持久化，并在下一阶段 prompt 的 `Approval Notes Non-Contract Context` 中注入。
+- 人工 gate menu 新增 `i` 与 `m`：`i` 只根据 review notes 生成 pending draft；`m` 只在正文 hash 已变化、存在 reason 或 notes、deterministic validator 通过时采纳人工已编辑正文。
+- 自动执行中的 Ctrl+C 会进入可审计 `blockedContext.category=human_interrupt` 状态，记录 tmux `C-c` best-effort 结果并展示恢复 guidance。
+- CLI review route 拆分：`waygate approve --reason` 走受控 manual adoption；`waygate revise` 无 reason 回到当前 approval point；checkpoint revise 继续要求 `--reason`。
+- 新增 V0.6.2f review bundle 与 prototype conformance evidence，覆盖 approval notes、draft merge、manual adoption、interruption recovery、revise routes、legacy review compatibility 和真实 Waygate target mapping。
+- README/USAGE/CHANGELOG/ROADMAP、正式 workflow/architecture 文档、verification scripts 和 package version metadata 同步到 `0.6.2f`，并保持 V0.6.3 Strict Test Presence / Per-Role Runner Configuration 为后续范围。
+
 ## 0.6.2e
 
 - 新增 `open-spec-package` intake，支持包含 `01-requirements.md` 且至少包含一个支撑文档的 Open Spec 文档包目录。

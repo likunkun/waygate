@@ -95,6 +95,8 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
     workflow_doc = _read('docs/workflow/staged-requirements-package-policy.md')
     handoff_doc = _read('docs/workflow/unit-continuity-handoff-policy.md')
     architecture_doc = _read('docs/architecture/staged-requirements-package-architecture.md')
+    review_policy_doc = _read('docs/workflow/human-review-control-policy.md')
+    review_architecture_doc = _read('docs/architecture/human-review-control-architecture.md')
     registry = _read('docs/README.md')
     roadmap = _read('ROADMAP.md')
     roadmap_zh = _read('ROADMAP.zh-CN.md')
@@ -115,6 +117,8 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
         'requirementsSurfaceClassification',
         'target product UX',
         'unit_handoff',
+        'human review control',
+        'Approval Notes Non-Contract Context',
     ]:
         assert expected in workflow_doc
 
@@ -131,6 +135,8 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
         'Requirements checkpoint revise',
         'workflow_controller/unit_handoff.py',
         'handoff-evidence.json',
+        'workflow_controller/approval_notes.py',
+        'human_interrupt',
     ]:
         assert expected in architecture_doc
 
@@ -147,14 +153,43 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
 
     assert 'docs/workflow/staged-requirements-package-policy.md' in registry
     assert 'docs/workflow/unit-continuity-handoff-policy.md' in registry
+    assert 'docs/workflow/human-review-control-policy.md' in registry
     assert 'docs/architecture/staged-requirements-package-architecture.md' in registry
-    assert 'V0.6.2e' in registry
+    assert 'docs/architecture/human-review-control-architecture.md' in registry
+    assert 'V0.6.2f' in registry
     assert 'open-spec-package' in registry
+    for expected in [
+        'Approval Notes Non-Contract Context',
+        'AO-001',
+        'non-contract context',
+        'approved gate body wins',
+        'blockedContext.category=human_interrupt',
+        'waygate approve --reason',
+        'waygate revise',
+        'legacy',
+        'review-bundle/prototype conformance',
+        'V0.6.3 Strict Test Presence',
+    ]:
+        assert expected in review_policy_doc
+    for expected in [
+        'workflow_controller/approval_notes.py',
+        'workflow_controller/rrc_controller.py',
+        'workflow_controller/prompts/unit_plan.py',
+        'workflow_controller/prompts/builder.py',
+        'gateApprovalNotes',
+        'gateDraftMerge',
+        'pendingGateReview.baseline_body_hash',
+        'blockedContext.category=human_interrupt',
+        'human_interrupt_recorded',
+        'review-bundle',
+    ]:
+        assert expected in review_architecture_doc
     assert 'V0.6.2 - Staged Requirements Package' in roadmap
     assert 'V0.6.2a - Staged Requirements Target Product Perspective' in roadmap
     assert 'V0.6.2c - Chinese Checkpoint Names and Targeted Revise' in roadmap
     assert 'V0.6.2d - Unit Continuity Gate' in roadmap
     assert 'V0.6.2e - Requirements Package Directory Intake' in roadmap
+    assert 'V0.6.2f - Human Review Control and Interruption Recovery' in roadmap
     assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap
     assert 'Merge the original V0.6.2 Strict Test Presence scope into V0.6.3.' in roadmap
     assert 'V0.6.2 - Staged Requirements Package' in roadmap_zh
@@ -162,6 +197,7 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
     assert 'V0.6.2c - 中文 Checkpoint 命名与定点 Revise' in roadmap_zh
     assert 'V0.6.2d - Unit Continuity Gate' in roadmap_zh
     assert 'V0.6.2e - Requirements Package Directory Intake' in roadmap_zh
+    assert 'V0.6.2f - Human Review Control and Interruption Recovery' in roadmap_zh
     assert 'V0.6.3 - Strict Test Presence and Per-Role Runner Configuration' in roadmap_zh
     assert '原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。' in roadmap_zh
 

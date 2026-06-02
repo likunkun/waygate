@@ -2,6 +2,15 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2f
+
+- Persist Plannotator approval notes from approved Requirements and Unit Plan gates as audit-only advisory context, then inject them into next-stage prompts under `Approval Notes Non-Contract Context`.
+- Added human gate menu actions `i` and `m`: `i` creates a pending draft from review notes, while `m` adopts a human-edited gate body only when the body hash changed, a reason or notes exist, and deterministic validators pass.
+- Converted Ctrl+C during automatic execution into an auditable `blockedContext.category=human_interrupt` state with best-effort tmux `C-c` delivery and recovery guidance.
+- Split CLI review routes so `waygate approve --reason` uses guarded manual adoption and `waygate revise` without a reason returns to the current approval point, while checkpoint revise still requires `--reason`.
+- Added V0.6.2f review bundle and prototype conformance evidence for approval notes, draft merge, manual adoption, interruption recovery, revise routes, legacy review compatibility, and real Waygate target mapping.
+- Updated README/USAGE/CHANGELOG/ROADMAP, formal workflow/architecture docs, verification scripts, and package version metadata to `0.6.2f` while keeping V0.6.3 Strict Test Presence / Per-Role Runner Configuration as future scope.
+
 ## 0.6.2e
 
 - Added `open-spec-package` intake for Open Spec document package directories containing `01-requirements.md` plus at least one supporting package document.

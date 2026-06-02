@@ -1,6 +1,6 @@
 # Staged Requirements Package Policy
 
-This document records the V0.6.2 workflow policy for Staged Requirements Package, including V0.6.2d unit continuity handoff hardening and the V0.6.2e requirements package directory intake extension. It reduces Requirements-stage overload by splitting the old single draft into focused checkpoints, while preserving one final human Requirements approval gate.
+This document records the V0.6.2 workflow policy for Staged Requirements Package, including V0.6.2d unit continuity handoff hardening, the V0.6.2e requirements package directory intake extension, and the V0.6.2f human review control handoff. It reduces Requirements-stage overload by splitting the old single draft into focused checkpoints, while preserving one final human Requirements approval gate.
 
 `.rrc-controller-*` directories remain run audit evidence. Long-lived policy lives here and is registered from `docs/README.md`.
 
@@ -92,6 +92,18 @@ The final gate must include:
 
 The hash table binds the approval file to the checkpoint artifacts and shows both the Chinese public checkpoint name and the stable English stage key. Missing appendices, missing hash rows, or hash mismatches are controller validation failures.
 
+## Human Review Control Handoff
+
+V0.6.2f keeps the staged Requirements approval contract unchanged while adding review-control evidence around it. The only contract truth remains the approved gate body plus valid approval hash. Plannotator `decision=approved` payload fields such as `annotations`, `feedback`, and `reason` are saved as approval notes and rendered later only as `Approval Notes Non-Contract Context`; they do not create Acceptance Obligations, scope changes, Journey rows, test cases, or approved body edits.
+
+The Requirements and Unit Plan human gate menu includes `i` and `m` in addition to the legacy `a`, `r`, `v`, `p`, and `q` actions. `i` asks the controller to prepare a revised draft from approval notes or review feedback and keeps the gate pending. `m` adopts a human-edited body only when the current body hash differs from the pending review baseline, a human reason or saved approval notes exist, and the existing deterministic validator passes. Rejected `m` attempts keep the gate pending and record structured rejection reasons.
+
+Ctrl+C during automatic execution is not treated as a Requirements change. The controller records `status=blocked`, `blockedContext.category=human_interrupt`, the interrupted step/action, and the best-effort tmux `C-c` result, then shows recovery routes. Operators may choose a normal recovery route such as continue/unblock, Unit Plan revise, Requirements revise, keep blocked, or quit according to the blocked guidance.
+
+CLI routes follow the same policy. `waygate approve --gate requirements --reason ...` and `waygate approve --gate unit-plan --reason ...` use the guarded manual-adoption path. `waygate revise` without a reason returns to the current approval point without staling staged checkpoints or regenerating artifacts. `waygate revise --gate requirements --checkpoint ...` still requires `--reason`, because checkpoint rollback changes staged package state.
+
+The detailed V0.6.2f review-control policy lives in `docs/workflow/human-review-control-policy.md`.
+
 ## Gate Ordering
 
 Staged Requirements preserve the V0.6.1 human gate order:
@@ -179,7 +191,9 @@ For non-Waygate target projects, Product Design and Technical Architecture are i
 
 V0.6.2 delivers Staged Requirements Package. The original Strict Test Presence / TC1-TC7 scope is not part of V0.6.2 implementation. It is carried forward into V0.6.3 Strict Test Presence and Per-Role Runner Configuration.
 
-V0.6.2 also does not add UI/prototype artifacts, Debian package installation, or role runner configuration changes unless a later unit explicitly requests them.
+V0.6.2f adds approval notes, guarded manual adoption, human interruption recovery, and review-surface conformance evidence for the Waygate review control surface. It does not implement V0.6.3 Strict Test Presence, Test Case Contract v1, or Per-Role Runner Configuration.
+
+V0.6.2 also does not add unrelated UI/prototype artifacts, Debian package installation behavior, or role runner configuration changes unless a later unit explicitly requests them.
 
 ## Verification
 
