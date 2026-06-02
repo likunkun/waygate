@@ -159,6 +159,54 @@ def _write_surface_prototype_manifest_for_gate(gate: Path) -> Path:
     return manifest_path
 
 
+def _write_non_browser_surface_prototype_manifest_for_gate(gate: Path) -> Path:
+    state_root = gate.parent.parent if gate.parent.name == 'approvals' else gate.parent
+    draft_dir = state_root / 'artifacts' / 'requirements-draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    prototype_path = draft_dir / 'workflow-review.html'
+    prototype_path.write_text('<button>Prompt Contract</button><button>Audit</button>\n', encoding='utf-8')
+    manifest_path = draft_dir / 'prototype-manifest.json'
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'workflow-review',
+                        'type': 'html',
+                        'path': str(prototype_path),
+                        'title': 'Workflow review prototype',
+                        'linked_acceptance_criteria': ['AC-42'],
+                        'linked_journeys': [],
+                        'page_states': ['Prompt Contract', 'Audit'],
+                        'click_path': ['Open artifact', 'Select Prompt Contract', 'Select Audit'],
+                        'implementation_targets': [{'kind': 'module', 'path': 'workflow_controller/prompts/requirements_package.py'}],
+                        'surface_contracts': [
+                            {
+                                'id': 'prompt-contract',
+                                'title': 'Prompt contract',
+                                'kind': 'other',
+                                'page_states': ['Prompt Contract'],
+                                'click_path': ['Open artifact', 'Select Prompt Contract'],
+                                'entrypoints': ['workflow review artifact -> Prompt Contract tab'],
+                                'implementation_targets': [
+                                    {'kind': 'module', 'path': 'workflow_controller/prompts/requirements_package.py'},
+                                    {'kind': 'artifact', 'path': '.rrc-controller-*/artifacts/<role>/runs/<run-id>/'},
+                                    {'kind': 'state', 'path': '.rrc-controller-*/session.json'},
+                                    {'kind': 'events', 'path': '.rrc-controller-*/events.jsonl'},
+                                ],
+                                'linked_acceptance_criteria': ['AC-42'],
+                                'required': True,
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    return manifest_path
+
+
 def _minimal_requirements_gate_with_infrastructure(infrastructure_section: str | None = None) -> str:
     content = (
         '# 需求与验收确认\n\n'
@@ -2239,6 +2287,161 @@ def test_final_acceptance_blocks_passed_prototype_evidence_without_visual_screen
     }
 
     with pytest.raises(ValueError, match='missing prototype screenshot'):
+        validate_final_prototype_conformance(
+            state=state,
+            artifacts_dir=artifacts_dir,
+            requirements_path=requirements,
+        )
+
+
+def test_final_acceptance_accepts_local_real_non_browser_prototype_conformance_evidence(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-42 [verification: integration]: controller workflow review artifact maps to module, artifact, state, and event targets.\n',
+        encoding='utf-8',
+    )
+    _write_non_browser_surface_prototype_manifest_for_gate(requirements)
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'bash scripts/verify/workflow-review.sh'
+    visual_refs = _visual_evidence_plan(
+        prototype='artifacts/prototype/workflow-review.png',
+        production='artifacts/prototype/controller-surfaces.png',
+        interaction='artifacts/prototype/tabs-after-click.png',
+        entrypoint='controller module, artifact, state, and event surfaces',
+    )
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-WORKFLOW',
+                        'acceptance_criterion': 'AC-42',
+                        'layer': 'integration',
+                        'command': command,
+                        'expected': 'workflow review artifact maps to module, artifact, state, and event targets with tab interaction evidence',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': 'controller module, artifact, state, and event surfaces',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'visual_evidence_refs': visual_refs,
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-WORKFLOW',
+                        'acceptance_criterion': 'AC-42',
+                        'layer': 'integration',
+                        'environment_kind': 'local_real',
+                        'command': command,
+                        'expected': 'workflow review artifact maps to module, artifact, state, and event targets with tab interaction evidence',
+                        'prototype_conformance': ['workflow-review'],
+                        'prototype_surfaces': ['prompt-contract'],
+                        'production_targets': [
+                            'module:workflow_controller/prompts/requirements_package.py',
+                            'artifact:.rrc-controller-*/artifacts/<role>/runs/<run-id>/',
+                            'state:.rrc-controller-*/session.json',
+                            'events:.rrc-controller-*/events.jsonl',
+                        ],
+                        'user_steps': ['Open workflow review artifact', 'Select Prompt Contract', 'Select Audit'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    validate_final_prototype_conformance(
+        state=state,
+        artifacts_dir=artifacts_dir,
+        requirements_path=requirements,
+    )
+
+
+def test_final_acceptance_still_requires_real_e2e_for_browser_route_prototype_target(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    _write_prototype_manifest_for_gate(requirements, ac='AC-21')
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'bash scripts/verify/teacher-dashboard-integration.sh'
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-ROUTE-INTEGRATION',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'integration',
+                        'command': command,
+                        'expected': 'dashboard route preserves prototype region order and preview interaction',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': '/dashboard/preview',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'visual_evidence_refs': _visual_evidence_plan(),
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-ROUTE-INTEGRATION',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'integration',
+                        'environment_kind': 'local_real',
+                        'command': command,
+                        'expected': 'dashboard route preserves prototype region order and preview interaction',
+                        'prototype_conformance': ['requirements-prototype'],
+                        'production_targets': ['/dashboard/preview'],
+                        'user_steps': ['Open /dashboard/preview', 'Click Preview'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='not e2e evidence'):
         validate_final_prototype_conformance(
             state=state,
             artifacts_dir=artifacts_dir,

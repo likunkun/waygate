@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import workflow_controller.rrc_controller as rrc_controller_module
+import workflow_controller.prompts.requirements_package as requirements_package_prompts
 from workflow_controller.requirements_package import (
     REQUIREMENTS_PACKAGE_VERSION,
     STAGED_REQUIREMENTS_STEPS,
@@ -19,6 +20,7 @@ from workflow_controller.requirements_package import (
     normalize_requirements_checkpoint,
     package_artifacts_complete,
 )
+from workflow_controller.requirements_ids import acceptance_criterion_ids_in_text
 from workflow_controller.requirements_revision_routing import (
     requirements_auto_revision_semantic_key,
     select_requirements_revision_stage,
@@ -242,6 +244,11 @@ def test_staged_requirements_steps_are_ordered() -> None:
         'test_strategy',
         'final_gate',
     ]
+
+
+def test_acceptance_id_parser_ignores_wildcard_and_trailing_hyphen_examples() -> None:
+    assert acceptance_criterion_ids_in_text('See AC-V10-* and AC-V10- examples.') == set()
+    assert acceptance_criterion_ids_in_text('AC-V10-001 must remain active.') == {'AC-V10-001'}
 
 
 def test_staged_requirements_public_checkpoint_labels_are_chinese_primary() -> None:
@@ -565,6 +572,139 @@ def test_product_design_prompt_requires_manifest_contract_for_required_prototype
     assert 'linked_journeys' in prompt
     assert 'implementation_targets' in prompt
     assert 'surface_contracts' in prompt
+
+
+def test_product_design_prompt_contract_classifies_no_spec_spec_and_backend_only_branches() -> None:
+    assert hasattr(requirements_package_prompts, 'product_design_prompt_contract')
+    product_design_prompt_contract = requirements_package_prompts.product_design_prompt_contract
+    no_spec_state = {
+        'currentStep': 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF',
+        'requirementsSurfaceClassification': {
+            'product_ui': 'required',
+            'web_system': 'required',
+            'prototype_required': 'required',
+            'visible_surfaces': ['Product Design prompt', 'temporary annotation pane'],
+            'evidence_snippets': ['Scope declares reviewable controller workflow surfaces.'],
+        },
+    }
+    no_spec_contract = product_design_prompt_contract(no_spec_state)
+
+    assert no_spec_contract['branch'] == 'no_spec_visible_surface'
+    assert no_spec_contract['supported_requirements_spec'] is False
+    assert no_spec_contract['requires_brainstorming'] is True
+    assert no_spec_contract['requires_page_entrypoint_confirmation'] is True
+    assert no_spec_contract['requires_no_ui_confirmation'] is False
+
+    spec_state = {
+        **no_spec_state,
+        'requirementsSpec': {
+            'path': '/tmp/spec.md',
+            'hash': 'sha256:abc123',
+            'sourceType': 'waygate-markdown',
+            'importedAt': '2026-06-02T10:13:26Z',
+        },
+    }
+    spec_contract = product_design_prompt_contract(spec_state)
+
+    assert spec_contract['branch'] == 'supported_spec'
+    assert spec_contract['supported_requirements_spec'] is True
+    assert spec_contract['requires_brainstorming'] is False
+    assert spec_contract['requires_page_entrypoint_confirmation'] is False
+
+    backend_only_state = {
+        'currentStep': 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF',
+        'currentUnitNeedsUiDesign': False,
+        'currentUnitIsWebSystem': False,
+        'requirementsSurfaceClassification': {
+            'product_ui': 'not_required',
+            'web_system': 'not_required',
+            'prototype_required': 'not_required',
+            'visible_surfaces': [],
+            'evidence_snippets': [
+                'Scope positive basis: backend/API/CLI-only command surface with explicit no UI/Web/prototype target.',
+                'currentUnitNeedsUiDesign=false (ignored as no-UI evidence)',
+            ],
+        },
+    }
+    backend_only_contract = product_design_prompt_contract(backend_only_state)
+
+    assert backend_only_contract['branch'] == 'backend_api_cli_only'
+    assert backend_only_contract['requires_brainstorming'] is False
+    assert backend_only_contract['requires_page_entrypoint_confirmation'] is False
+    assert backend_only_contract['requires_no_ui_confirmation'] is True
+    assert 'backend/API/CLI-only' in backend_only_contract['no_ui_basis'][0]
+
+
+def test_product_design_prompt_no_spec_requires_brainstorming_and_one_surface_at_a_time() -> None:
+    state = {
+        'currentStep': 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF',
+        'requirementsSurfaceClassification': {
+            'product_ui': 'required',
+            'web_system': 'required',
+            'prototype_required': 'required',
+            'visible_surfaces': ['Product Design prompt', 'temporary annotation pane'],
+            'evidence_snippets': ['Scope declares reviewable controller workflow surfaces.'],
+        },
+    }
+
+    prompt = render_product_design_prompt(state, output_path=Path('/tmp/product-design-brief.md'))
+
+    assert '`brainstorming` skill' in prompt
+    assert 'same tmux conversation' in prompt
+    assert 'one page or entrypoint at a time' in prompt
+    assert 'only after those confirmations' in prompt
+    assert 'product-design-brief.md' in prompt
+    assert 'artifacts/requirements-draft/prototype-manifest.json' in prompt
+
+
+def test_product_design_prompt_supported_spec_keeps_staged_flow_without_page_brainstorming() -> None:
+    state = {
+        'currentStep': 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF',
+        'requirementsSpec': {
+            'path': '/tmp/spec.md',
+            'hash': 'sha256:abc123',
+            'sourceType': 'waygate-markdown',
+            'importedAt': '2026-06-02T10:13:26Z',
+        },
+        'requirementsSurfaceClassification': {
+            'product_ui': 'required',
+            'web_system': 'required',
+            'prototype_required': 'required',
+            'visible_surfaces': ['Product Design prompt', 'temporary annotation pane'],
+            'evidence_snippets': ['Scope declares reviewable controller workflow surfaces.'],
+        },
+    }
+
+    prompt = render_product_design_prompt(state, output_path=Path('/tmp/product-design-brief.md'))
+
+    assert 'supported `requirementsSpec` compatibility path' in prompt
+    assert 'existing staged artifact flow' in prompt
+    assert '`brainstorming` skill' not in prompt
+    assert 'one page or entrypoint at a time' not in prompt
+
+
+def test_product_design_prompt_backend_only_asks_single_no_ui_confirmation() -> None:
+    state = {
+        'currentStep': 'REQUIREMENTS_PRODUCT_DESIGN_BRIEF',
+        'currentUnitNeedsUiDesign': False,
+        'currentUnitIsWebSystem': False,
+        'requirementsSurfaceClassification': {
+            'product_ui': 'not_required',
+            'web_system': 'not_required',
+            'prototype_required': 'not_required',
+            'visible_surfaces': [],
+            'evidence_snippets': [
+                'Scope positive basis: backend/API/CLI-only command surface with explicit no UI/Web/prototype target.',
+            ],
+        },
+    }
+
+    prompt = render_product_design_prompt(state, output_path=Path('/tmp/product-design-brief.md'))
+
+    assert 'explicit no-UI/no-prototype confirmation' in prompt
+    assert 'backend/API/CLI-only command surface' in prompt
+    assert 'one page or entrypoint at a time' not in prompt
+    assert 'currentUnitNeedsUiDesign=false' not in prompt
 
 
 def test_scope_stage_validation_rejects_natural_language_e2e_mapping(tmp_path: Path) -> None:
@@ -1982,6 +2122,59 @@ def test_package_consistency_does_not_promote_explanatory_table_references_to_e2
     validate_staged_requirements_package_consistency(gate, state)
 
 
+def test_package_consistency_ignores_source_ac_columns_as_active_obligations(
+    tmp_path: Path,
+) -> None:
+    state = _complete_checkpoint_artifacts_with_content(tmp_path)
+    scope_path = Path(state['requirementsPackage']['artifacts']['scope']['path'])
+    scope_path.write_text(
+        (
+            '# Scope\n\n'
+            '## Acceptance Criteria\n'
+            '| AC | Verification Layer | Source AC / TC | Notes |\n'
+            '| --- | --- | --- | --- |\n'
+            '| AC-V10-001 | integration | AC-SPEC-001, TC-SPEC-001 | imported source label only |\n'
+            '| AC-V10-002 | static | AC-SPEC-* | wildcard source example only |\n\n'
+            '## Journey Acceptance Matrix\n'
+            '| Journey | Title | Status | Steps | AC | Verification Layer |\n'
+            '| --- | --- | --- | --- | --- | --- |\n'
+            '| J-V10-001 | Imported source review | active | Review imported package -> approve scope | AC-V10-001 | integration |\n'
+        ),
+        encoding='utf-8',
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(render_staged_requirements_package_gate_body(state), encoding='utf-8')
+
+    validate_requirements_acceptance_quality(gate, state)
+
+
+def test_package_consistency_does_not_apply_journey_verification_marker_to_ac_on_same_line(
+    tmp_path: Path,
+) -> None:
+    state = _complete_checkpoint_artifacts_with_content(tmp_path)
+    scope_path = Path(state['requirementsPackage']['artifacts']['scope']['path'])
+    scope_path.write_text(
+        (
+            '# Scope\n\n'
+            '## Acceptance Criteria\n'
+            '- AC-V10-010 [verification: integration]: Requirements package state is persisted.\n\n'
+            '## Journey Acceptance Matrix\n'
+            '| Journey | Title | Status | Steps | AC | Verification Layer |\n'
+            '| --- | --- | --- | --- | --- | --- |\n'
+            '| J-V10-006 | Manual review support | active | Open review bundle -> inspect source labels | AC-V10-010 | integration |\n\n'
+            '## Reviewer Notes\n'
+            '- Journey-local marker J-V10-006 [verification: manual] is a review note; '
+            'AC-V10-010 remains integration through the canonical AC row.\n'
+        ),
+        encoding='utf-8',
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+    gate = render_staged_requirements_package_gate_body(state)
+
+    validate_staged_requirements_package_consistency(gate, state)
+
+
 def test_staged_validator_skips_legacy_4_9_but_legacy_still_requires_it(tmp_path: Path) -> None:
     state = _complete_checkpoint_artifacts_with_content(tmp_path)
     gate = tmp_path / 'requirements-and-acceptance.md'
@@ -2817,6 +3010,26 @@ def test_conflicting_journey_status_reason_routes_to_scope_with_status_feedback(
     assert 'Status column' in feedback
     assert 'maps each E2E/Web/prototype review obligation' not in feedback
     assert 'E2E mapping' not in feedback
+
+
+def test_conflicting_ac_layer_reason_routes_to_scope_with_contract_feedback() -> None:
+    reason = (
+        "requirements gate invalid: staged requirements package conflicting AC verification layers "
+        "for AC-V10-010: ['integration', 'manual']"
+    )
+
+    assert select_requirements_revision_stage(reason) == 'scope'
+    assert requirements_auto_revision_semantic_key(reason) == 'scope:ac_verification_layer_conflict'
+
+    feedback = rrc_controller_module._requirements_controller_validation_revision_feedback(
+        reason=reason,
+        stage='scope',
+        reason_key='scope:ac_verification_layer_conflict',
+    )
+
+    assert 'AC/Journey contract' in feedback
+    assert 'Verification Layer' in feedback
+    assert 'Test Strategy' not in feedback
 
 
 def test_requirements_revision_staged_routes_unknown_ac_prototype_reason_to_scope(

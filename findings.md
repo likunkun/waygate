@@ -1,5 +1,32 @@
 # 发现与决策
 
+## 2026-06-03 Requirements source-label and AC/Journey parser boundary
+
+- `Source AC` / `Source AC / TC` columns are provenance, not current-version acceptance obligations. Imported source IDs such as `AC-SPEC-001` and wildcard examples such as `AC-SPEC-*` must not create missing-layer, coverage, or unknown-current-AC failures unless the same ID is declared in a canonical current AC field.
+- AC/Journey ID extraction must reject trailing-hyphen fragments and wildcard partials. `AC-V10-*` and `AC-V10-` are examples/placeholders, not IDs; `AC-V10-001` remains a valid current AC ID.
+- Journey-local inline markers such as `J-V10-006 [verification: manual]` apply to the Journey reference only. They must not be used by line-level fallback to assign `manual` to an AC mentioned elsewhere in the same prose line.
+- `staged requirements package conflicting AC verification layers ...` exposes an upstream AC/Journey contract conflict. It routes to Scope with semantic key `scope:ac_verification_layer_conflict`, not to Test Strategy, even though the reason text includes `verification layer`.
+
+## 2026-06-02 Annotation subprocess-only runtime and backend boundary
+
+- Annotation Agent execution is subprocess-only. Deprecated `WAYGATE_ANNOTATION_TMUX`, inherited `TMUX_PANE`, and tmux-backed controller state must not create annotation panes or annotation-specific run wrappers.
+- The historical `scripts/verify/v062g-annotation-tmux-runtime.sh` name is retained for existing Unit Plan command references, but the script now proves the removed tmux path stays inactive even when old tmux environment is present.
+- Declared annotation backends are limited to `opencode` and `codex`. `claude` / `claude-code` are rejected as annotation backends; Claude Code remains available only through normal workflow runners such as `tmux-claude`.
+- Persisted Waygate built-in Claude annotation configs are compatibility input, not a supported runtime choice. They are migrated to the built-in OpenCode template. Operator custom commands are preserved only when the declared backend remains supported.
+
+## 2026-06-02 Final Acceptance 非浏览器 Prototype Conformance target-aware evidence
+
+- Requirements-stage artifact-local prototype review can be a valid acceptance contract for controller/workflow surfaces without being a production browser route. When the approved manifest maps a required `surface kind=other` to `module`、`artifact`、`state` 或 `events` targets, Final Acceptance should accept passed non-mock `integration/local_real` evidence plus complete visual evidence instead of forcing `layer=e2e`.
+- Browser-visible production targets remain stricter: `kind=route`, target path starting with `/`, and surface kinds `route/page/component/dialog/drawer/panel/form` still require real E2E evidence with no core API mock, real environment, real entrypoint, and no browser runtime errors.
+- A stale deterministic `final acceptance gate invalid:` blocked state can be cleared by controller revalidation when the underlying rule changes and all current evidence now passes. The recovery boundary is `status=blocked` + `currentStep=FINAL_WALKTHROUGH_PREPARE`; the controller recomputes Final Acceptance preflight and records `final_acceptance_gate_invalid_blocker_cleared` rather than editing live `session.json` by hand.
+- Focused verification for the historical annotation tmux script now confirms annotation remains on subprocess even in tmux-like environments; live `waygate drive` checks must not create annotation panes.
+
+## 2026-06-02 V0.6.2g annotation subprocess 测试隔离
+
+- Annotation runtime 的边界是 subprocess；`WAYGATE_ANNOTATION_TMUX` 不再是有效控制开关，设置为任意值都不能创建 annotation pane。
+- 测试策略边界是：annotation verification scripts 可以显式设置旧环境变量来证明它被忽略，但 fake `tmux` 不能收到 annotation 专用 `split-window`、`set-buffer`、`paste-buffer`、`send-keys` 或 `kill-pane` 调用。
+- 子进程测试 helper 默认移除继承的 `TMUX` 和 `TMUX_PANE`。普通 workflow runner 的 tmux 行为测试必须显式传入这些 env keys 并配套 fake tmux PATH；annotation tests 只验证这些 tmux hints 被忽略。
+
 ## 2026-06-02 V0.6.2e `--spec` 文档包目录 intake
 
 - Open Spec 文档包目录与 OpenAPI/OpenSpec API 文档语义不同。`openspec` 继续表示 OpenAPI/OpenSpec API source；Open Spec skill 产出的 01-08 文档包使用新增 `sourceType=open-spec-package`，避免 prompt、artifact 和审计记录混淆。
@@ -79,7 +106,7 @@
 - Journey contract parser 应优先接受同一业务合同的合理表头变体，而不是迫使 Scope 为 parser 改写内容。`Title` 缺失时可用 Journey ID 兜底；`Acceptance contract` 与 `Path / assertion focus` 可作为步骤来源；controller prompt/feedback 仍应要求推荐最小表头 `Journey / Title / Status / Steps / AC / Verification Layer`，让后续输出稳定回到 canonical 形态。
 - Staged Requirements assembled gate 可能同时包含 Scope 概览表、Scope canonical matrix 和 Test Strategy 4.7 Journey matrix。它们表达同一 Journey ID 时，parser 应合并兼容重复行，优先保留更完整的 steps、AC、Unit、Test Case 和 command；`status` 或 `verification_layer` 冲突仍应阻断，成功写出的 `journeys.json` 不应泄露内部 merge bookkeeping。
 - `journey contract required for e2e or closure acceptance` 是 Scope 合同缺口，不是 Test Strategy 4.6 row 质量问题。自动返工 semantic key 应归为 `scope:journey_contract_required`，并在 feedback 中展示缺失字段和最小合格 Journey 表头；只有已存在 Journey/AC 后的 E2E method、environment kind、mock policy、fixture/setup 或 assertion 质量问题才归 Test Strategy。
-- Claude Code annotation backend 的旧 built-in args 会继承历史交互 session/thinking 状态，可能在非交互 annotation runtime 中触发 API 400。Waygate built-in `claude-code` annotation 模板应使用 `--bare --no-session-persistence -p ... --permission-mode bypassPermissions`，并迁移已有 session 中旧 built-in args；operator 自定义 command/args 不应被猜测改写。
+- 此条历史决策已被 2026-06-02 annotation subprocess-only runtime and backend boundary 取代：Claude Code annotation backend 的旧 built-in args 曾会继承历史交互 session/thinking 状态并触发 API 400；当前不再支持 `claude-code` annotation backend，内置 Claude annotation 配置迁移到 OpenCode，operator 自定义 command/args 只有在声明 backend 为 `opencode` 或 `codex` 时保留。
 - 本机 Claude Code 2.1.152 对 V2.1 完整 Requirements annotation prompt 仍可能在 `--bare --no-session-persistence` 下返回 `content[].thinking` API 400；这是 annotation backend runtime 条件，不是 Requirements 合同缺陷。现场恢复应优先用 controller 支持的 backend override（例如 `--annotation-agent requirements=codex`）重跑 pending annotation，而不是手改 live state 或 Requirements 文档。
 - Annotation runtime blocker 恢复仍只表示 CLI/凭据/参数等外部运行条件已修好。`waygate unblock` 后应重跑 pending annotation 并回到原 human gate，不应重写 Requirements 或把 runtime 问题误导为 Requirements preflight auto-revision。
 

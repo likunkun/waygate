@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 
@@ -8,6 +10,47 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding='utf-8')
+
+
+def test_v062g_prototype_docs_script_emits_visual_evidence_markers() -> None:
+    result = subprocess.run(
+        ['bash', 'scripts/verify/v062g-prototype-and-docs.sh'],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    marker_values: dict[str, str] = {}
+    visual_payload = None
+    for line in result.stdout.splitlines():
+        for marker in ('PROTOTYPE_SCREENSHOT:', 'PRODUCTION_SCREENSHOT:', 'INTERACTION_SCREENSHOT:'):
+            if line.startswith(marker):
+                marker_values[marker] = line[len(marker):].strip()
+        if line.startswith('VISUAL_EVIDENCE:'):
+            visual_payload = json.loads(line[len('VISUAL_EVIDENCE:'):].strip())
+
+    assert set(marker_values) == {
+        'PROTOTYPE_SCREENSHOT:',
+        'PRODUCTION_SCREENSHOT:',
+        'INTERACTION_SCREENSHOT:',
+    }
+    for path in marker_values.values():
+        assert (ROOT / path).exists()
+    assert visual_payload == {
+        'viewport': 'artifact-review-1280x900',
+        'entrypoint': 'controller module, artifact, state, and event surfaces',
+        'action_path': [
+            'inspect annotation runtime policy',
+            'select Prompt Contract',
+            'select Subprocess Runtime',
+            'select Backend Migration',
+            'select Deprecated Env Handling',
+            'compare mapped controller targets',
+        ],
+        'fidelity_level': 'structural_interaction',
+    }
 
 
 def test_v061_roadmaps_cover_docs_regression_scope() -> None:
@@ -19,9 +62,9 @@ def test_v061_roadmaps_cover_docs_regression_scope() -> None:
         'Spec Kit',
         'gate ordering',
         'role-based annotation',
-        'claude-code',
         'opencode',
         'codex',
+        'Legacy Waygate built-in Claude annotation configs migrate to OpenCode',
         'prompt contract',
         'flexible evidence',
         'docs/workflow/external-spec-intake-and-annotation-policy.md',
@@ -34,9 +77,9 @@ def test_v061_roadmaps_cover_docs_regression_scope() -> None:
         'Spec Kit',
         'gate 顺序',
         '按 role 可配置',
-        'claude-code',
         'opencode',
         'codex',
+        '旧的 Waygate 内置 Claude annotation 配置迁移到 OpenCode',
         '提示词合同',
         '灵活验收证据',
         'docs/workflow/external-spec-intake-and-annotation-policy.md',
@@ -57,9 +100,9 @@ def test_v061_required_formal_docs_and_registry_exist() -> None:
         'requirements_annotation',
         'unit_plan_annotation',
         'final_acceptance_verification_assist',
-        'claude-code',
         'opencode',
         'codex',
+        'claude-code',
         'non-approval',
         'flexible evidence',
         'human_review_required',
@@ -235,14 +278,18 @@ def test_annotation_policy_docs_use_current_codex_cli_contract() -> None:
     assert 'annotation runtime blocker' in workflow_doc
 
 
-def test_annotation_policy_docs_cover_visibility_and_revision_freshness() -> None:
+def test_annotation_policy_docs_cover_subprocess_runtime_and_revision_freshness() -> None:
     workflow_doc = _read('docs/workflow/external-spec-intake-and-annotation-policy.md')
     usage = _read('USAGE.md')
     usage_zh = _read('USAGE.zh-CN.md')
 
     for expected in [
-        'controller-side subprocess',
-        'not appear in the tmux builder pane',
+        'subprocess only',
+        'WAYGATE_ANNOTATION_TMUX',
+        'deprecated no-op',
+        'opencode',
+        'codex',
+        'env key-only',
         '标注 Agent 开始',
         '标注 Agent 完成',
         '标注 Agent 失败',
@@ -260,8 +307,10 @@ def test_annotation_policy_docs_cover_visibility_and_revision_freshness() -> Non
     assert '标注 Agent 完成' in usage
     assert '[annotation]' not in usage
     assert '[annotation]' not in usage_zh
-    assert 'controller-side subprocess' in usage
-    assert 'controller 侧 subprocess' in usage_zh
+    assert 'subprocess runtime' in usage
+    assert 'deprecated no-op' in usage
+    assert 'subprocess runtime' in usage_zh
+    assert '废弃' in usage_zh
     assert '标注 Agent 开始' in usage_zh
     assert '标注 Agent 完成' in usage_zh
     assert 'Requirements 修订' in usage_zh

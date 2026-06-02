@@ -243,7 +243,7 @@
 - 对已识别但未启用的格式继续给出清晰 unsupported/deferred 错误。
 - 强化 gate 顺序：每个 gate 的人工审批必须是当前阶段最后一步；controller preflight、schema validation、evidence checks 和 annotation pass 都必须在人工审核文件呈现前完成。
 - 为 `requirements_annotation`、`unit_plan_annotation` 和 `final_acceptance_verification_assist` 增加按 role 可配置的 annotation / verification-assist 配置。
-- 通过 command、args、env key allowlist、timeout、artifact path、prompt template 和 failure policy 支持 `claude-code`、`opencode`、`codex` 三类 backend family。
+- 通过 command、args、env key allowlist、timeout、artifact path、prompt template 和 failure policy 支持 `opencode`、`codex` 两类 annotation backend family。旧的 Waygate 内置 Claude annotation 配置迁移到 OpenCode；Claude Code 只保留为普通 workflow runner。
 - 定义共享 non-approval 提示词合同，以及 Requirements、Unit Plan、Final Acceptance 三个阶段的风险标注 prompt template。
 - 允许 verification JSON 同时包含严格命令项、仍执行命令但补充 Agent 判断的 `descriptive_command` 行，以及显式声明 `verification_assist` 且不执行命令的 `agent_assisted_case` 行；辅助验证行必须记录结构化 evidence、`human_review_required` 和 assist artifact 路径。
 - 保持人工审批语义不变：标注 Agent 和 agent-assisted verification 只能帮助人聚焦风险，不能批准、跳过或绕过 controller gate。
@@ -355,6 +355,21 @@
 - 新增 V0.6.2f review bundle / prototype conformance evidence，将 required surfaces 映射到真实 Waygate terminal menu、CLI、state、artifact、prompt、docs 或 review bundle targets。
 - 长期 workflow 规则沉淀到 `docs/workflow/human-review-control-policy.md`，模块边界沉淀到 `docs/architecture/human-review-control-architecture.md`。
 - V0.6.3 Strict Test Presence / Per-Role Runner Configuration 继续作为后续 planned scope，不属于 V0.6.2f 当前交付。
+
+### V0.6.2g - Product Design Prompt Contract and Visible Annotation Pane
+
+目标：明确 no-spec 与 backend-only 会话下的 Product Design prompt 行为，并让已启用 annotation 的运行在不丢失 subprocess 兼容性和 secret hygiene 的前提下可见。
+
+状态：已在 package `0.6.2g` 实施。
+
+已交付：
+
+- Product Design 无 spec 分支要求 same-conversation brainstorming、逐页或逐入口确认，并且只在确认后写 artifact。
+- supported `requirementsSpec` 会话保持既有 staged artifact flow，不强制 page-by-page brainstorming。
+- backend/API/CLI-only 分支基于 Scope 正向依据做一次 no-UI/no-prototype 确认，不依赖默认 false controller flags。
+- Annotation 执行保持 subprocess-only，并移除 annotation 专用 tmux pane runtime。`WAYGATE_ANNOTATION_TMUX` 是废弃 no-op，不再创建 pane、run-local wrapper、run id 或 `done.json`。
+- 拒绝 `claude` / `claude-code` 作为 annotation backend，同时保留普通 `tmux-claude` 和 `tmux-codex` workflow runner 能力。旧的 Waygate 内置 Claude annotation 配置迁移到 OpenCode，annotation output 仍是 risk-only。
+- annotation audit data 在 state、events、summaries、dispatch metadata、artifacts 和 captured output 中保持 env key-only。
 
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 

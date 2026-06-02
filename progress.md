@@ -1,6 +1,64 @@
 # 进度日志
 
+## 会话：2026-06-03
+
+### Controller Requirements source-label parser 与 AC/Journey routing 修复
+- **状态：** implementation verified; focused/full regression passed.
+- 根因：Requirements ID parser 会把 `AC-V10-*` 误截成 `AC-V10-`；staged Requirements final preflight 又把 `Source AC` / `Source AC / TC` provenance 列里的 source label 当作当前版本 AC obligations，导致 `AC-SPEC-*` / `AC-SPEC-001 missing verification layer`。同一 prose line 中 `J-... [verification: manual]` 也会被行级 fallback 扩散到同一行提到的 AC，制造虚假的 AC layer conflict；该 conflict reason 又因 `verification layer` 关键词误路由到 Test Strategy。
+- 修复：AC/Journey ID tokenization 增加 suffix boundary，并要求 body 不能以短横线结尾；Requirements validator 收集当前 AC 时忽略 `Source AC` / `Source AC / TC` provenance 列；AC layer fallback 遇到 Journey-local inline verification marker 时不再给同一行 AC 赋层；`staged requirements package conflicting AC verification layers ...` 归类为 Scope AC/Journey contract conflict，semantic key 为 `scope:ac_verification_layer_conflict`。
+- 文档：同步 staged Requirements workflow / architecture 文档，记录 source provenance、wildcard example、Journey-local marker 和 Scope routing 边界；同步 `findings.md` 与 `task_plan.md`。
+- 验证：
+  - RED/GREEN: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'source_ac or wildcard or conflicting_ac_layer or journey_verification'` -> 修复前 4 failed，修复后 `4 passed, 99 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or staged'` -> `4 passed, 243 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `103 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `874 passed in 81.86s`。
+  - `git diff --check` -> passed。
+
 ## 会话：2026-06-02
+
+### Annotation Agent subprocess-only 与 Claude annotation backend 移除
+- **状态：** implementation verified; focused scripts and full regression passed.
+- 根因：V0.6.2g annotation tmux runtime 扩大了 annotation execution surface；当前策略改为移除 annotation 专用 tmux runtime，避免 annotation 创建临时 pane、wrapper、run id 或 `done.json`。
+- 修复：annotation runtime 始终使用 subprocess。`WAYGATE_ANNOTATION_TMUX`、继承的 `TMUX_PANE` 和 state 中的 tmux runner 信息只作为兼容旧环境的无效上下文被忽略，不创建 pane、不调用 `split-window` / `set-buffer` / `paste-buffer` / `send-keys` / `kill-pane`。
+- 修复：声明式 annotation backend 仅支持 `opencode` 和 `codex`；`claude` / `claude-code` 被拒绝。已有 session 中 Waygate 内置 `backend=claude-code command=claude` annotation 配置迁移为内置 OpenCode 模板；自定义 command 保留，但声明 backend 仍必须是 `opencode` 或 `codex`。
+- 文档：同步 README/USAGE、CHANGELOG/ROADMAP、正式 annotation workflow/architecture 文档、staged Requirements 文档、docs registry、task_plan/findings 和 V0.6.2g verification script 术语。
+- 验证：
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `55 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'annotation or final_acceptance or blocked'` -> `45 passed, 202 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q` -> `11 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `869 passed, 1 skipped in 83.18s`。
+  - `bash scripts/verify/v062g-annotation-tmux-runtime.sh` -> `4 passed` + `18 passed`。
+  - `bash scripts/verify/v062g-annotation-fallback-env.sh` -> `6 passed`。
+  - `bash scripts/verify/v062g-product-design-prompt.sh` -> `5 passed`。
+  - `bash scripts/verify/v062g-prototype-and-docs.sh` -> passed and refreshed V0.6.2g visual marker artifacts。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2g_all.deb`；`dpkg-deb --field` 和解包后 `waygate --version` 均为 `0.6.2g`。
+
+### Final Acceptance 非浏览器 Prototype Conformance 误判修复
+- **状态：** implementation verified; focused/full regression passed; live V0.6.2g blocker cleared.
+- 根因：Final Acceptance prototype conformance matrix 对所有 production targets 无条件调用 real E2E evidence 校验，导致 `module/artifact/state/events` + `surface kind=other` 的 artifact-local workflow review evidence 即使 `integration/local_real` passed 且有完整 `visual_evidence_refs`，仍被误判为 `not e2e evidence`。
+- 修复：Final Acceptance evidence 判定改为 target-aware；浏览器 route/path `/...` 和 `route/page/component/dialog/drawer/panel/form` surface 继续要求 real E2E，非浏览器 `module/artifact/state/events` + `other` surface 接受 passed non-mock local evidence，并保持视觉证据、runtime errors 和 core API mock 阻断规则。
+- 修复：`get_status()` 对 `status=blocked` 且 `blockedReason` 以 `final acceptance gate invalid:` 开头、当前位置为 `FINAL_WALKTHROUGH_PREPARE` 的 deterministic blocker 重新计算 Final Acceptance preflight；新规则下通过时清除 blocker 并恢复 `status=active`，不手改 live `session.json`。
+- 文档：同步 `docs/workflow/prototype-fidelity-policy.md`，明确 Final Acceptance 的 prototype conformance E2E 要求按 target 类型区分，浏览器 surface 不放宽。
+- 验证：
+  - RED/GREEN: `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q -k 'non_browser_prototype_conformance or browser_route_prototype_target'` -> `2 passed` after fix，修复前非浏览器用例失败为 `not e2e evidence`。
+  - RED/GREEN: `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'stale_final_acceptance_gate_invalid_blocker'` -> `1 passed` after fix，修复前 state 保持 `blocked`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q -k 'prototype_conformance or visual'` -> `6 passed, 97 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q -k 'prototype_conformance'` -> `2 passed, 74 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'final_acceptance or blocked'` -> `44 passed, 203 deselected`。
+  - 标准命令 `python -m pytest workflow_controller/tests -q` 无法执行：当前 shell 中 `python` 命令不存在。
+  - `python3 -m pytest workflow_controller/tests -q` -> `868 passed, 1 skipped in 84.99s`。
+  - `waygate status --state-dir .rrc-controller-v0.6.2g` -> `currentStep=FINAL_WALKTHROUGH_PREPARE status=active nextAction=prepare_final_walkthrough projectTargetVersion=V0.6.2g`；live events 记录 `final_acceptance_gate_invalid_blocker_cleared`，不再有 `not e2e evidence` blocker。
+- 补充：`scripts/verify/v062g-annotation-tmux-runtime.sh` 保留历史脚本名，但当前职责改为验证 annotation 专用 tmux runtime 已移除，设置旧环境变量或处于 tmux 环境也仍走 subprocess。
+- 验证：`bash scripts/verify/v062g-annotation-tmux-runtime.sh` -> `4 passed` + `18 passed`。
+
+### V0.6.2g Product Design Prompt Contract and annotation subprocess baseline
+- **状态：** implementation verified; annotation pane runtime removed in follow-up.
+- 已实现 Product Design prompt 三分支：无 supported spec 时要求 same tmux conversation brainstorming 与逐页/逐入口确认；supported spec 会话保持 staged artifact compatibility；backend/API/CLI-only scope 只基于正向 no-UI/no-prototype 依据做一次确认。
+- Annotation runtime 基线改为 subprocess-only；旧 tmux 环境变量和 tmux-backed state 不再影响 annotation 执行。pytest helper 仍默认移除继承的 `TMUX` / `TMUX_PANE`，避免 contract-mock 测试误受开发者 shell 环境影响。
+- 已完成验证：
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'rrc_subprocess_env_strips_inherited_tmux_context'` -> `1 passed`。
+  - `bash scripts/verify/v062g-annotation-tmux-runtime.sh` -> `4 passed` + `18 passed`。
+  - `bash scripts/verify/v062g-annotation-fallback-env.sh` -> `6 passed`。
 
 ### V0.6.2f Final Acceptance 终验同步
 - **状态：** Final Acceptance approved; human-readable status synced.

@@ -26,10 +26,10 @@ Waygate 不是要把人移出流程，而是把人的注意力放回真正重要
 | --- | --- |
 | 可恢复工作流 | `session.json`、`events.jsonl`、approvals 和 artifacts 是事实源。 |
 | Requirements Gate | 生成人类可审阅的需求与验收标准，并执行可追溯校验，包括 V0.6.0j 基础设施缺口追问和验证留痕。 |
-| 分段 Requirements Package | V0.6.2 把过载的 Requirements draft 拆成 scope、产品设计、架构和测试策略 checkpoint；V0.6.2a 确保这些 checkpoint 围绕目标产品/目标系统表面；V0.6.2b 让 Product Design 原型预览常驻到 Requirements review；V0.6.2c 使用中文主 checkpoint 名称并支持 Requirements checkpoint 定点 revise；V0.6.2d 增加多单元 handoff 连贯性硬门禁，要求下游 Builder 启动前已有上游证据；V0.6.2e 允许 `--spec` 导入真实需求文档包目录；V0.6.2f 增加 approval notes 非合同上下文、人工编辑正文受控采纳、Ctrl+C human_interrupt 恢复和 review surface 一致性证据。 |
+| 分段 Requirements Package | V0.6.2 把过载的 Requirements draft 拆成 scope、产品设计、架构和测试策略 checkpoint；V0.6.2a 确保这些 checkpoint 围绕目标产品/目标系统表面；V0.6.2b 让 Product Design 原型预览常驻到 Requirements review；V0.6.2c 使用中文主 checkpoint 名称并支持 Requirements checkpoint 定点 revise；V0.6.2d 增加多单元 handoff 连贯性硬门禁，要求下游 Builder 启动前已有上游证据；V0.6.2e 允许 `--spec` 导入真实需求文档包目录；V0.6.2f 增加 approval notes 非合同上下文、人工编辑正文受控采纳、Ctrl+C human_interrupt 恢复和 review surface 一致性证据；V0.6.2g 增加无 spec Product Design brainstorming prompt 分支，并保持 annotation pass 只走 subprocess。 |
 | 外部 spec intake | V0.6.1 会把受支持的 OpenSpec/OpenAPI 和 Spec Kit 来源导入为可审计 conversion artifacts；V0.6.2e 同时支持 Open Spec package directory 和 Spec Kit feature package directory，并对 unsupported/deferred 格式给出清晰错误。 |
 | Unit Plan Gate | Unit Plan 必须映射目标、AC、测试用例、Journey 和验证命令。 |
-| 标注 Agent | V0.6.1 支持在 Requirements、Unit Plan 和 Final Acceptance 人工 gate 前运行非批准型、按 role 配置的 annotation / verification-assist pass。 |
+| 标注 Agent | V0.6.1 支持在 Requirements、Unit Plan 和 Final Acceptance 人工 gate 前运行非批准型、按 role 配置的 annotation / verification-assist pass。Annotation 只通过 subprocess 执行，声明 backend 仅支持 `opencode` 和 `codex`。Claude Code 仍可作为普通 `tmux-claude` workflow runner，但不能作为 annotation agent backend。 |
 | Runner 支持 | 支持 subprocess、`tmux-claude`、`tmux-codex`；可以自动识别已有 tmux pane。 |
 | 精修与评审 | Builder 之后可进入 CodeSimplifier/Refiner 和 Reviewer。 |
 | 验证证据 | Verifier 输出结构化 evidence rows，覆盖 AC、Test Case、命令和 artifact。 |

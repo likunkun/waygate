@@ -22,7 +22,6 @@ ANNOTATION_ROLES = (
 )
 
 ANNOTATION_BACKENDS = (
-    'claude-code',
     'opencode',
     'codex',
 )
@@ -58,8 +57,6 @@ ROLE_ALIASES = {
 }
 
 BACKEND_ALIASES = {
-    'claude': 'claude-code',
-    'claude-code': 'claude-code',
     'opencode': 'opencode',
     'codex': 'codex',
 }
@@ -327,7 +324,7 @@ def _annotation_backend_for_cli(raw: str) -> str:
     if not backend:
         raise ValueError(
             'Unsupported annotation backend: '
-            f'{raw}; expected one of claude-code, claude, opencode, codex'
+            f'{raw}; expected one of opencode, codex'
         )
     return backend
 
@@ -345,15 +342,9 @@ def _default_cli_annotation_agent_config(role: str, backend: str) -> dict[str, A
     if backend == 'codex':
         command = 'codex'
         args = _current_codex_annotation_args()
-    elif backend == 'claude-code':
-        command = 'claude'
-        args = _current_claude_code_annotation_args()
     else:
         command = 'opencode'
-        args = [
-            'run',
-            DEFAULT_ANNOTATION_REQUEST,
-        ]
+        args = _current_opencode_annotation_args()
     return {
         'role': role,
         'enabled': True,
@@ -379,14 +370,10 @@ def _current_codex_annotation_args() -> list[str]:
     ]
 
 
-def _current_claude_code_annotation_args() -> list[str]:
+def _current_opencode_annotation_args() -> list[str]:
     return [
-        '--bare',
-        '--no-session-persistence',
-        '-p',
+        'run',
         DEFAULT_ANNOTATION_REQUEST,
-        '--permission-mode',
-        'bypassPermissions',
     ]
 
 
@@ -412,6 +399,17 @@ def _legacy_builtin_claude_code_annotation_args() -> list[str]:
     ]
 
 
+def _current_builtin_claude_code_annotation_args() -> list[str]:
+    return [
+        '--bare',
+        '--no-session-persistence',
+        '-p',
+        DEFAULT_ANNOTATION_REQUEST,
+        '--permission-mode',
+        'bypassPermissions',
+    ]
+
+
 def _is_legacy_builtin_codex_annotation_config(
     config: dict[str, Any],
     role: str,
@@ -428,7 +426,7 @@ def _is_legacy_builtin_codex_annotation_config(
     )
 
 
-def _is_legacy_builtin_claude_code_annotation_config(
+def _is_builtin_claude_code_annotation_config(
     config: dict[str, Any],
     role: str,
     args: list[str],
@@ -440,7 +438,10 @@ def _is_legacy_builtin_claude_code_annotation_config(
         configured_role == role
         and backend == 'claude-code'
         and command == 'claude'
-        and args == _legacy_builtin_claude_code_annotation_args()
+        and tuple(args) in {
+            tuple(_legacy_builtin_claude_code_annotation_args()),
+            tuple(_current_builtin_claude_code_annotation_args()),
+        }
     )
 
 
@@ -461,14 +462,20 @@ def migrate_legacy_annotation_agent_configs(state: dict[str, Any]) -> bool:
             if _is_legacy_builtin_codex_annotation_config(raw_config, role, args):
                 raw_config['args'] = _current_codex_annotation_args()
                 changed = True
-            elif _is_legacy_builtin_claude_code_annotation_config(raw_config, role, args):
-                raw_config['args'] = _current_claude_code_annotation_args()
+            elif _is_builtin_claude_code_annotation_config(raw_config, role, args):
+                raw_config['backend'] = 'opencode'
+                raw_config['command'] = 'opencode'
+                raw_config['args'] = _current_opencode_annotation_args()
                 changed = True
     return changed
 
 
 class AnnotationAgentError(RuntimeError):
     """Raised when an enabled annotation pass cannot safely complete."""
+
+    def __init__(self, message: str, *, runner_metadata: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.runner_metadata = runner_metadata or {}
 
 
 @dataclass(frozen=True)
@@ -542,24 +549,28 @@ def normalize_annotation_config(
         raise ValueError(f'Annotation role mismatch: expected {role}, got {configured_role}')
 
     backend = str(raw_config.get('backend') or 'codex').strip()
+    command = str(raw_config.get('command') or '').strip()
+    raw_args = raw_config.get('args') or []
+    if not isinstance(raw_args, list):
+        raise ValueError(f'Annotation config for {role} args must be a list')
+    args = [str(arg) for arg in raw_args]
+
+    if _is_builtin_claude_code_annotation_config(raw_config, role, args):
+        backend = 'opencode'
+        command = 'opencode'
+        args = _current_opencode_annotation_args()
+
     if backend not in ANNOTATION_BACKENDS:
         raise ValueError(
             'Unsupported annotation backend: '
             f'{backend}; expected one of {", ".join(ANNOTATION_BACKENDS)}'
         )
 
-    command = str(raw_config.get('command') or '').strip()
     if enabled and not command:
         raise ValueError(f'Annotation config for {role} must include command when enabled')
 
-    raw_args = raw_config.get('args') or []
-    if not isinstance(raw_args, list):
-        raise ValueError(f'Annotation config for {role} args must be a list')
-    args = [str(arg) for arg in raw_args]
     if _is_legacy_builtin_codex_annotation_config(raw_config, role, args):
         args = _current_codex_annotation_args()
-    elif _is_legacy_builtin_claude_code_annotation_config(raw_config, role, args):
-        args = _current_claude_code_annotation_args()
 
     raw_env_keys = raw_config.get('env_keys') or raw_config.get('envKeys') or []
     if not isinstance(raw_env_keys, list):
@@ -1089,8 +1100,10 @@ def run_annotation_pass(
     runner_metadata['prompt_template_hash'] = prompt_hash
     runner_metadata['prompt_path'] = str(prompt_path)
     runner_metadata['gate_content_hash'] = gate_content_hash
+    runner_metadata['runtime'] = 'subprocess'
 
     if not config.enabled:
+        runner_metadata['runtime'] = 'skipped'
         return AnnotationRunResult(
             role=role,
             backend=config.backend,
@@ -1888,7 +1901,7 @@ def _handle_annotation_failure(
     )
     if config.failure_policy == 'warn':
         return result
-    raise AnnotationAgentError(message)
+    raise AnnotationAgentError(message, runner_metadata=runner_metadata)
 
 
 def _write_failure_artifact(

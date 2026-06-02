@@ -552,6 +552,7 @@ class RalphRefinerController:
         annotation_blocker_reconciled = self._reconcile_annotation_runtime_blocker_state(state)
         stale_builder_blocker_cleared = self._clear_stale_builder_agent_blocked_state(state)
         builder_blocked_reconciled = self._reconcile_builder_agent_blocked_state(state)
+        final_acceptance_blocker_cleared = self._clear_final_acceptance_gate_invalid_blocked_state(state)
         before_requirements_validation = _requirements_validation_state_key(state)
         before_validation = _unit_plan_validation_state_key(state)
         state = self._refresh_requirements_gate_validation(state)
@@ -562,6 +563,7 @@ class RalphRefinerController:
             or annotation_blocker_reconciled
             or stale_builder_blocker_cleared
             or builder_blocked_reconciled
+            or final_acceptance_blocker_cleared
             or generated_ao_cleanup_changed
             or generated_ao_blocker_cleared
             or _requirements_validation_state_key(state) != before_requirements_validation
@@ -1208,6 +1210,9 @@ class RalphRefinerController:
                 elapsed_seconds=elapsed,
                 error=str(exc),
             )
+            runtime_metadata = _safe_annotation_runtime_metadata(
+                getattr(exc, 'runner_metadata', None)
+            )
             state['status'] = 'blocked'
             state['blockedReason'] = f'{role} annotation pass failed before human gate: {exc}'
             state['blockedContext'] = {
@@ -1215,11 +1220,13 @@ class RalphRefinerController:
                 'source': 'annotation_agent',
                 'role': role,
                 'gate_path': str(gate_path),
+                **runtime_metadata,
             }
             state['pendingAnnotationBeforeHumanGate'] = {
                 'role': role,
                 'gate_path': str(gate_path),
                 'validator_summary': validator_summary,
+                **runtime_metadata,
             }
             self.store.append_event('annotation_pass_blocked_human_gate', {
                 'task_id': state.get('task_id'),
@@ -1227,6 +1234,7 @@ class RalphRefinerController:
                 'role': role,
                 'gate_path': str(gate_path),
                 'reason': str(exc),
+                **runtime_metadata,
             })
             return False
         elapsed = time.monotonic() - started_at
@@ -2095,6 +2103,33 @@ class RalphRefinerController:
         state['blockedReason'] = None
         state.pop('blockedContext', None)
         self.store.append_event('final_scope_generated_ao_blocker_cleared', {
+            'task_id': state.get('task_id'),
+            'unit_id': state.get('currentUnitId'),
+            'previous_blocked_reason': reason,
+        })
+        return True
+
+    def _clear_final_acceptance_gate_invalid_blocked_state(self, state: dict[str, Any]) -> bool:
+        reason = str(state.get('blockedReason') or '').strip()
+        if (
+            state.get('status') != 'blocked'
+            or state.get('currentStep') != 'FINAL_WALKTHROUGH_PREPARE'
+            or not reason.startswith('final acceptance gate invalid:')
+        ):
+            return False
+        refreshed_reason = self._final_acceptance_gate_invalid_reason(
+            state,
+            require_manual_observation=False,
+        )
+        if refreshed_reason:
+            if refreshed_reason != reason:
+                state['blockedReason'] = refreshed_reason
+                return True
+            return False
+        state['status'] = 'active'
+        state['blockedReason'] = None
+        state.pop('blockedContext', None)
+        self.store.append_event('final_acceptance_gate_invalid_blocker_cleared', {
             'task_id': state.get('task_id'),
             'unit_id': state.get('currentUnitId'),
             'previous_blocked_reason': reason,
@@ -6160,6 +6195,7 @@ def _requirements_controller_validation_missing_fields(reason: str) -> list[str]
     text = reason.lower()
     fields: list[str] = []
     for field, markers in (
+        ('AC/Journey contract', ('conflicting ac verification layers', 'ac verification layer conflict')),
         ('Journey Status column', ('conflicting journey status', 'journey status conflict', 'status column')),
         ('Journey Acceptance Matrix', ('journey contract required', 'journey acceptance matrix', 'active journey rows', 'journey rows', '旅程合同', '旅程契约')),
         ('Journey / Title / Status / Steps / AC / Verification Layer', ('journey contract required', 'journey acceptance matrix', 'active journey rows', 'journey rows', 'missing steps', 'missing linked ac', 'missing valid verification layer')),
@@ -6187,6 +6223,12 @@ def _requirements_controller_validation_expected_example(
             '`page_states`, `click_path`, linked AC/Journey ids, and production `implementation_targets`.'
         )
     if stage == 'scope':
+        if _requirements_controller_validation_is_ac_layer_conflict(reason):
+            return (
+                '- Resolve the AC/Journey contract conflict in the canonical Scope tables: each current-version '
+                'AC ID has one `Verification Layer` across the staged package.\n'
+                '- Use `Source AC` or `Source AC / TC` only for provenance labels, not as current AC obligations.'
+            )
         if _requirements_controller_validation_is_journey_status_conflict(reason):
             return (
                 '- Resolve the Journey Status conflict in the canonical Journey table: each Journey ID has one '
@@ -6218,6 +6260,11 @@ def _requirements_controller_validation_is_journey_status_conflict(reason: str) 
     return 'conflicting journey status' in text or 'journey status conflict' in text
 
 
+def _requirements_controller_validation_is_ac_layer_conflict(reason: str) -> bool:
+    text = str(reason or '').lower()
+    return 'conflicting ac verification layers' in text or 'ac verification layer conflict' in text
+
+
 def _blocked_category(state: dict[str, Any]) -> str:
     return classify_blocked_reason(str(state.get('blockedReason') or ''), state)
 
@@ -6241,6 +6288,16 @@ def _annotation_role_from_blocker_state(state: dict[str, Any]) -> str | None:
         if candidate in reason:
             return candidate
     return ANNOTATION_ROLE_BY_WAITING_STEP.get(str(state.get('currentStep') or ''))
+
+
+def _safe_annotation_runtime_metadata(metadata: Any) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    result: dict[str, Any] = {}
+    runtime = str(metadata.get('runtime') or '').strip()
+    if runtime:
+        result['annotation_runtime'] = runtime
+    return result
 
 
 def _builder_blocked_context_key(context: dict[str, Any]) -> str:

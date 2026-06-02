@@ -2,6 +2,14 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2g
+
+- Product Design prompt 增加三条分支：无 spec 时在同一 tmux conversation 使用 brainstorming 并逐页/逐入口确认；有 supported spec 时保持兼容 staged artifact flow；backend/API/CLI-only 时基于 Scope 正向依据做一次 no-UI/no-prototype 确认。
+- 移除 annotation 专用 tmux pane runtime。Annotation pass 现在始终使用 subprocess；`WAYGATE_ANNOTATION_TMUX` 作为废弃 no-op 被接受但不再创建 pane、run-local wrapper、run id 或 `done.json`。
+- 移除 Claude Code annotation backend。声明式 annotation backend 仅支持 `opencode` 和 `codex`；已有 session 中的 Waygate 内置 Claude annotation 配置会迁移为内置 OpenCode 模板。Claude Code 仍可作为普通 `tmux-claude` workflow runner 使用。
+- 强化 env key-only audit metadata，state、events、summaries、artifacts 和 captured output 只记录 key 名，不记录 env value、token、database URL value、password、secret、`api_key`、signature 或 proxy value。
+- 新增 V0.6.2g `scripts/verify/` 脚本入口，并同步正式 workflow、architecture、usage、release 和 roadmap 文档；V0.6.3 Strict Test Presence / Per-Role Runner Configuration 继续作为后续范围。
+
 ## 0.6.2f
 
 - Plannotator approve payload 中的 Requirements / Unit Plan approval notes 会以 audit-only advisory context 持久化，并在下一阶段 prompt 的 `Approval Notes Non-Contract Context` 中注入。

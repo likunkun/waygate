@@ -58,6 +58,7 @@ from workflow_controller.requirements_package import (
 )
 from workflow_controller.requirements_ids import (
     AC_ID_PATTERN,
+    JOURNEY_ID_PATTERN,
     acceptance_criterion_ids_in_text,
     journey_ids_in_text,
 )
@@ -811,7 +812,7 @@ def _staged_output_unknown_reference_issues(
 ) -> list[str]:
     known_acs = known_scope_ids.get('acs') or set()
     known_journeys = known_scope_ids.get('journeys') or set()
-    unknown_acs = sorted(_requirements_ac_ids_in_text(content) - known_acs)
+    unknown_acs = sorted(_requirements_current_ac_ids_in_text(content) - known_acs)
     unknown_journeys = sorted(_requirements_journey_ids_in_text(content) - known_journeys)
     issues: list[str] = []
     if unknown_acs:
@@ -3506,7 +3507,65 @@ def _requirements_design_architecture_traceability(content: str) -> dict[str, di
 
 
 def _requirements_acceptance_criterion_ids(content: str) -> set[str]:
-    return acceptance_criterion_ids_in_text(content)
+    return _requirements_current_ac_ids_in_text(content)
+
+
+def _requirements_current_ac_ids_in_text(content: str) -> set[str]:
+    ids: set[str] = set()
+    source_ac_indices: set[int] | None = None
+    for line in content.splitlines():
+        if _is_markdown_table_separator(line):
+            continue
+        cells = _markdown_table_cells(line)
+        if cells:
+            header_source_indices = _requirements_source_ac_table_indices(cells)
+            if header_source_indices is not None:
+                source_ac_indices = header_source_indices
+                continue
+            if source_ac_indices is not None:
+                for index, cell in enumerate(cells):
+                    if index in source_ac_indices:
+                        continue
+                    ids.update(_requirements_ac_ids_in_text(cell))
+                continue
+            ids.update(_requirements_ac_ids_in_text(line))
+            continue
+        source_ac_indices = None
+        ids.update(_requirements_ac_ids_in_text(line))
+    return ids
+
+
+def _requirements_source_ac_table_indices(cells: list[str]) -> set[int] | None:
+    indices: set[int] = set()
+    for index, cell in enumerate(cells):
+        raw = str(cell or '').strip().lower()
+        normalized = _normalized_table_header(cell)
+        if normalized in {
+            'sourceac',
+            'sourceacs',
+            'sourceactc',
+            'sourceacceptancecriterion',
+            'sourceacceptancecriteria',
+            'sourceacceptancecriterionid',
+            'sourceacceptancecriteriaid',
+            'sourceacceptancecriterionids',
+            'sourceacceptancecriteriaids',
+        }:
+            indices.add(index)
+            continue
+        if normalized.startswith('source') and (
+            normalized.endswith('ac')
+            or 'actc' in normalized
+            or 'acceptancecriterion' in normalized
+            or 'acceptancecriteria' in normalized
+        ):
+            indices.add(index)
+            continue
+        if 'source' in raw and re.search(r'(?:^|[^a-z0-9_])acs?(?:$|[^a-z0-9_])|acceptance\s+criter', raw):
+            indices.add(index)
+    if not indices:
+        return None
+    return indices
 
 
 def _requirements_acceptance_criterion_layers(content: str) -> dict[str, str]:
@@ -3547,6 +3606,11 @@ def _requirements_ac_layer_pairs(content: str) -> list[tuple[str, str]]:
         if inline_pairs:
             pairs.extend(inline_pairs)
             continue
+        if (
+            _requirements_line_has_journey_inline_verification_marker(line)
+            and not _requirements_line_starts_with_layer_bucket(line)
+        ):
+            continue
         layer = _requirements_verification_layer_from_line(line)
         if not layer:
             continue
@@ -3577,6 +3641,16 @@ def _requirements_inline_ac_layer_pairs(text: str) -> list[tuple[str, str]]:
             seen.add(pair)
             pairs.append(pair)
     return pairs
+
+
+def _requirements_line_has_journey_inline_verification_marker(line: str) -> bool:
+    patterns = [
+        rf'{JOURNEY_ID_PATTERN}\s*\[\s*verification\s*:\s*[A-Za-z0-9_-]+\s*\]',
+        rf'{JOURNEY_ID_PATTERN}\s*\(\s*(?:unit|functional|integration|static|regression|prerequisite|e2e|manual)\s*\)',
+        rf'{JOURNEY_ID_PATTERN}\s+verification(?:\s+layer)?\s*[:：=]\s*[A-Za-z0-9_-]+\b',
+        rf'{JOURNEY_ID_PATTERN}\s+验证(?:层级|层|方式)?\s*[:：]\s*(?:[A-Za-z0-9_-]+|单元|集成|静态|回归|前置|前置条件|前置依赖|端到端|人工)\b',
+    ]
+    return any(re.search(pattern, line, re.IGNORECASE) for pattern in patterns)
 
 
 def _requirements_line_starts_with_layer_bucket(line: str) -> bool:

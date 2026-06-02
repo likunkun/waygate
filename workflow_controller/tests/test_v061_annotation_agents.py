@@ -45,6 +45,8 @@ def _clear_annotation_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _run_rrc(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    env.pop('TMUX', None)
+    env.pop('TMUX_PANE', None)
     env['PYTHONPATH'] = f"{ROOT}{os.pathsep}{env['PYTHONPATH']}" if env.get('PYTHONPATH') else str(ROOT)
     return subprocess.run(
         [sys.executable, '-m', 'workflow_controller.rrc_controller', *args],
@@ -66,6 +68,85 @@ def _read_events(state_dir: Path) -> list[dict[str, Any]]:
 
 def _event_types(state_dir: Path) -> list[str]:
     return [event['type'] for event in _read_events(state_dir)]
+
+
+def _prepend_path(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    current = os.environ.get('PATH', '')
+    monkeypatch.setenv('PATH', f'{path}{os.pathsep}{current}' if current else str(path))
+
+
+def _make_fake_annotation_tmux(
+    tmp_path: Path,
+    *,
+    split_pane_id: str = '%77',
+    done_run_id: str | None = None,
+    write_artifact: bool = True,
+    split_failure: bool = False,
+    artifact_payload: dict[str, Any] | None = None,
+) -> Path:
+    tmux_log = tmp_path / 'tmux.log'
+    tmux_buffer = tmp_path / 'tmux-buffer.md'
+    fake_tmux = tmp_path / 'tmux'
+    payload = artifact_payload or {'summary': '可见标注运行已完成', 'issues': []}
+    done_run_id_literal = '__CURRENT__' if done_run_id is None else done_run_id
+    fake_tmux.write_text(
+        f"""#!/usr/bin/env python3
+from __future__ import annotations
+import json
+import re
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+with Path({str(tmux_log)!r}).open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args, ensure_ascii=False) + "\\n")
+
+def field(text: str, name: str) -> str:
+    match = re.search(r"^" + re.escape(name) + r":\\s*(.+?)\\s*$", text, re.M)
+    if not match:
+        return ""
+    return match.group(1).strip().strip("`")
+
+if args[:1] == ["split-window"]:
+    if {split_failure!r}:
+        print("split-window -e unsupported", file=sys.stderr)
+        sys.exit(1)
+    print({split_pane_id!r})
+    tmux_env = {{}}
+    for index, arg in enumerate(args):
+        if arg == "-e" and index + 1 < len(args):
+            key, _sep, value = args[index + 1].partition("=")
+            tmux_env[key] = value
+    command_path = Path(args[-1]) if args else Path("")
+    if command_path.name == "run-local.sh":
+        artifact_path = Path(tmux_env.get("WAYGATE_ANNOTATION_ARTIFACT", ""))
+        done_file = Path(tmux_env.get("WAYGATE_ANNOTATION_DONE_FILE", ""))
+        run_id = tmux_env.get("WAYGATE_ANNOTATION_RUN_ID", "")
+        if {write_artifact!r}:
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(json.dumps({payload!r}, ensure_ascii=False), encoding="utf-8")
+        done_file.parent.mkdir(parents=True, exist_ok=True)
+        done_file.write_text(
+            json.dumps({{
+                "status": "done",
+                "summary": "tmux annotation complete",
+                "run_id": run_id if {done_run_id_literal!r} == "__CURRENT__" else {done_run_id_literal!r},
+            }}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+elif args[:1] == ["set-buffer"]:
+    Path({str(tmux_buffer)!r}).write_text(args[-1] if args else "", encoding="utf-8")
+elif args[:1] == ["paste-buffer"]:
+    pass
+elif args[:1] == ["send-keys"] and args[-1:] == ["C-m"]:
+    pass
+elif args[:1] == ["kill-pane"]:
+    pass
+""",
+        encoding='utf-8',
+    )
+    fake_tmux.chmod(0o755)
+    return fake_tmux
 
 
 def _base_state(tmp_path: Path, *, step: str, role: str, artifact_name: str) -> dict[str, Any]:
@@ -1291,35 +1372,37 @@ def test_approved_human_gate_does_not_start_annotation_after_approval(
 
 
 def test_annotation_backends_normalize_all_roles_and_backend_families(tmp_path: Path) -> None:
-    for role, backend in zip(ANNOTATION_ROLES, ANNOTATION_BACKENDS, strict=True):
-        state = {
-            'annotationAgents': {
-                role: {
-                    'enabled': True,
-                    'role': role,
-                    'backend': backend,
-                    'command': sys.executable,
-                    'args': ['-c', 'print("annotation")'],
-                    'env_keys': ['WAYGATE_FAKE_KEY'],
-                    'timeout_seconds': 9,
-                    'artifact_path': f'{role}.json',
-                    'prompt_template': 'risk-json-v1',
-                    'failure_policy': 'block',
+    assert ANNOTATION_BACKENDS == ('opencode', 'codex')
+    for role in ANNOTATION_ROLES:
+        for backend in ANNOTATION_BACKENDS:
+            state = {
+                'annotationAgents': {
+                    role: {
+                        'enabled': True,
+                        'role': role,
+                        'backend': backend,
+                        'command': sys.executable,
+                        'args': ['-c', 'print("annotation")'],
+                        'env_keys': ['WAYGATE_FAKE_KEY'],
+                        'timeout_seconds': 9,
+                        'artifact_path': f'{role}.json',
+                        'prompt_template': 'risk-json-v1',
+                        'failure_policy': 'block',
+                    }
                 }
             }
-        }
-        config = normalize_annotation_config(state, role, artifacts_dir=tmp_path)
+            config = normalize_annotation_config(state, role, artifacts_dir=tmp_path)
 
-        assert config.enabled is True
-        assert config.role == role
-        assert config.backend == backend
-        assert config.command == sys.executable
-        assert config.args == ['-c', 'print("annotation")']
-        assert config.env_keys == ['WAYGATE_FAKE_KEY']
-        assert config.timeout_seconds == 9
-        assert config.artifact_path == tmp_path / f'{role}.json'
-        assert config.prompt_template == 'risk-json-v1'
-        assert config.failure_policy == 'block'
+            assert config.enabled is True
+            assert config.role == role
+            assert config.backend == backend
+            assert config.command == sys.executable
+            assert config.args == ['-c', 'print("annotation")']
+            assert config.env_keys == ['WAYGATE_FAKE_KEY']
+            assert config.timeout_seconds == 9
+            assert config.artifact_path == tmp_path / f'{role}.json'
+            assert config.prompt_template == 'risk-json-v1'
+            assert config.failure_policy == 'block'
 
 
 def test_cli_annotation_agent_codex_enables_all_roles_with_safe_defaults(tmp_path: Path) -> None:
@@ -1389,19 +1472,10 @@ def test_builtin_annotation_backend_templates_match_cli_contracts() -> None:
     ]
     assert '--ask-for-approval' not in codex['args']
 
-    claude = config_for('claude-code')
-    assert claude['command'] == 'claude'
-    assert claude['args'] == [
-        '--bare',
-        '--no-session-persistence',
-        '-p',
-        (
-            'Read {prompt_path}. Output only the requested risk-only JSON annotation artifact. '
-            'Do not approve, skip, modify, or bypass any Waygate gate.'
-        ),
-        '--permission-mode',
-        'bypassPermissions',
-    ]
+    for removed_backend in ('claude-code', 'claude'):
+        args = SimpleNamespace(**{**base, 'annotation_agent': [f'requirements={removed_backend}']})
+        with pytest.raises(ValueError, match='Unsupported annotation backend'):
+            build_annotation_agent_cli_overrides(args)
 
     opencode = config_for('opencode')
     assert opencode['command'] == 'opencode'
@@ -1416,6 +1490,7 @@ def test_builtin_annotation_backend_templates_match_cli_contracts() -> None:
 
 def test_legacy_builtin_codex_annotation_args_normalize_to_current_cli_template(tmp_path: Path) -> None:
     state = {
+        'tmuxTarget': '1.2',
         'annotationAgents': {
             'requirements_annotation': {
                 'enabled': True,
@@ -1456,7 +1531,7 @@ def test_legacy_builtin_codex_annotation_args_normalize_to_current_cli_template(
     ]
 
 
-def test_legacy_builtin_claude_code_annotation_args_normalize_to_bare_no_session_template(
+def test_legacy_builtin_claude_code_annotation_config_migrates_to_opencode_template(
     tmp_path: Path,
 ) -> None:
     state = {
@@ -1482,17 +1557,14 @@ def test_legacy_builtin_claude_code_annotation_args_normalize_to_bare_no_session
 
     config = normalize_annotation_config(state, 'requirements_annotation', artifacts_dir=tmp_path)
 
-    assert config.command == 'claude'
+    assert config.backend == 'opencode'
+    assert config.command == 'opencode'
     assert config.args == [
-        '--bare',
-        '--no-session-persistence',
-        '-p',
+        'run',
         (
             'Read {prompt_path}. Output only the requested risk-only JSON annotation artifact. '
             'Do not approve, skip, modify, or bypass any Waygate gate.'
         ),
-        '--permission-mode',
-        'bypassPermissions',
     ]
 
 
@@ -1528,6 +1600,8 @@ def test_get_status_persists_legacy_builtin_codex_annotation_args_migration(tmp_
     controller.init_state(state, force=True)
     session_path = state_dir / 'session.json'
     saved = json.loads(session_path.read_text(encoding='utf-8'))
+    saved['annotationAgents']['requirements_annotation']['backend'] = 'codex'
+    saved['annotationAgents']['requirements_annotation']['command'] = 'codex'
     saved['annotationAgents']['requirements_annotation']['args'] = list(legacy_args)
     session_path.write_text(json.dumps(saved, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
@@ -1548,7 +1622,7 @@ def test_get_status_persists_legacy_builtin_codex_annotation_args_migration(tmp_
     ]
 
 
-def test_get_status_persists_legacy_builtin_claude_code_annotation_args_migration(
+def test_get_status_persists_legacy_builtin_claude_code_annotation_migration_to_opencode(
     tmp_path: Path,
 ) -> None:
     state_dir = tmp_path / 'state'
@@ -1578,22 +1652,23 @@ def test_get_status_persists_legacy_builtin_claude_code_annotation_args_migratio
     controller.init_state(state, force=True)
     session_path = state_dir / 'session.json'
     saved = json.loads(session_path.read_text(encoding='utf-8'))
+    saved['annotationAgents']['requirements_annotation']['backend'] = 'claude-code'
+    saved['annotationAgents']['requirements_annotation']['command'] = 'claude'
     saved['annotationAgents']['requirements_annotation']['args'] = list(legacy_args)
     session_path.write_text(json.dumps(saved, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
     controller.get_status()
 
     migrated = json.loads(session_path.read_text(encoding='utf-8'))
-    assert migrated['annotationAgents']['requirements_annotation']['args'] == [
-        '--bare',
-        '--no-session-persistence',
-        '-p',
+    migrated_config = migrated['annotationAgents']['requirements_annotation']
+    assert migrated_config['backend'] == 'opencode'
+    assert migrated_config['command'] == 'opencode'
+    assert migrated_config['args'] == [
+        'run',
         (
             'Read {prompt_path}. Output only the requested risk-only JSON annotation artifact. '
             'Do not approve, skip, modify, or bypass any Waygate gate.'
         ),
-        '--permission-mode',
-        'bypassPermissions',
     ]
 
 
@@ -1620,6 +1695,49 @@ def test_custom_annotation_agent_cmd_with_legacy_like_args_is_preserved(tmp_path
     config = normalize_annotation_config(state, 'requirements_annotation', artifacts_dir=tmp_path)
 
     assert config.args == custom_args
+
+
+def test_custom_annotation_command_can_use_claude_binary_under_supported_backend(
+    tmp_path: Path,
+) -> None:
+    state = {
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'role': 'requirements_annotation',
+                'backend': 'opencode',
+                'command': 'claude',
+                'args': ['custom', '--owned-by-operator'],
+                'artifact_path': 'requirements-draft/requirements-annotations.json',
+            }
+        }
+    }
+
+    config = normalize_annotation_config(state, 'requirements_annotation', artifacts_dir=tmp_path)
+
+    assert config.backend == 'opencode'
+    assert config.command == 'claude'
+    assert config.args == ['custom', '--owned-by-operator']
+
+
+def test_declared_claude_code_backend_is_rejected_even_with_custom_command(
+    tmp_path: Path,
+) -> None:
+    state = {
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'role': 'requirements_annotation',
+                'backend': 'claude-code',
+                'command': 'custom-annotation-runner',
+                'args': ['--operator-owned'],
+                'artifact_path': 'requirements-draft/requirements-annotations.json',
+            }
+        }
+    }
+
+    with pytest.raises(ValueError, match='Unsupported annotation backend'):
+        normalize_annotation_config(state, 'requirements_annotation', artifacts_dir=tmp_path)
 
 
 def test_cli_annotation_agent_role_assignment_command_env_timeout_policy_and_disable(tmp_path: Path) -> None:
@@ -1837,6 +1955,294 @@ def test_annotation_proxy_env_values_are_redacted_from_metadata_events_and_failu
         assert value not in serialized_evidence
     assert 'stdout proxy=[redacted]' in failure_payload['stdout']
     assert 'stderr proxy=[redacted]' in failure_payload['stderr']
+
+
+def test_annotation_tmux_env_is_ignored_and_uses_subprocess_without_tmux_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
+    _make_fake_annotation_tmux(tmp_path, split_pane_id='%77')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('WAYGATE_ANNOTATION_TMUX', '1')
+    monkeypatch.setenv('TMUX_PANE', '%main')
+    monkeypatch.setenv('WAYGATE_SECRET_TOKEN', 'secret-value-that-must-not-leak')
+    writer = _annotation_writer_script(tmp_path)
+    state = {
+        'task_id': 'target-v0-6-2g',
+        'currentUnitId': 'target-v0-6-2g',
+        'agentRunner': 'tmux-codex',
+        'tmuxTarget': '1.2',
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': sys.executable,
+                'args': [str(writer)],
+                'env_keys': ['WAYGATE_SECRET_TOKEN'],
+                'timeout_seconds': 5,
+                'artifact_path': 'requirements-draft/requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        },
+    }
+    events: list[dict[str, Any]] = []
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path / 'state',
+        artifacts_dir=tmp_path / 'artifacts',
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+        event_sink=lambda event_type, payload: events.append({'type': event_type, 'payload': payload}),
+    )
+
+    payload = json.loads(result.artifact_path.read_text(encoding='utf-8'))
+    serialized_audit = json.dumps(
+        {
+            'runner_metadata': result.runner_metadata,
+            'events': events,
+            'payload': payload,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    tmux_log = tmp_path / 'tmux.log'
+
+    assert result.status == 'completed'
+    assert state['tmuxTarget'] == '1.2'
+    assert result.runner_metadata['runtime'] == 'subprocess'
+    assert 'tmux_fallback_reason' not in result.runner_metadata
+    assert 'run_dir' not in result.runner_metadata
+    assert 'run_local_wrapper' not in result.runner_metadata
+    assert 'tmux_pane_id' not in result.runner_metadata
+    assert 'WAYGATE_SECRET_TOKEN' in result.runner_metadata['env_keys']
+    assert 'secret-value-that-must-not-leak' not in serialized_audit
+    assert not tmux_log.exists() or not tmux_log.read_text(encoding='utf-8').strip()
+    assert [event['type'] for event in events] == [
+        'annotation_pass_started',
+        'annotation_pass_completed',
+    ]
+
+
+def test_controller_annotation_uses_subprocess_and_does_not_record_temp_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
+    _make_fake_annotation_tmux(tmp_path, split_pane_id='%79', done_run_id='stale-run')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('WAYGATE_ANNOTATION_TMUX', '1')
+    monkeypatch.setenv('TMUX_PANE', '%main')
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=False)
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    gate_path.parent.mkdir(parents=True)
+    write_gate_file(gate_path, _valid_requirements_body())
+    writer = _annotation_writer_script(tmp_path)
+    state = {
+        'task_id': 'target-v0-6-2g',
+        'currentUnitId': 'target-v0-6-2g',
+        'workspacePath': str(tmp_path),
+        'executionWorkspacePath': str(tmp_path),
+        'agentRunner': 'tmux-codex',
+        'tmuxTarget': '1.2',
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': sys.executable,
+                'args': [str(writer)],
+                'timeout_seconds': 5,
+                'artifact_path': 'requirements-draft/requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        },
+    }
+
+    result = controller._run_annotation_before_human_gate(
+        state,
+        role='requirements_annotation',
+        gate_path=gate_path,
+        validator_summary='requirements preflight passed',
+    )
+
+    assert result is True
+    assert state.get('status') != 'blocked'
+    assert state['tmuxTarget'] == '1.2'
+    assert 'blockedContext' not in state
+    assert 'pendingAnnotationBeforeHumanGate' not in state
+    tmux_log = tmp_path / 'tmux.log'
+    assert not tmux_log.exists() or not tmux_log.read_text(encoding='utf-8').strip()
+
+
+def test_opencode_annotation_uses_configured_subprocess_command_when_tmux_env_is_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
+    _make_fake_annotation_tmux(tmp_path, split_pane_id='%80')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('WAYGATE_ANNOTATION_TMUX', '1')
+    monkeypatch.setenv('TMUX_PANE', '%main')
+    opencode = tmp_path / 'opencode'
+    opencode.write_text(
+        '#!/usr/bin/env python3\n'
+        'from __future__ import annotations\n'
+        'import json, os, sys\n'
+        "assert sys.argv[1] == 'run'\n"
+        "assert os.environ['WAYGATE_ANNOTATION_PROMPT'] in sys.argv[2]\n"
+        "artifact = os.environ['WAYGATE_ANNOTATION_ARTIFACT']\n"
+        "with open(artifact, 'w', encoding='utf-8') as f:\n"
+        "    json.dump({'summary': 'OpenCode 子进程标注完成', 'issues': []}, f, ensure_ascii=False)\n",
+        encoding='utf-8',
+    )
+    opencode.chmod(0o755)
+    state = {
+        'agentRunner': 'tmux-codex',
+        'tmuxTarget': '1.2',
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'opencode',
+                'command': str(opencode),
+                'args': ['run', 'Read {prompt_path} and write {artifact_path}'],
+                'timeout_seconds': 2,
+                'artifact_path': 'requirements-draft/requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        },
+    }
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path / 'state',
+        artifacts_dir=tmp_path / 'artifacts',
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+    )
+
+    assert result.status == 'completed'
+    assert result.runner_metadata['runtime'] == 'subprocess'
+    assert result.runner_metadata['command'] == str(opencode)
+    assert result.runner_metadata['args'] == [
+        'run',
+        'Read {prompt_path} and write {artifact_path}',
+    ]
+    assert not (tmp_path / 'tmux.log').exists()
+
+
+def test_custom_annotation_command_expands_args_through_subprocess_when_tmux_env_is_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
+    _make_fake_annotation_tmux(tmp_path, split_pane_id='%81')
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('WAYGATE_ANNOTATION_TMUX', '1')
+    monkeypatch.setenv('TMUX_PANE', '%main')
+    custom_command = tmp_path / 'custom annotation runner.sh'
+    custom_command.write_text(
+        '#!/usr/bin/env python3\n'
+        'from __future__ import annotations\n'
+        'import json, os, sys\n'
+        "assert sys.argv[1] == '--prompt'\n"
+        "assert sys.argv[2] == os.environ['WAYGATE_ANNOTATION_PROMPT']\n"
+        "assert sys.argv[3] == '--artifact'\n"
+        "assert sys.argv[4] == os.environ['WAYGATE_ANNOTATION_ARTIFACT']\n"
+        "with open(sys.argv[4], 'w', encoding='utf-8') as f:\n"
+        "    json.dump({'summary': '自定义子进程标注完成', 'issues': []}, f, ensure_ascii=False)\n",
+        encoding='utf-8',
+    )
+    custom_command.chmod(0o755)
+    state = {
+        'agentRunner': 'tmux-codex',
+        'tmuxTarget': '1.2',
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': str(custom_command),
+                'args': ['--prompt', '{prompt_path}', '--artifact', '{artifact_path}'],
+                'timeout_seconds': 2,
+                'artifact_path': 'requirements-draft/requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        },
+    }
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path / 'state',
+        artifacts_dir=tmp_path / 'artifacts',
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+    )
+
+    assert result.status == 'completed'
+    assert result.runner_metadata['runtime'] == 'subprocess'
+    assert result.runner_metadata['command'] == str(custom_command)
+    assert result.runner_metadata['args'] == [
+        '--prompt',
+        '{prompt_path}',
+        '--artifact',
+        '{artifact_path}',
+    ]
+    assert not (tmp_path / 'tmux.log').exists()
+
+
+def test_annotation_tmux_deprecated_env_zero_is_ignored_by_subprocess_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_annotation_proxy_env(monkeypatch)
+    _make_fake_annotation_tmux(tmp_path)
+    _prepend_path(monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX_PANE', '%main')
+    monkeypatch.setenv('WAYGATE_ANNOTATION_TMUX', '0')
+    writer = _annotation_writer_script(tmp_path)
+    state = {
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': sys.executable,
+                'args': [str(writer)],
+                'timeout_seconds': 5,
+                'artifact_path': 'requirements-draft/requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        },
+    }
+    events: list[dict[str, Any]] = []
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path / 'state',
+        artifacts_dir=tmp_path / 'artifacts',
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+        event_sink=lambda event_type, payload: events.append({'type': event_type, 'payload': payload}),
+    )
+
+    assert result.status == 'completed'
+    assert result.runner_metadata['runtime'] == 'subprocess'
+    assert 'tmux_fallback_reason' not in result.runner_metadata
+    tmux_log = tmp_path / 'tmux.log'
+    assert not tmux_log.exists() or not tmux_log.read_text(encoding='utf-8').strip()
+    assert [event['type'] for event in events] == [
+        'annotation_pass_started',
+        'annotation_pass_completed',
+    ]
 
 
 @pytest.mark.parametrize(

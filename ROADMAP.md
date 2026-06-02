@@ -243,7 +243,7 @@ Delivered work:
 - Preserve clear unsupported/deferred errors for formats that are detected but not enabled.
 - Enforce gate ordering so human approval is the last step in each current phase; controller preflight, schema validation, evidence checks, and annotation passes must finish before a human review file is presented.
 - Add role-based annotation and verification-assist configuration for `requirements_annotation`, `unit_plan_annotation`, and `final_acceptance_verification_assist`.
-- Support `claude-code`, `opencode`, and `codex` backend families through configurable command, args, env key allowlist, timeout, artifact path, prompt template, and failure policy fields.
+- Support `opencode` and `codex` annotation backend families through configurable command, args, env key allowlist, timeout, artifact path, prompt template, and failure policy fields. Legacy Waygate built-in Claude annotation configs migrate to OpenCode; Claude Code remains available only as a normal workflow runner.
 - Define a shared non-approval prompt contract plus stage-specific Requirements, Unit Plan, and Final Acceptance templates for risk-only annotation artifacts.
 - Allow verification JSON to include strict command-only checks, `descriptive_command` rows where a command still runs and Agent judgement only adds review context, and opt-in `agent_assisted_case` rows where a test case declares `verification_assist` instead of `command`; assisted rows must record structured evidence, `human_review_required`, and an assist artifact path.
 - Preserve approval semantics: annotation agents and agent-assisted verification may focus human review on risks, but they cannot approve, skip, or bypass controller gates.
@@ -355,6 +355,21 @@ Delivered work:
 - Add review-bundle/prototype conformance evidence for the V0.6.2f surfaces and map each required surface to real Waygate terminal menu, CLI, state, artifact, prompt, docs, or review bundle targets.
 - Document the long-lived workflow rules in `docs/workflow/human-review-control-policy.md` and the module boundaries in `docs/architecture/human-review-control-architecture.md`.
 - Keep V0.6.3 Strict Test Presence / Per-Role Runner Configuration as future planned scope, not V0.6.2f delivery.
+
+### V0.6.2g - Product Design Prompt Contract and Visible Annotation Pane
+
+Goal: make Product Design prompt behavior explicit for no-spec and backend-only sessions, while making enabled annotation runs visible without losing subprocess compatibility or secret hygiene.
+
+Status: implemented in package `0.6.2g`.
+
+Delivered work:
+
+- Add no-spec Product Design prompt rules requiring same-conversation brainstorming, one page or entrypoint at a time confirmation, and artifact writing only after confirmation.
+- Preserve supported `requirementsSpec` compatibility so imported spec sessions keep the existing staged artifact flow without mandatory page-by-page brainstorming.
+- Add backend/API/CLI-only no-UI/no-prototype confirmation based on positive Scope evidence, not default false controller flags.
+- Keep annotation execution subprocess-only and remove the annotation-specific tmux pane runtime. `WAYGATE_ANNOTATION_TMUX` is a deprecated no-op and no longer creates panes, run-local wrappers, run ids, or `done.json` files.
+- Reject `claude` / `claude-code` as annotation backends while preserving normal `tmux-claude` and `tmux-codex` workflow runner support. Legacy Waygate built-in Claude annotation configs migrate to OpenCode, and annotation output remains risk-only.
+- Keep annotation audit data env key-only across state, events, summaries, dispatch metadata, artifacts, and captured output.
 
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 

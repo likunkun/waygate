@@ -43,3 +43,10 @@ The Verifier records these in `visual_evidence_refs` while preserving legacy `sc
 ## Final Acceptance
 
 Final Acceptance renders the Prototype Conformance Matrix and Visual Prototype Evidence sections. A required surface is blocked when visual evidence is missing, a key target is obstructed, or explicit L3/L4 fidelity lacks screenshot regression or pixel evidence.
+
+The evidence layer requirement is target-aware:
+
+- Browser production targets still require real E2E evidence. This includes `kind=route`, any target path that starts with `/`, and surface kinds `route`, `page`, `component`, `dialog`, `drawer`, `panel`, or `form`.
+- Non-browser controller or workflow review targets with `kind=module`, `artifact`, `state`, or `events` and `surface kind=other` may use passed `integration` evidence from a non-mock environment such as `local_real`, as long as the row has no core API mock, no runtime errors, and complete visual evidence for the declared fidelity level.
+
+Artifact-local prototype review evidence must not be upgraded or mislabeled as browser E2E. Browser surfaces are not relaxed by this exception.

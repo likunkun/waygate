@@ -26,6 +26,37 @@ from workflow_controller.state_machine.transitions import reconcile_state, valid
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _isolated_rrc_subprocess_env(
+    env: dict[str, str] | None = None,
+    *,
+    include_pythonpath: bool = False,
+) -> dict[str, str]:
+    process_env = os.environ.copy()
+    process_env.pop('TMUX', None)
+    process_env.pop('TMUX_PANE', None)
+    if env:
+        process_env.update(env)
+    if include_pythonpath:
+        process_env['PYTHONPATH'] = (
+            f"{ROOT}{os.pathsep}{process_env['PYTHONPATH']}"
+            if process_env.get('PYTHONPATH')
+            else str(ROOT)
+        )
+    return process_env
+
+
+def test_rrc_subprocess_env_strips_inherited_tmux_context_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('TMUX', '/tmp/live-tmux')
+    monkeypatch.setenv('TMUX_PANE', '%live')
+
+    process_env = _isolated_rrc_subprocess_env()
+
+    assert 'TMUX' not in process_env
+    assert 'TMUX_PANE' not in process_env
+
+
 def _python_c(code: str) -> str:
     return shlex.join([sys.executable, '-c', code])
 
@@ -60,9 +91,7 @@ def run_rrc(
     input_text: str | None = None,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    process_env = os.environ.copy()
-    if env:
-        process_env.update(env)
+    process_env = _isolated_rrc_subprocess_env(env)
     return subprocess.run(
         [sys.executable, '-m', 'workflow_controller.rrc_controller', *args],
         cwd=str(cwd or ROOT),
@@ -79,14 +108,7 @@ def run_rrc_with_pythonpath(
     cwd: Path,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    process_env = os.environ.copy()
-    if env:
-        process_env.update(env)
-    process_env['PYTHONPATH'] = (
-        f"{ROOT}{os.pathsep}{process_env['PYTHONPATH']}"
-        if process_env.get('PYTHONPATH')
-        else str(ROOT)
-    )
+    process_env = _isolated_rrc_subprocess_env(env, include_pythonpath=True)
     return subprocess.run(
         [sys.executable, '-m', 'workflow_controller.rrc_controller', *args],
         cwd=str(cwd),
@@ -3286,7 +3308,15 @@ def test_rrc_go_inside_tmux_auto_creates_claude_pane(
     _prepend_path(monkeypatch, tmp_path)
     monkeypatch.setenv('TMUX', '/tmp/tmux-session')
 
-    result = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+    result = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+        env={'TMUX': '/tmp/tmux-session'},
+    )
 
     assert result.returncode == 0, result.stderr
     state = json.loads((workspace / '.rrc-controller-v1.0' / 'session.json').read_text(encoding='utf-8'))
@@ -3325,7 +3355,15 @@ def test_rrc_go_recreates_stale_auto_created_claude_pane_on_resume(
     _prepend_path(monkeypatch, tmp_path)
     monkeypatch.setenv('TMUX', '/tmp/tmux-session')
 
-    initial = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+    initial = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+        env={'TMUX': '/tmp/tmux-session'},
+    )
 
     assert initial.returncode == 0, initial.stderr
     state_path = workspace / '.rrc-controller-v1.0' / 'session.json'
@@ -3334,7 +3372,15 @@ def test_rrc_go_recreates_stale_auto_created_claude_pane_on_resume(
     assert state['tmuxTargetResolution']['source'] == 'auto-created'
     _make_fake_tmux(tmp_path, split_pane_id='%89', stale_targets=['%88'])
 
-    resumed = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+    resumed = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+        env={'TMUX': '/tmp/tmux-session'},
+    )
 
     assert resumed.returncode == 0, resumed.stderr
     state = json.loads(state_path.read_text(encoding='utf-8'))
@@ -3372,7 +3418,15 @@ def test_rrc_go_recreated_staged_scope_pane_dispatch_disables_initial_clear(
     _prepend_path(monkeypatch, tmp_path)
     monkeypatch.setenv('TMUX', '/tmp/tmux-session')
 
-    initial = run_rrc_with_pythonpath('go', 'V1.0', '--dry-run', '--max-steps', '0', cwd=workspace)
+    initial = run_rrc_with_pythonpath(
+        'go',
+        'V1.0',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        cwd=workspace,
+        env={'TMUX': '/tmp/tmux-session'},
+    )
 
     assert initial.returncode == 0, initial.stderr
     state_path = workspace / '.rrc-controller-v1.0' / 'session.json'
@@ -3395,6 +3449,7 @@ def test_rrc_go_recreated_staged_scope_pane_dispatch_disables_initial_clear(
         '1',
         cwd=workspace,
         env={
+            'TMUX': '/tmp/tmux-session',
             'RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS': '0',
             'RRC_TMUX_SUBMIT_RETRY_DELAY_SECONDS': '0',
         },
@@ -3502,6 +3557,7 @@ def test_rrc_go_with_tmux_codex_runner_auto_discovers_codex_pane(
         '--max-steps',
         '0',
         cwd=workspace,
+        env={'TMUX': '/tmp/tmux-session', 'TMUX_PANE': '%24'},
     )
 
     assert result.returncode == 0, result.stderr
@@ -12263,6 +12319,160 @@ def test_status_closes_legacy_generated_final_rejection_obligations(tmp_path: Pa
     ledger = state_dir / 'artifacts' / 'acceptance-obligations' / 'acceptance-obligations.md'
     assert '## AO-002: 当前阶段' in ledger.read_text(encoding='utf-8')
     assert 'Status: out_of_scope' in ledger.read_text(encoding='utf-8')
+
+
+def test_status_clears_stale_final_acceptance_gate_invalid_blocker_after_revalidation(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    approvals_dir = state_dir / 'approvals'
+    artifacts_dir = state_dir / 'artifacts'
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    requirements_path.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-42 [verification: integration]: controller artifact review maps to module target evidence.\n',
+        encoding='utf-8',
+    )
+    (approvals_dir / 'unit-plan.md').write_text('# Unit Plan\n', encoding='utf-8')
+    draft_dir = artifacts_dir / 'requirements-draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    prototype_html = draft_dir / 'workflow-review.html'
+    prototype_html.write_text('<button>Prompt Contract</button><button>Audit</button>\n', encoding='utf-8')
+    (draft_dir / 'prototype-manifest.json').write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'workflow-review',
+                        'type': 'html',
+                        'path': str(prototype_html),
+                        'title': 'Workflow review',
+                        'linked_acceptance_criteria': ['AC-42'],
+                        'linked_journeys': [],
+                        'page_states': ['Prompt Contract', 'Audit'],
+                        'click_path': ['Open artifact', 'Select Prompt Contract', 'Select Audit'],
+                        'surface_contracts': [
+                            {
+                                'id': 'prompt-contract',
+                                'title': 'Prompt contract',
+                                'kind': 'other',
+                                'page_states': ['Prompt Contract'],
+                                'click_path': ['Open artifact', 'Select Prompt Contract'],
+                                'entrypoints': ['workflow review artifact -> Prompt Contract tab'],
+                                'implementation_targets': [
+                                    {'kind': 'module', 'path': 'workflow_controller/prompts/requirements_package.py'},
+                                ],
+                                'linked_acceptance_criteria': ['AC-42'],
+                                'required': True,
+                            }
+                        ],
+                        'implementation_targets': [
+                            {'kind': 'module', 'path': 'workflow_controller/prompts/requirements_package.py'},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    command = 'bash scripts/verify/workflow-review.sh'
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-WORKFLOW',
+                        'acceptance_criterion': 'AC-42',
+                        'acceptance_obligations': [],
+                        'layer': 'integration',
+                        'command': command,
+                        'expected': 'controller artifact review maps to module target and tab transitions',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': 'controller module and artifact surfaces',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'visual_evidence_refs': {
+                            'prototype_screenshot': 'artifacts/prototype/workflow-review.png',
+                            'production_screenshot': 'artifacts/prototype/controller-surfaces.png',
+                            'interaction_screenshot': 'artifacts/prototype/tabs-after-click.png',
+                            'viewport': 'artifact-review-1280x900',
+                            'entrypoint': 'controller module and artifact surfaces',
+                            'action_path': ['Open artifact', 'Select Prompt Contract', 'Select Audit'],
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    controller.init_state(
+        {
+            'task_id': 'target-v0-6-2g',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'FINAL_WALKTHROUGH_PREPARE',
+            'lastVerifiedStep': 'VERIFY_UNIT',
+            'status': 'blocked',
+            'blockedReason': (
+                'final acceptance gate invalid: prototype conformance is incomplete: '
+                'prototype workflow-review surface prompt-contract target '
+                'module:workflow_controller/prompts/requirements_package.py via TC-PROTO-WORKFLOW: not e2e evidence'
+            ),
+            'requestedOutcome': 'V0.6.2g',
+            'feasibleOutcome': 'V0.6.2g',
+            'scopeApproved': True,
+            'humanGatesRequired': True,
+            'requirementsAccepted': True,
+            'unitPlanAccepted': True,
+            'finalAcceptanceAccepted': False,
+            'objectiveCoverage': [
+                {'objective': 'V0.6.2g acceptance', 'units': ['unit-01'], 'status': 'covered'},
+            ],
+            'units': [
+                {
+                    'id': 'unit-01',
+                    'name': 'V0.6.2g acceptance',
+                    'passes': True,
+                    'test_cases': [
+                        {
+                            'id': 'TC-PROTO-WORKFLOW',
+                            'acceptance_criterion': 'AC-42',
+                            'layer': 'integration',
+                            'environment_kind': 'local_real',
+                            'command': command,
+                            'expected': 'controller artifact review maps to module target and tab transitions',
+                            'prototype_conformance': ['workflow-review'],
+                            'prototype_surfaces': ['prompt-contract'],
+                            'production_targets': [
+                                'module:workflow_controller/prompts/requirements_package.py',
+                            ],
+                            'user_steps': ['Open artifact', 'Select Prompt Contract', 'Select Audit'],
+                        }
+                    ],
+                },
+            ],
+        },
+        force=True,
+    )
+
+    state = controller.get_status()
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'FINAL_WALKTHROUGH_PREPARE'
+    assert state.get('blockedReason') is None
+    assert state['nextAction'] == 'prepare_final_walkthrough'
+    persisted = json.loads((state_dir / 'session.json').read_text(encoding='utf-8'))
+    assert persisted['status'] == 'active'
+    assert persisted.get('blockedReason') is None
 
 
 def test_drive_prompts_for_final_acceptance_rejection_route_when_unselected(tmp_path: Path) -> None:

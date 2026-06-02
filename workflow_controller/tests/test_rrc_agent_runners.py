@@ -855,6 +855,7 @@ def test_tmux_codex_waits_for_pane_to_leave_working_state_after_done(
     capture_count_path = tmp_path / 'capture-count.txt'
     sleep_calls: list[float] = []
     monkeypatch.setattr(tmux_runner.time, 'sleep', sleep_calls.append)
+    monkeypatch.delenv('RRC_TMUX_CODEX_SUBMIT_KEY', raising=False)
     monkeypatch.setenv('RRC_TMUX_POST_DONE_IDLE_POLL_SECONDS', '0.1')
     fake_tmux = _make_executable(
         tmp_path / 'tmux',

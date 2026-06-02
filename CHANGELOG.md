@@ -2,6 +2,14 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2g
+
+- Added Product Design prompt branch handling for no-spec brainstorming in the same tmux conversation, supported-spec compatibility, and backend/API/CLI-only no-UI/no-prototype confirmation based on positive Scope evidence.
+- Removed the annotation-specific tmux pane runtime. Annotation passes now always use the subprocess runtime; `WAYGATE_ANNOTATION_TMUX` is accepted as a deprecated no-op and no longer creates panes, run-local wrappers, run ids, or `done.json` files.
+- Removed Claude Code as an annotation backend. Declared annotation backends are `opencode` and `codex`; persisted Waygate built-in Claude annotation configs migrate to the built-in OpenCode template. Claude Code remains available as a normal `tmux-claude` workflow runner.
+- Hardened env key-only audit metadata so state, events, summaries, artifacts, and captured output record key names and omit env values, tokens, database URL values, passwords, secrets, `api_key` values, signatures, and proxy values.
+- Added V0.6.2g script-entry verification under `scripts/verify/` and updated formal workflow, architecture, usage, release, and roadmap documentation while keeping V0.6.3 Strict Test Presence / Per-Role Runner Configuration as future scope.
+
 ## 0.6.2f
 
 - Persist Plannotator approval notes from approved Requirements and Unit Plan gates as audit-only advisory context, then inject them into next-stage prompts under `Approval Notes Non-Contract Context`.

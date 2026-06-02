@@ -11,6 +11,37 @@ from workflow_controller.requirements_surface import (
     render_requirements_surface_classification_markdown,
 )
 
+SUPPORTED_REQUIREMENTS_SPEC_SOURCE_TYPES = {
+    'waygate-markdown',
+    'openspec',
+    'open-spec-package',
+    'spec-kit',
+}
+
+_FALSE_FLAG_NO_UI_MARKERS = (
+    'currentUnitNeedsUiDesign=false',
+    'currentUnitIsWebSystem=false',
+    'ignored as no-UI evidence',
+    'ignored as no-Web evidence',
+)
+
+_NO_UI_BASIS_MARKERS = (
+    'backend/API/CLI-only',
+    'backend api cli only',
+    'CLI-only',
+    'API-only',
+    'no UI/Web/prototype',
+    'no-UI/no-prototype',
+    'no UI',
+    'no Web',
+    'no prototype',
+    '无 UI',
+    '无 Web',
+    '无原型',
+    '不需要 UI',
+    '不需要原型',
+)
+
 
 def render_scope_prompt(state: dict[str, Any], *, output_path: Path) -> str:
     spec_section = _render_requirements_spec_section(state)
@@ -54,12 +85,70 @@ def render_scope_prompt(state: dict[str, Any], *, output_path: Path) -> str:
 """
 
 
+def product_design_prompt_contract(state: dict[str, Any]) -> dict[str, Any]:
+    spec = state.get('requirementsSpec') if isinstance(state.get('requirementsSpec'), dict) else None
+    supported_spec = _requirements_spec_is_supported(spec)
+    classification = state.get('requirementsSurfaceClassification')
+    if not isinstance(classification, dict):
+        classification = {}
+    no_ui_basis = _explicit_no_ui_basis_snippets(classification)
+    backend_only = (
+        classification.get('product_ui') == 'not_required'
+        and classification.get('web_system') == 'not_required'
+        and classification.get('prototype_required') == 'not_required'
+        and bool(no_ui_basis)
+    )
+    if supported_spec:
+        branch = 'supported_spec'
+        requires_brainstorming = False
+        requires_page_entrypoint_confirmation = False
+        requires_no_ui_confirmation = False
+    elif backend_only:
+        branch = 'backend_api_cli_only'
+        requires_brainstorming = False
+        requires_page_entrypoint_confirmation = False
+        requires_no_ui_confirmation = True
+    else:
+        branch = 'no_spec_visible_surface'
+        requires_brainstorming = True
+        requires_page_entrypoint_confirmation = True
+        requires_no_ui_confirmation = False
+    return {
+        'branch': branch,
+        'supported_requirements_spec': supported_spec,
+        'requires_brainstorming': requires_brainstorming,
+        'requires_page_entrypoint_confirmation': requires_page_entrypoint_confirmation,
+        'requires_no_ui_confirmation': requires_no_ui_confirmation,
+        'no_ui_basis': no_ui_basis,
+        'visible_surfaces': list(classification.get('visible_surfaces') or []),
+    }
+
+
 def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) -> str:
+    contract = product_design_prompt_contract(state)
     stage_rules = [
         '必须围绕目标产品或目标系统的用户体验，不得设计 Waygate staged package、checkpoint 操作者体验或 controller 人工 gate 流程，除非目标项目本身就是 Waygate/controller。',
         '如果需要 UI/Web/prototype，必须说明原型证据、审阅入口、页面状态、核心点击路径和 AC/Journey 映射。',
         '如果确实不需要 UI/原型，必须引用 Scope 中的明确 backend/API/CLI-only 依据。',
     ]
+    if contract['branch'] == 'no_spec_visible_surface':
+        stage_rules.extend([
+            'V0.6.2g no-spec Product Design prompt contract: because no supported `requirementsSpec` is present for this Product Design run, you MUST use the `brainstorming` skill in the same tmux conversation before writing Product Design artifacts.',
+            'Confirm one page or entrypoint at a time with the human: purpose, target user, entrypoint, states, interaction path, AC/Journey mapping, prototype expectation, and risk.',
+            'Write `product-design-brief.md` and any required `artifacts/requirements-draft/prototype-manifest.json` only after those confirmations; summarize the confirmed pages or entrypoints in the brief when practical.',
+        ])
+    elif contract['branch'] == 'supported_spec':
+        stage_rules.extend([
+            'V0.6.2g supported `requirementsSpec` compatibility path: keep the existing staged artifact flow and inherit the spec path/hash/source metadata as the fact source.',
+            'Do not add mandatory page-by-page confirmation for supported spec sessions; if the spec already defines surfaces, summarize them directly in `product-design-brief.md` and preserve the staged artifact package.',
+        ])
+    elif contract['branch'] == 'backend_api_cli_only':
+        basis = '; '.join(contract['no_ui_basis']) or 'Scope declares backend/API/CLI-only no UI/Web/prototype basis.'
+        stage_rules.extend([
+            'V0.6.2g backend/API/CLI-only prompt contract: ask once for an explicit no-UI/no-prototype confirmation instead of page-by-page confirmation.',
+            f'Use this positive Scope basis for the confirmation: {basis}',
+            'Do not cite default false controller UI/Web flags as the basis; default false flags are not no-UI/no-prototype evidence.',
+        ])
     classification = state.get('requirementsSurfaceClassification')
     if isinstance(classification, dict) and (
         classification.get('prototype_required') == 'required'
@@ -132,6 +221,29 @@ def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) ->
         stage_rules=stage_rules,
         upstream_stages=['scope'],
     )
+
+
+def _requirements_spec_is_supported(spec: dict[str, Any] | None) -> bool:
+    if not spec:
+        return False
+    source_type = str(spec.get('sourceType') or '').strip()
+    path = str(spec.get('path') or '').strip()
+    return bool(path and source_type in SUPPORTED_REQUIREMENTS_SPEC_SOURCE_TYPES)
+
+
+def _explicit_no_ui_basis_snippets(classification: dict[str, Any]) -> list[str]:
+    snippets = classification.get('evidence_snippets') or []
+    result: list[str] = []
+    for raw in snippets:
+        text = str(raw).strip()
+        if not text:
+            continue
+        if any(marker in text for marker in _FALSE_FLAG_NO_UI_MARKERS):
+            continue
+        normalized = text.lower()
+        if any(marker.lower() in normalized for marker in _NO_UI_BASIS_MARKERS):
+            result.append(text)
+    return result
 
 
 def render_architecture_prompt(state: dict[str, Any], *, output_path: Path) -> str:

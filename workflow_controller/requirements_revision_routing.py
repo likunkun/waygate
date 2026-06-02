@@ -109,6 +109,16 @@ def _append_scope_issues(
         _append_issue(issues, 'scope', 'journey_contract_required', 'Journey contract requires active Journey rows')
 
     if _has_any(compact, (
+        'conflictingacverificationlayers',
+        'stagedrequirementspackageconflictingacverificationlayers',
+        'acverificationlayerconflict',
+        'acceptancecriteriaverificationlayerconflict',
+        '验收标准验证层级冲突',
+        '验收准则验证层级冲突',
+    )):
+        _append_issue(issues, 'scope', 'ac_verification_layer_conflict', 'AC verification layer conflicts across staged requirements')
+
+    if _has_any(compact, (
         'conflictingjourneystatus',
         'journeystatusconflict',
         'stagedrequirementspackageconflictingjourneystatus',

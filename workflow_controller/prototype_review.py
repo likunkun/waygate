@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from workflow_controller.evidence_policy import (
+    MOCK_ENVIRONMENT_KINDS,
     case_environment_kind,
     case_real_entrypoint,
     evidence_row_real_e2e_issue,
@@ -37,6 +38,7 @@ PROTOTYPES_DIR_NAME = 'prototypes'
 ALLOWED_PROTOTYPE_TYPES = {'html', 'image', 'markdown', 'md', 'url'}
 ALLOWED_SURFACE_KINDS = {'route', 'page', 'component', 'dialog', 'drawer', 'panel', 'form', 'other'}
 BROWSER_SURFACE_KINDS = {'route', 'page', 'component', 'dialog', 'drawer', 'panel', 'form'}
+NON_BROWSER_PROTOTYPE_TARGET_KINDS = {'module', 'artifact', 'state', 'events'}
 MULTI_SURFACE_SIGNAL_KEYWORDS = (
     '弹窗',
     '抽屉',
@@ -1059,7 +1061,15 @@ def prototype_conformance_matrix_rows(
         for case in matched_cases:
             evidence = _matching_evidence_row(case, evidence_rows)
             effective_evidence = _prototype_effective_evidence_row(case, evidence)
-            real_evidence_issue = evidence_row_real_e2e_issue(effective_evidence) if effective_evidence else 'missing'
+            real_evidence_issue = (
+                _prototype_target_evidence_issue(
+                    effective_evidence,
+                    target=target,
+                    surface_kind=str(contract.get('surface_kind') or ''),
+                )
+                if effective_evidence
+                else 'missing'
+            )
             visual_refs = (effective_evidence or {}).get('visual_evidence_refs') or {}
             visual_issue = visual_evidence_issue(
                 visual_refs,
@@ -1235,6 +1245,42 @@ def implementation_target_is_browser_route(target: dict[str, Any]) -> bool:
     kind = str(target.get('kind') or '').strip().lower()
     path = str(target.get('path') or '').strip()
     return kind == 'route' or path.startswith('/')
+
+
+def _prototype_target_evidence_issue(
+    row: dict[str, Any],
+    *,
+    target: dict[str, Any],
+    surface_kind: str,
+) -> str:
+    if _prototype_target_requires_real_e2e(target, surface_kind):
+        return evidence_row_real_e2e_issue(row)
+    if _prototype_target_accepts_local_real_evidence(target, surface_kind):
+        return _prototype_local_real_evidence_issue(row)
+    return evidence_row_real_e2e_issue(row)
+
+
+def _prototype_target_requires_real_e2e(target: dict[str, Any], surface_kind: str) -> bool:
+    return implementation_target_is_browser_route(target) or surface_contract_requires_browser_e2e(surface_kind)
+
+
+def _prototype_target_accepts_local_real_evidence(target: dict[str, Any], surface_kind: str) -> bool:
+    target_kind = str(target.get('kind') or '').strip().lower()
+    return target_kind in NON_BROWSER_PROTOTYPE_TARGET_KINDS and str(surface_kind or '').strip().lower() == 'other'
+
+
+def _prototype_local_real_evidence_issue(row: dict[str, Any]) -> str:
+    status = str(row.get('status') or '').strip().lower()
+    if status != 'passed':
+        return status or 'missing'
+    if row.get('uses_core_api_mock') is True:
+        return 'core API mock'
+    environment_kind = str(row.get('environment_kind') or 'local_real').strip()
+    if environment_kind in MOCK_ENVIRONMENT_KINDS:
+        return f'environment_kind={environment_kind or "missing"} is mock evidence'
+    if _prototype_runtime_error_count(row):
+        return 'runtime errors'
+    return ''
 
 
 def _normalize_implementation_targets(

@@ -1,6 +1,8 @@
 # External Spec Intake And Annotation Architecture
 
-This document records the V0.6.1 module boundaries for OpenSpec and Spec Kit intake, the V0.6.2e package-directory intake extension, role-based annotation config, prompt templates, runner selection, and flexible verifier evidence.
+This document records the V0.6.1 module boundaries for OpenSpec and Spec Kit intake, the V0.6.2e package-directory intake extension, role-based annotation config, prompt templates, runner selection, flexible verifier evidence, and the current subprocess-only annotation runtime.
+
+Current note: annotation uses subprocess only. `WAYGATE_ANNOTATION_TMUX` is a deprecated no-op retained for old shell environments; it does not create an annotation pane. Persisted audit data remains env key-only.
 
 ## Module Boundaries
 
@@ -38,11 +40,19 @@ The role-based annotation config supports:
 - `unit_plan_annotation`
 - `final_acceptance_verification_assist`
 
-Each role can select `claude-code`, `opencode`, or `codex` as a backend family. The normalized config records command, args, custom env key allowlist, timeout, artifact path, prompt template, and failure policy. At subprocess launch time, Waygate also inherits standard proxy keys present in the parent process (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants). State and artifacts record env keys only, not values.
+Each role can select `opencode` or `codex` as a declared backend family. The normalized config records command, args, custom env key allowlist, timeout, artifact path, prompt template, and failure policy. At subprocess launch time, Waygate also inherits standard proxy keys present in the parent process (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants). State and artifacts record env keys only, not values.
 
-`annotation_agents.py` owns built-in backend templates and legacy migration. The Codex template is normalized away from the removed `--ask-for-approval never` flag. The Claude Code template includes `--bare` and `--no-session-persistence` so subprocess annotation runs do not inherit stale interactive thinking/session context; persisted sessions with the old built-in Claude args migrate during status/config normalization.
+`annotation_agents.py` owns built-in backend templates and legacy migration. The Codex template is normalized away from the removed `--ask-for-approval never` flag. The OpenCode template is `opencode run <risk-only request>`. Persisted sessions with Waygate's old built-in Claude annotation config migrate to the OpenCode template. Custom commands are preserved, but a custom config must still declare `backend=opencode` or `backend=codex`; `backend=claude-code` is rejected. Claude Code remains available only through normal workflow runners such as `tmux-claude`.
 
 Backend unavailable behavior is explicit. The controller must report the selected backend or command as unavailable instead of silently falling back to another backend family.
+
+## Annotation Runtime
+
+`annotation_agents.py` is the runtime boundary. `run_annotation_pass()` builds common prompt/artifact metadata, renders the prompt under `artifacts/annotation-prompts/`, and executes `_expanded_command(config, prompt_path)` through `subprocess.run()` in the workspace. The subprocess environment includes standard process keys, configured env key names that exist in the parent environment, default proxy keys that exist in the parent environment, `WAYGATE_ANNOTATION_ROLE`, `WAYGATE_ANNOTATION_STAGE`, `WAYGATE_ANNOTATION_PROMPT`, and `WAYGATE_ANNOTATION_ARTIFACT`.
+
+The annotation runtime does not inspect `WAYGATE_ANNOTATION_TMUX`, `TMUX_PANE`, controller `tmuxTarget`, or the workflow runner family. Those values cannot select a different annotation runtime and cannot create panes. The removed annotation-specific tmux path no longer writes local wrapper scripts, dispatch files, annotation run ids, done files, temporary pane ids, tmux env keys, or fallback reasons. Normal workflow runners retain their own tmux behavior outside annotation.
+
+Completion is valid only when the configured annotation artifact exists and passes normalization, language checks, gate hash binding, and non-approval validation. Runtime failure, timeout, missing artifact, or invalid risk artifact returns an annotation runtime failure. `rrc_controller.py` copies safe subprocess runtime metadata into `blockedContext` and `pendingAnnotationBeforeHumanGate` without mutating the main workflow runner configuration.
 
 ## Prompt Template Registry
 
