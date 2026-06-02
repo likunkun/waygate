@@ -371,6 +371,19 @@ Delivered work:
 - Reject `claude` / `claude-code` as annotation backends while preserving normal `tmux-claude` and `tmux-codex` workflow runner support. Legacy Waygate built-in Claude annotation configs migrate to OpenCode, and annotation output remains risk-only.
 - Keep annotation audit data env key-only across state, events, summaries, dispatch metadata, artifacts, and captured output.
 
+### V0.6.2h - Requirements 4.6 Parser Boundary
+
+Goal: keep Requirements Test Strategy 4.6 validation scoped to the canonical fixed-column E2E matrix.
+
+Status: implemented in package `0.6.2h`.
+
+Delivered work:
+
+- Restrict the Requirements 4.6 row collector to the canonical fixed-column table block under the 4.6 heading.
+- Reset active 4.6 table state at non-table lines and noncanonical markdown table headers so later subsection tables, such as 4.7 AC closure matrices, are not parsed as 4.6 rows.
+- Preserve strict quality checks for real 4.6 rows, including non-placeholder command intent, real entrypoints, concrete steps, fixed fixture/setup, real environment kind, mock policy, and machine-checkable assertions.
+- Add regression coverage for a valid 11-column 4.6 matrix followed by a 5-column 4.7 closure table containing the same E2E AC.
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.

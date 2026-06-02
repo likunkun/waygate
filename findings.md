@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-06-03 Requirements 4.6 fixed-table parser boundary
+
+- Requirements Test Strategy 4.6 validation is scoped to the canonical fixed-column E2E matrix block. Later subsection tables under the same markdown section, such as `### 4.7 Scope AC Verification Layer Closure`, are review/closure material and must not inherit the previous 4.6 header.
+- The parser must reset active 4.6 table state when it sees a non-table line or a noncanonical markdown table header. This prevents a valid 5-column closure table row such as `AC-V10-010` from being interpreted as a malformed 11-column 4.6 row with missing `Verification Command`.
+- This is a parser boundary fix, not a Scope contract change. Live Requirements artifacts and `session.json` remain untouched; recovery should rerun the Requirements Test Strategy through normal controller routes.
+- Strict 4.6 quality checks remain unchanged for rows inside the canonical 4.6 matrix: command intent, real entrypoint, user steps, fixture/setup, environment kind, mock policy, assertions, and notes still block when empty or placeholder.
+
 ## 2026-06-03 Requirements source-label and AC/Journey parser boundary
 
 - `Source AC` / `Source AC / TC` columns are provenance, not current-version acceptance obligations. Imported source IDs such as `AC-SPEC-001` and wildcard examples such as `AC-SPEC-*` must not create missing-layer, coverage, or unknown-current-AC failures unless the same ID is declared in a canonical current AC field.

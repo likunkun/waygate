@@ -371,6 +371,19 @@
 - 拒绝 `claude` / `claude-code` 作为 annotation backend，同时保留普通 `tmux-claude` 和 `tmux-codex` workflow runner 能力。旧的 Waygate 内置 Claude annotation 配置迁移到 OpenCode，annotation output 仍是 risk-only。
 - annotation audit data 在 state、events、summaries、dispatch metadata、artifacts 和 captured output 中保持 env key-only。
 
+### V0.6.2h - Requirements 4.6 Parser Boundary
+
+目标：将 Requirements Test Strategy 4.6 validation 限定在 canonical 固定列 E2E matrix。
+
+状态：已在 package `0.6.2h` 实施。
+
+已交付：
+
+- Requirements 4.6 row collector 只消费 4.6 heading 下的 canonical 固定列表格块。
+- 遇到非表格行或非 canonical markdown table header 时重置 active 4.6 table state，避免后续 4.7 AC closure matrix 等 subsection 表被解析成 4.6 rows。
+- 保留真实 4.6 row 的严格质量校验，包括非占位 command intent、真实入口、具体步骤、固定 fixture/setup、真实 environment kind、mock policy 和机器可检查 assertions。
+- 新增回归覆盖：有效 11 列 4.6 matrix 后跟 5 列 4.7 closure 表，且包含同一 E2E AC。
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。

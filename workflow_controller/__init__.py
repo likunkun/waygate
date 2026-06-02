@@ -1,3 +1,3 @@
 """Waygate workflow control surface package."""
 
-__version__ = "0.6.2g"
+__version__ = "0.6.2h"

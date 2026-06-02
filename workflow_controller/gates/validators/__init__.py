@@ -2301,18 +2301,28 @@ def _requirements_e2e_review_section(content: str) -> str:
 
 def _requirements_e2e_review_rows(section: str) -> tuple[list[dict[str, str]], str | None]:
     header_indices: dict[str, int] | None = None
+    active_header_indices: dict[str, int] | None = None
     rows: list[dict[str, str]] = []
-    for line in section.splitlines():
+    lines = section.splitlines()
+    for index, line in enumerate(lines):
+        if _is_markdown_table_separator(line):
+            continue
         cells = _markdown_table_cells(line)
         if not cells:
+            active_header_indices = None
             continue
         if _requirements_e2e_review_header(cells):
             header_indices = _requirements_e2e_review_indices(cells)
+            active_header_indices = header_indices
             continue
-        if header_indices is None:
+        next_line_is_separator = index + 1 < len(lines) and _is_markdown_table_separator(lines[index + 1])
+        if next_line_is_separator:
+            active_header_indices = None
+            continue
+        if active_header_indices is None:
             continue
         row = {
-            key: _cell_at(cells, header_indices.get(key))
+            key: _cell_at(cells, active_header_indices.get(key))
             for key, _label in _REQUIREMENTS_E2E_REVIEW_COLUMNS
         }
         if not any(value.strip() for value in row.values()):

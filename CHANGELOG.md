@@ -2,6 +2,12 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2h
+
+- Fixed Requirements Test Strategy 4.6 parsing so the validator consumes only the canonical fixed-column E2E matrix block and does not treat later subsection tables, such as 4.7 AC closure matrices, as 4.6 obligations.
+- Added staged Requirements regression coverage for a valid 11-column 4.6 matrix followed by a 5-column 4.7 closure table containing the same E2E AC.
+- Updated staged Requirements workflow and architecture docs, release notes, and package version metadata to `0.6.2h`.
+
 ## 0.6.2g
 
 - Added Product Design prompt branch handling for no-spec brainstorming in the same tmux conversation, supported-spec compatibility, and backend/API/CLI-only no-UI/no-prototype confirmation based on positive Scope evidence.

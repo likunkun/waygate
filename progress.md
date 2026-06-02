@@ -2,6 +2,22 @@
 
 ## 会话：2026-06-03
 
+### Requirements 4.6 parser boundary / V0.6.2h
+- **状态：** implementation verified; focused/full regression passed; Debian package built as `0.6.2h`.
+- 根因：`_requirements_e2e_review_rows()` 在同一 markdown section 内复用最近一次 4.6 header；当有效 11 列 `## 4.6` E2E matrix 后面出现 `### 4.7 Scope AC Verification Layer Closure` 的 5 列表时，后续 `AC-V10-010` closure row 会继承旧 4.6 header，被误判为 `Requirements 4.6 Verification Command is empty or placeholder` 等缺列问题。
+- 修复：4.6 row collector 现在只消费 canonical 固定列 E2E matrix block；遇到非表格行或非 canonical markdown table header 会重置 active 4.6 header。真实 4.6 table 内的 row quality checks 不放宽，仍校验 command intent、real entrypoint、user steps、fixture/setup、environment kind、mock policy 和 expected assertions。
+- 文档/版本：同步 staged Requirements workflow / architecture docs、docs registry、findings、task_plan、README/USAGE、CHANGELOG/ROADMAP，并把 package version metadata 更新为 `0.6.2h`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py::test_test_strategy_stage_validation_ignores_non_4_6_tables_under_4_6_subsections -q` -> 修复前 failed，报 `AC-V10-010 Requirements 4.6 Verification Command is empty or placeholder`。
+  - GREEN: 同一命令 -> `1 passed`。
+  - Focused: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'source_ac or wildcard or conflicting_ac_layer or journey_verification or e2e_review or 4_6'` -> `10 passed, 94 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `104 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or staged'` -> `4 passed, 243 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `875 passed in 84.38s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2h_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2h_all.deb Version` -> `0.6.2h`。
+
 ### Controller Requirements source-label parser 与 AC/Journey routing 修复
 - **状态：** implementation verified; focused/full regression passed.
 - 根因：Requirements ID parser 会把 `AC-V10-*` 误截成 `AC-V10-`；staged Requirements final preflight 又把 `Source AC` / `Source AC / TC` provenance 列里的 source label 当作当前版本 AC obligations，导致 `AC-SPEC-*` / `AC-SPEC-001 missing verification layer`。同一 prose line 中 `J-... [verification: manual]` 也会被行级 fallback 扩散到同一行提到的 AC，制造虚假的 AC layer conflict；该 conflict reason 又因 `verification layer` 关键词误路由到 Test Strategy。

@@ -2,6 +2,12 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2h
+
+- 修复 Requirements Test Strategy 4.6 解析：validator 只消费 canonical 固定列 E2E 矩阵块，不再把后续 subsection 表格（例如 4.7 AC closure matrix）当作 4.6 obligations。
+- 新增 staged Requirements 回归测试，覆盖有效 11 列 4.6 矩阵后跟 5 列 4.7 closure 表且包含同一 E2E AC 的场景。
+- 同步 staged Requirements workflow / architecture 文档、release notes 和 package version metadata 到 `0.6.2h`。
+
 ## 0.6.2g
 
 - Product Design prompt 增加三条分支：无 spec 时在同一 tmux conversation 使用 brainstorming 并逐页/逐入口确认；有 supported spec 时保持兼容 staged artifact flow；backend/API/CLI-only 时基于 Scope 正向依据做一次 no-UI/no-prototype 确认。

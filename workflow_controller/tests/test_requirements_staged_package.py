@@ -854,6 +854,41 @@ def test_test_strategy_stage_validation_accepts_fixed_4_6_matrix_covering_scope_
     validate_staged_requirements_stage_output(state, tmp_path / 'artifacts', 'test_strategy')
 
 
+def test_test_strategy_stage_validation_ignores_non_4_6_tables_under_4_6_subsections(
+    tmp_path: Path,
+) -> None:
+    state: dict = {}
+    scope_path = _write_artifact(
+        tmp_path,
+        'scope.md',
+        '# Requirements Scope Checkpoint\n\n'
+        '## Acceptance Criteria\n'
+        '- AC-V10-001 [verification: e2e]: Classroom publishes a real course flow.\n'
+        '- AC-V10-010 [verification: e2e]: Classroom preserves the published course audit trail.\n\n'
+        '## Journey Acceptance Matrix\n'
+        '| Journey | Title | Status | Steps | AC | Verification Layer |\n'
+        '| --- | --- | --- | --- | --- | --- |\n'
+        '| J-V10-001 | Course publishing | active | Open course center -> publish course -> inspect output | AC-V10-001, AC-V10-010 | e2e |\n',
+    )
+    test_strategy_path = _write_artifact(
+        tmp_path,
+        'test-strategy.md',
+        '# Requirements Test Strategy Brief\n\n'
+        '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）\n'
+        '| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        '| J-V10-001 | Playwright browser test in Chromium against local app | `/teacher/course-production` production route | Open `/teacher/course-production` -> publish course -> inspect generated output | Seed classroom fixture `tests/fixtures/classroom-v10.json` and teacher user `teacher@example.test` | Unit Plan must create Playwright browser E2E command for classroom course production flow | local_real | local app server and seeded SQLite test DB | No core API mocks; no `page.route("**/api/**")`; external services use test account only | Assert generated course is visible, status is `ready`, and chapter count is 3 | Reviewer confirms route, fixture, command, env, mock policy, and assertions before approval |\n\n'
+        '### 4.7 Scope AC Verification Layer Closure\n'
+        '| AC | Verification Layer | Closure Evidence | Owner | Notes |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| AC-V10-010 | e2e | Covered by J-V10-001 4.6 review row and final Requirements package closure | Requirements reviewer | This closure table is not an E2E 4.6 obligation |\n',
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+    mark_stage_artifact(state, 'test_strategy', test_strategy_path)
+
+    validate_staged_requirements_stage_output(state, tmp_path / 'artifacts', 'test_strategy')
+
+
 @pytest.mark.parametrize(
     'entrypoint',
     [
