@@ -19,6 +19,7 @@ from workflow_controller.rrc_controller import (
     format_stop_guidance,
     _format_recoverable_wait_message,
     normalize_go_args,
+    resolve_revise_checkpoint_arg,
 )
 from workflow_controller.state_machine.actions import compute_next_allowed_action
 
@@ -129,7 +130,7 @@ def parse_args() -> argparse.Namespace:
     init_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
     init_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     init_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
-    init_parser.add_argument('--spec', default=None, help='Path to a supported Waygate Markdown requirements spec')
+    init_parser.add_argument('--spec', default=None, help='Path to a supported requirements spec file or package directory')
     init_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     init_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout during init')
     init_parser.add_argument('--claude-md', action='store_true', default=False, help='Also generate a CLAUDE.md shim that points to AGENTS.md')
@@ -171,6 +172,7 @@ def parse_args() -> argparse.Namespace:
         help='Markdown human gate to approve',
     )
     approve_parser.add_argument('--actor', default='human', help='Name recorded in the Human Confirmation block')
+    approve_parser.add_argument('--reason', default=None, help='Human reason for adopting an edited gate body')
 
     reject_parser = subparsers.add_parser(
         'reject',
@@ -196,6 +198,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help='Human reason to include in a requirements change request prompt',
     )
+    revise_parser.add_argument(
+        '--checkpoint',
+        default=None,
+        help='Requirements checkpoint to revise: scope, product-design, architecture, or test-strategy',
+    )
 
     migrate_parser = subparsers.add_parser(
         'migrate',
@@ -219,7 +226,7 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument('--runner', default=None, help='Agent runner backend: subprocess, tmux-claude, or tmux-codex')
     start_parser.add_argument('--tmux-target', default=None, help='tmux pane target for tmux-codex or tmux-claude, for example 1.2')
     start_parser.add_argument('--target', default=None, help='Target label or acceptance version to run')
-    start_parser.add_argument('--spec', default=None, help='Path to a supported Waygate Markdown requirements spec')
+    start_parser.add_argument('--spec', default=None, help='Path to a supported requirements spec file or package directory')
     start_parser.add_argument('--actor', default='human', help='Name recorded when approving a Human Confirmation gate')
     start_parser.add_argument('--unsafe-skip-human-gates', action='store_true', help='Bypass Markdown human gates and write an audit event')
     start_parser.add_argument('--no-agent-guides', action='store_false', dest='agent_guides', default=True, help='Do not generate AGENTS.md or documentation layout when start initializes state')
@@ -342,7 +349,12 @@ def main() -> None:
 
     if args.command == 'approve':
         try:
-            gate_path = controller.approve_human_gate(args.gate, actor=args.actor)
+            gate_path = controller.approve_human_gate(
+                args.gate,
+                actor=args.actor,
+                reason=getattr(args, 'reason', None),
+                manual_adoption=bool(str(getattr(args, 'reason', None) or '').strip()),
+            )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
@@ -360,11 +372,19 @@ def main() -> None:
 
     if args.command == 'revise':
         try:
-            gate_path = controller.revise_human_gate(args.gate, reason=getattr(args, 'reason', None))
+            pending_only = not str(getattr(args, 'reason', None) or '').strip() and not getattr(args, 'checkpoint', None)
+            checkpoint = resolve_revise_checkpoint_arg(args)
+            gate_path = controller.revise_human_gate(
+                args.gate,
+                reason=getattr(args, 'reason', None),
+                checkpoint=checkpoint,
+                require_reason_or_checkpoint=True,
+            )
         except Exception as exc:
             print(f'error: {exc}', file=sys.stderr)
             raise SystemExit(1) from None
-        print(f'gate={args.gate} status=revised path={gate_path}')
+        status = 'pending-approval' if pending_only else 'revised'
+        print(f'gate={args.gate} status={status} path={gate_path}')
         return
 
     if args.command == 'migrate':

@@ -16,10 +16,27 @@ from workflow_controller.gates.validators import validate_unit_plan_acceptance_o
 from workflow_controller.gates.validators import validate_unit_plan_design_architecture_traceability
 from workflow_controller.gates.validators import validate_unit_plan_document_deliverables
 from workflow_controller.gates.validators import validate_unit_plan_golden_path
+from workflow_controller.gates.validators import validate_unit_plan_infrastructure_execution_context_matrix
 from workflow_controller.gates.validators import validate_unit_plan_prototype_conformance
 from workflow_controller.gates.validators import validate_unit_plan_real_e2e_evidence_policy
 from workflow_controller.gates.validators import validate_unit_plan_evidence_row_preflight
 from workflow_controller.prototype_review import validate_final_prototype_conformance
+from workflow_controller.requirements_package import REQUIREMENTS_PACKAGE_VERSION
+
+
+def _staged_package_state() -> dict:
+    return {
+        'requestedOutcome': 'V0.6.2',
+        'requirementsPackage': {
+            'version': REQUIREMENTS_PACKAGE_VERSION,
+            'artifacts': {
+                'scope': {'path': '/tmp/scope.md', 'hash': 'scopehash', 'status': 'complete'},
+                'product_design': {'path': '/tmp/product.md', 'hash': 'producthash', 'status': 'complete'},
+                'architecture': {'path': '/tmp/arch.md', 'hash': 'archhash', 'status': 'complete'},
+                'test_strategy': {'path': '/tmp/test.md', 'hash': 'testhash', 'status': 'complete'},
+            },
+        },
+    }
 
 
 def _write_prototype_manifest_for_gate(
@@ -132,6 +149,54 @@ def _write_surface_prototype_manifest_for_gate(gate: Path) -> Path:
                                 'linked_acceptance_criteria': ['AC-21'],
                                 'required': True,
                             },
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    return manifest_path
+
+
+def _write_non_browser_surface_prototype_manifest_for_gate(gate: Path) -> Path:
+    state_root = gate.parent.parent if gate.parent.name == 'approvals' else gate.parent
+    draft_dir = state_root / 'artifacts' / 'requirements-draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    prototype_path = draft_dir / 'workflow-review.html'
+    prototype_path.write_text('<button>Prompt Contract</button><button>Audit</button>\n', encoding='utf-8')
+    manifest_path = draft_dir / 'prototype-manifest.json'
+    manifest_path.write_text(
+        json.dumps(
+            {
+                'prototypes': [
+                    {
+                        'id': 'workflow-review',
+                        'type': 'html',
+                        'path': str(prototype_path),
+                        'title': 'Workflow review prototype',
+                        'linked_acceptance_criteria': ['AC-42'],
+                        'linked_journeys': [],
+                        'page_states': ['Prompt Contract', 'Audit'],
+                        'click_path': ['Open artifact', 'Select Prompt Contract', 'Select Audit'],
+                        'implementation_targets': [{'kind': 'module', 'path': 'workflow_controller/prompts/requirements_package.py'}],
+                        'surface_contracts': [
+                            {
+                                'id': 'prompt-contract',
+                                'title': 'Prompt contract',
+                                'kind': 'other',
+                                'page_states': ['Prompt Contract'],
+                                'click_path': ['Open artifact', 'Select Prompt Contract'],
+                                'entrypoints': ['workflow review artifact -> Prompt Contract tab'],
+                                'implementation_targets': [
+                                    {'kind': 'module', 'path': 'workflow_controller/prompts/requirements_package.py'},
+                                    {'kind': 'artifact', 'path': '.rrc-controller-*/artifacts/<role>/runs/<run-id>/'},
+                                    {'kind': 'state', 'path': '.rrc-controller-*/session.json'},
+                                    {'kind': 'events', 'path': '.rrc-controller-*/events.jsonl'},
+                                ],
+                                'linked_acceptance_criteria': ['AC-42'],
+                                'required': True,
+                            }
                         ],
                     }
                 ]
@@ -1134,6 +1199,54 @@ def test_unit_plan_accepts_required_workflow_document_deliverable(tmp_path: Path
     validate_unit_plan_document_deliverables(gate, state)
 
 
+def test_unit_plan_infrastructure_matrix_rejects_missing_matrix(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text('# Unit Plan\n\n## Test Case Matrix\n', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='Infrastructure / Execution Context Matrix'):
+        validate_unit_plan_infrastructure_execution_context_matrix(gate, _staged_package_state())
+
+
+def test_unit_plan_infrastructure_matrix_rejects_missing_category(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan\n\n'
+        '## Infrastructure / Execution Context Matrix\n'
+        '| 类别 | 事实 | 来源 | Unit Plan 消费方式 |\n'
+        '| --- | --- | --- | --- |\n'
+        '| 代码仓库 | repo | docs | builder scope |\n'
+        '| 项目部署运行时环境 | python3 pytest | progress | verification |\n'
+        '| 调试分析方法 | session/events/artifacts | AGENTS | failure triage |\n'
+        '| 参考环境 | current workflow | roadmap | keep ordering |\n'
+        '| 文档地址 | docs/README.md | docs registry | formal docs |\n'
+        '| 架构/交互逻辑/接口说明 | controller modules | requirements | implementation |\n',
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='依赖信息'):
+        validate_unit_plan_infrastructure_execution_context_matrix(gate, _staged_package_state())
+
+
+def test_unit_plan_infrastructure_matrix_accepts_all_categories(tmp_path: Path) -> None:
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan\n\n'
+        '## Infrastructure / Execution Context Matrix\n'
+        '| 类别 | 事实 | 来源 | Unit Plan 消费方式 |\n'
+        '| --- | --- | --- | --- |\n'
+        '| 代码仓库 | repo | docs | builder scope |\n'
+        '| 项目部署运行时环境 | python3 pytest | progress | verification |\n'
+        '| 调试分析方法 | session/events/artifacts | AGENTS | failure triage |\n'
+        '| 参考环境 | current workflow | roadmap | keep ordering |\n'
+        '| 文档地址 | docs/README.md | docs registry | formal docs |\n'
+        '| 架构/交互逻辑/接口说明 | controller modules | requirements | implementation |\n'
+        '| 依赖信息 | Python stdlib and pytest | roadmap | no new deps |\n',
+        encoding='utf-8',
+    )
+
+    validate_unit_plan_infrastructure_execution_context_matrix(gate, _staged_package_state())
+
+
 def test_final_acceptance_blocks_missing_required_document_deliverable(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -1372,6 +1485,23 @@ def test_requirements_e2e_review_matrix_accepts_complete_ac_and_journey_row(tmp_
     validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
 
 
+def test_requirements_e2e_review_matrix_accepts_command_intent_without_exact_command(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(
+                command=(
+                    'Unit Plan must create Go service/API E2E command for services/api '
+                    'real OpenMAIC PDF integration'
+                )
+            )
+        ),
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
 @pytest.mark.parametrize(
     'command',
     [
@@ -1464,6 +1594,30 @@ def test_requirements_e2e_review_matrix_rejects_incomplete_or_non_real_rows(
     )
 
     with pytest.raises(ValueError, match=expected_issue):
+        validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        '待 Unit Plan 补充',
+        'pytest',
+        '后续测试验证',
+    ],
+)
+def test_requirements_e2e_review_matrix_rejects_placeholder_or_generic_command_intent(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        _requirements_gate_with_e2e_policy(
+            _valid_requirements_e2e_matrix_section(command=command)
+        ),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='non-placeholder verification command intent'):
         validate_requirements_acceptance_quality(gate, {'requestedOutcome': 'V1.8.4'})
 
 
@@ -2133,6 +2287,161 @@ def test_final_acceptance_blocks_passed_prototype_evidence_without_visual_screen
     }
 
     with pytest.raises(ValueError, match='missing prototype screenshot'):
+        validate_final_prototype_conformance(
+            state=state,
+            artifacts_dir=artifacts_dir,
+            requirements_path=requirements,
+        )
+
+
+def test_final_acceptance_accepts_local_real_non_browser_prototype_conformance_evidence(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-42 [verification: integration]: controller workflow review artifact maps to module, artifact, state, and event targets.\n',
+        encoding='utf-8',
+    )
+    _write_non_browser_surface_prototype_manifest_for_gate(requirements)
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'bash scripts/verify/workflow-review.sh'
+    visual_refs = _visual_evidence_plan(
+        prototype='artifacts/prototype/workflow-review.png',
+        production='artifacts/prototype/controller-surfaces.png',
+        interaction='artifacts/prototype/tabs-after-click.png',
+        entrypoint='controller module, artifact, state, and event surfaces',
+    )
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-WORKFLOW',
+                        'acceptance_criterion': 'AC-42',
+                        'layer': 'integration',
+                        'command': command,
+                        'expected': 'workflow review artifact maps to module, artifact, state, and event targets with tab interaction evidence',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': 'controller module, artifact, state, and event surfaces',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'visual_evidence_refs': visual_refs,
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-WORKFLOW',
+                        'acceptance_criterion': 'AC-42',
+                        'layer': 'integration',
+                        'environment_kind': 'local_real',
+                        'command': command,
+                        'expected': 'workflow review artifact maps to module, artifact, state, and event targets with tab interaction evidence',
+                        'prototype_conformance': ['workflow-review'],
+                        'prototype_surfaces': ['prompt-contract'],
+                        'production_targets': [
+                            'module:workflow_controller/prompts/requirements_package.py',
+                            'artifact:.rrc-controller-*/artifacts/<role>/runs/<run-id>/',
+                            'state:.rrc-controller-*/session.json',
+                            'events:.rrc-controller-*/events.jsonl',
+                        ],
+                        'user_steps': ['Open workflow review artifact', 'Select Prompt Contract', 'Select Audit'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    validate_final_prototype_conformance(
+        state=state,
+        artifacts_dir=artifacts_dir,
+        requirements_path=requirements,
+    )
+
+
+def test_final_acceptance_still_requires_real_e2e_for_browser_route_prototype_target(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    _write_prototype_manifest_for_gate(requirements, ac='AC-21')
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'bash scripts/verify/teacher-dashboard-integration.sh'
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-ROUTE-INTEGRATION',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'integration',
+                        'command': command,
+                        'expected': 'dashboard route preserves prototype region order and preview interaction',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': '/dashboard/preview',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'visual_evidence_refs': _visual_evidence_plan(),
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-ROUTE-INTEGRATION',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'integration',
+                        'environment_kind': 'local_real',
+                        'command': command,
+                        'expected': 'dashboard route preserves prototype region order and preview interaction',
+                        'prototype_conformance': ['requirements-prototype'],
+                        'production_targets': ['/dashboard/preview'],
+                        'user_steps': ['Open /dashboard/preview', 'Click Preview'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='not e2e evidence'):
         validate_final_prototype_conformance(
             state=state,
             artifacts_dir=artifacts_dir,

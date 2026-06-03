@@ -2,7 +2,7 @@
 
 [中文](USAGE.zh-CN.md) | [README](README.md)
 
-This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.1 external spec intake and annotation policy, V0.6.0m golden-path E2E preflight, V0.6.0j Requirements infrastructure follow-up, V0.6.0k UI/UX skill policy, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), [docs/workflow/external-spec-intake-and-annotation-policy.md](docs/workflow/external-spec-intake-and-annotation-policy.md), [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md), [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md), and [docs/architecture/external-spec-intake-and-annotation-architecture.md](docs/architecture/external-spec-intake-and-annotation-architecture.md).
+This document is the CLI-oriented guide for Waygate. For concepts, architecture, V0.6.2 staged Requirements package policy, V0.6.1 external spec intake and annotation policy, V0.6.0m golden-path E2E preflight, V0.6.0j Requirements infrastructure follow-up, V0.6.0k UI/UX skill policy, and the V0.6.0i document lifecycle entry point, see [docs/README.md](docs/README.md), [docs/workflow.md](docs/workflow.md), [docs/workflow/staged-requirements-package-policy.md](docs/workflow/staged-requirements-package-policy.md), [docs/workflow/external-spec-intake-and-annotation-policy.md](docs/workflow/external-spec-intake-and-annotation-policy.md), [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md), [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md), [docs/architecture/staged-requirements-package-architecture.md](docs/architecture/staged-requirements-package-architecture.md), and [docs/architecture/external-spec-intake-and-annotation-architecture.md](docs/architecture/external-spec-intake-and-annotation-architecture.md).
 
 For V0.6.0h environment preparation, see [docs/operations/recommended-environment.md](docs/operations/recommended-environment.md). For an introduction and best-practices walkthrough, see [docs/product/waygate-introduction-and-best-practices.md](docs/product/waygate-introduction-and-best-practices.md).
 
@@ -11,6 +11,8 @@ V0.6.0f tightens browser acceptance evidence: Playwright or browser tests that m
 V0.6.0m moves golden-path E2E mistakes earlier: Unit Plan approval rejects `golden_path: true` cases that are not `layer=e2e`, lack a real entrypoint, use mock environments, omit concrete fixture/setup, or are absent from `verification_commands`. API-only or service-only E2E can use pytest/API/service commands and does not require browser fields.
 
 V0.6.1 adds OpenSpec/OpenAPI and Spec Kit spec intake, non-approving annotation / verification-assist passes before human gates, and flexible verifier evidence rows with `human_review_required`.
+
+V0.6.2 splits Requirements drafting into focused scope, product design, architecture, and test strategy checkpoints, then assembles one final Requirements approval package with checkpoint hashes. V0.6.2a adds target surface classification so staged Product Design and Architecture stay centered on the target product/system. V0.6.2b starts a persistent prototype preview after Product Design succeeds and keeps that URL available through Requirements review. V0.6.2c uses Chinese-primary checkpoint names and supports targeted Requirements checkpoint revise. V0.6.2d adds hard Unit Plan handoff continuity checks so downstream Builder execution waits for passed upstream `handoff-evidence.json`. V0.6.2e extends `--spec` to real requirements package directories. V0.6.2f adds approval-notes advisory context, guarded manual gate adoption, Ctrl+C human interruption recovery, and review-surface conformance evidence. V0.6.2g adds no-spec Product Design brainstorming prompt branches and keeps annotation passes on the subprocess runtime. V0.6.2h keeps Requirements 4.6 E2E parsing scoped to the canonical fixed-column matrix block, so later subsection tables do not become 4.6 obligations. `WAYGATE_ANNOTATION_TMUX` is deprecated and ignored.
 
 ## Prerequisites
 
@@ -27,7 +29,7 @@ Build and install:
 
 ```bash
 bash packaging/debian/build-deb.sh
-sudo apt install ./dist/waygate_0.6.1a_all.deb
+sudo apt install ./dist/waygate_0.6.2h_all.deb
 waygate --help
 waygate doctor
 waygate doctor --color auto
@@ -80,7 +82,7 @@ waygate go V1.0 --runner subprocess --dry-run --max-steps 20
 # Run from outside the target project.
 waygate go V1.0 --workspace-dir /path/to/target-project
 
-# Start from a supported Waygate Markdown requirements spec.
+# Start from a supported requirements spec file or package directory.
 waygate go V1.0 --spec ./requirements.md
 
 # Enable non-approving Codex annotation agents for all review roles.
@@ -126,7 +128,7 @@ Create `session.json`, `approvals/`, `artifacts/`, and initial target state.
 waygate init --target V1.0 --workspace-dir . --spec ./requirements.md
 ```
 
-`--spec <path>` currently imports only a readable local Waygate Markdown spec file. Waygate stores path, SHA-256 hash, source type, and import time in `session.json`; it does not store the full spec text. OpenSpec and Spec Kit paths are detected as future external spec intake and rejected/deferred in this version.
+`--spec <path>` imports a readable local Waygate Markdown spec file, a supported OpenSpec/OpenAPI document, an Open Spec package directory, or a Spec Kit feature package directory. Waygate stores path, SHA-256 hash, source type, import time, and conversion artifact paths in `session.json`; it does not store the full spec text. Open Spec packages are directories with `01-requirements.md` plus at least one supporting package doc such as `02-specification.md`, `03-technical-solution.md`, `04-storage-design.md`, or `08-stage-handoff.md`. Spec Kit feature packages are directories with `spec.md` plus `plan.md`, `tasks.md`, `research.md`, `data-model.md`, `quickstart.md`, or `contracts/`; pass `specs/<feature>/` or a concrete `spec.md`, not a `.specify` workspace/tool root.
 
 ### Annotation Agent Options
 
@@ -138,11 +140,13 @@ waygate init --target V0.6.1 --annotation-agent unit-plan=codex
 waygate drive --state-dir .rrc-controller-v0.6.1 --annotation-agent unit-plan=codex --annotation-agent-cmd unit-plan='python3 fake.py'
 ```
 
-Supported role aliases are `requirements`, `unit-plan`, `final-acceptance`, and `all`. Supported backend names are `codex`, `claude-code` (or `claude`), and `opencode`. Use `--no-annotation-agent ROLE|all` to disable roles, `--annotation-agent-env-key ROLE=KEY` to inherit only named environment keys, `--annotation-agent-timeout ROLE=SECONDS`, and `--annotation-agent-failure-policy ROLE=block|warn`.
+Supported role aliases are `requirements`, `unit-plan`, `final-acceptance`, and `all`. Supported backend names are `codex` and `opencode`. `--annotation-agent claude`, `--annotation-agent claude-code`, and role-scoped variants are rejected; Claude Code can still be used as a normal workflow runner through `tmux-claude`. Annotation subprocesses automatically inherit standard proxy keys from the parent process when present: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants. Use `--no-annotation-agent ROLE|all` to disable roles, `--annotation-agent-env-key ROLE=KEY` for additional non-proxy environment keys, `--annotation-agent-timeout ROLE=SECONDS`, and `--annotation-agent-failure-policy ROLE=block|warn`.
 
-The built-in `--annotation-agent codex` configuration enables all three roles with `command=codex`, `args=["exec", "--sandbox", "workspace-write", "-o", "{artifact_path}", "..."]`, `timeout_seconds=7200`, `failure_policy=block`, and `prompt_template=risk-json-v1`. Annotation output is risk-only; it cannot approve, skip, modify, or bypass any Waygate gate. Legacy Waygate built-in Codex annotation args are normalized automatically; custom `--annotation-agent-cmd` commands are left unchanged.
+The built-in `--annotation-agent codex` configuration enables all three roles with `command=codex`, `args=["exec", "--sandbox", "workspace-write", "-o", "{artifact_path}", "..."]`, `timeout_seconds=7200`, `failure_policy=block`, and `prompt_template=risk-json-v1`. The built-in `--annotation-agent opencode` configuration uses `command=opencode` and `args=["run", "..."]`. Annotation output is risk-only; it cannot approve, skip, modify, or bypass any Waygate gate. Legacy Waygate built-in Codex annotation args are normalized automatically. Persisted Waygate built-in Claude annotation configs migrate to the built-in OpenCode template. Custom `--annotation-agent-cmd` commands are left unchanged, but the declared backend must still be `codex` or `opencode`.
 
-Annotation agents run as controller-side subprocesses, not in the tmux builder pane. Before the human gate, the controller pane prints compact Chinese lifecycle lines such as `标注 Agent 开始：角色=requirements_annotation 后端=codex 产物=<path>`, `标注 Agent 完成：角色=requirements_annotation 返回码=0 用时=<duration>`, or `标注 Agent 失败：角色=requirements_annotation 错误=<summary> 产物=<path> 用时=<duration>`; `--color always` and TTY `--color auto` color the agent label and status, while `--color never` stays plain text. stdout/stderr stay captured in artifacts and events. Once a fresh annotation artifact matches the current gate body, the human gate menu shows the artifact path, issue count, and compact Chinese summary, and Plannotator review metadata records the same artifact reference. Human-facing annotation fields must be Simplified Chinese; English-only `summary` or issue messages are rejected instead of being shown as current annotations. Requirements revision reruns the Requirements annotation role, and each artifact records `gate_content_hash` plus `human_language=zh-CN` so stale annotation output from an older gate body or older prompt contract is not reused.
+Annotation agents always run through the subprocess runtime with the configured command and args. `WAYGATE_ANNOTATION_TMUX`, if present in an old shell, is accepted as a deprecated no-op environment leftover, but it does not create panes, run-local wrappers, annotation run directories, `done.json` files, or tmux fallback events. Runtime metadata is env key-only and records command, args, prompt path, artifact path, backend, timeout, and environment key names without env values.
+
+Before the human gate, the controller pane prints compact Chinese lifecycle lines such as `标注 Agent 开始：角色=requirements_annotation 后端=codex 产物=<path>`, `标注 Agent 完成：角色=requirements_annotation 返回码=0 用时=<duration>`, or `标注 Agent 失败：角色=requirements_annotation 错误=<summary> 产物=<path> 用时=<duration>`; `--color always` and TTY `--color auto` color the agent label and status, while `--color never` stays plain text. stdout/stderr stay captured in artifacts and events. Once a fresh annotation artifact matches the current gate body, the human gate menu shows the artifact path, issue count, and compact Chinese summary, and Plannotator review metadata records the same artifact reference. Human-facing annotation fields must be Simplified Chinese; English-only `summary` or issue messages are rejected instead of being shown as current annotations. Requirements revision reruns the Requirements annotation role, and each artifact records `gate_content_hash` plus `human_language=zh-CN` so stale annotation output from an older gate body or older prompt contract is not reused.
 
 ### `start`
 
@@ -204,7 +208,10 @@ Ask the agent to revise a requirements or unit-plan gate after feedback is writt
 
 ```bash
 waygate revise --state-dir .rrc-controller-v1.0 --gate unit-plan
+waygate revise --state-dir .rrc-controller-v1.0 --gate requirements --checkpoint product-design --reason "补产品原型和页面状态"
 ```
+
+For staged Requirements packages, `--checkpoint` targets `scope`, `product-design`, `architecture`, or `test-strategy`; Chinese aliases such as `需求范围`, `产品设计`, `技术架构`, and `测试策略` are accepted. Without `--checkpoint`, `--reason` continues to route to the inferred checkpoint. `--checkpoint` is only valid with `--gate requirements`.
 
 For blocked recovery, the interactive menu requires a non-empty human reason before routing to Unit Plan or Requirements rework. The Blocked Assist summary is context only; it is not a substitute for the human reason.
 
@@ -241,7 +248,7 @@ waygate migrate --state-dir .rrc-controller-v1.0
 | `--annotation-agent ROLE=BACKEND` | Enable one annotation role; repeat for multiple roles. |
 | `--no-annotation-agent ROLE|all` | Disable one annotation role or all roles. |
 | `--annotation-agent-cmd ROLE='COMMAND ...'` | Override the full annotation command line, parsed with `shlex.split`. |
-| `--annotation-agent-env-key ROLE=KEY` | Inherit only this env key name for the role; secret values are not stored. |
+| `--annotation-agent-env-key ROLE=KEY` | Inherit an additional non-proxy env key name for the role; standard proxy keys are inherited by default when present, and secret values are not stored. |
 | `--annotation-agent-timeout ROLE=SECONDS` | Override role timeout. |
 | `--annotation-agent-failure-policy ROLE=block|warn` | Choose whether annotation failures block the human gate or write warning evidence. |
 | `--verbose` | Print detailed per-step output. |

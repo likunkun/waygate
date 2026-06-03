@@ -7,6 +7,10 @@ from typing import Any
 
 OPEN_OBLIGATION_STATUSES = {'open', 'clarified', 'planned'}
 CLOSED_OBLIGATION_STATUSES = {'accepted', 'verified', 'deferred', 'rejected', 'duplicate', 'out_of_scope'}
+GENERATED_FINAL_REJECTION_CLOSURE_REASON = (
+    'Closed automatically because this item is generated Final Acceptance gate content '
+    'from an older controller version, not human acceptance feedback.'
+)
 
 
 def append_acceptance_obligations(
@@ -56,6 +60,29 @@ def write_acceptance_obligation_artifacts(state: dict[str, Any], artifacts_dir: 
         render_acceptance_obligations_markdown(state),
         encoding='utf-8',
     )
+
+
+def close_generated_final_rejection_obligations(state: dict[str, Any]) -> bool:
+    """Close legacy AO rows created from generated Final Acceptance gate body text.
+
+    Older controller versions could convert the entire final acceptance gate body into
+    final_acceptance_rejection AOs when the user selected a rejection route without
+    writing concrete rejection notes. These rows are audit noise and must not remain
+    active must obligations.
+    """
+    changed = False
+    for obligation in _state_obligations(state):
+        if not _is_generated_final_rejection_obligation(obligation):
+            continue
+        if str(obligation.get('status') or '').strip().lower() == 'out_of_scope':
+            continue
+        obligation['status'] = 'out_of_scope'
+        obligation['closureReason'] = GENERATED_FINAL_REJECTION_CLOSURE_REASON
+        obligation['closedBy'] = 'controller_generated_final_rejection_cleanup'
+        changed = True
+    if changed:
+        state['acceptanceObligations'] = _state_obligations(state)
+    return changed
 
 
 def render_acceptance_obligations_markdown(state: dict[str, Any]) -> str:
@@ -242,6 +269,114 @@ def _feedback_items(feedback_text: str, *, annotations: list[Any] | None) -> lis
     if not stripped:
         return []
     return [{'title': _first_line(stripped), 'description': stripped}]
+
+
+def _is_generated_final_rejection_obligation(obligation: dict[str, Any]) -> bool:
+    source = str(obligation.get('source') or '').strip()
+    if source != 'final_acceptance_rejection':
+        return False
+    status = str(obligation.get('status') or 'open').strip().lower()
+    if status in CLOSED_OBLIGATION_STATUSES:
+        return False
+    if (
+        _string_items(obligation.get('mappedAcceptanceCriteria'))
+        or _string_items(obligation.get('mappedUnits'))
+        or _string_items(obligation.get('mappedTestCases'))
+        or _string_items(obligation.get('evidence'))
+    ):
+        return False
+    title = str(obligation.get('title') or '').strip()
+    description = str(obligation.get('description') or '').strip()
+    return (
+        _looks_like_generated_final_acceptance_gate_item(title)
+        or _looks_like_generated_final_acceptance_gate_item(description)
+        or _looks_like_generated_final_acceptance_gate_item(f'{title} {description}'.strip())
+    )
+
+
+def _looks_like_generated_final_acceptance_gate_item(text: str) -> bool:
+    normalized = re.sub(r'\s+', ' ', str(text or '')).strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    exact_generated = {
+        '当前阶段：`FINAL_WALKTHROUGH_PREPARE`',
+        '状态：`active`',
+        '变更文件：',
+        '评审：passed',
+        '验证：passed',
+        '使用账号 / fixture / test data：',
+        '实际观察结果：',
+        '启动入口 / URL：',
+        '截图、日志或其他证据路径：',
+        '选择拒绝或返工前，请描述验收差距、缺失证据或需要变更的范围。',
+    }
+    if normalized in exact_generated:
+        return True
+    generated_prefixes = (
+        '当前单元：',
+        '`covered` ',
+        '构建器：',
+        '来源：',
+        'Surface：',
+        'Entry：',
+        '启动模式：',
+        '启动结果：',
+        '启动目录：',
+        '环境变量名：',
+        '人工启动 / fallback 说明：',
+        'Observed entrypoint:',
+        'Actual observation:',
+        'Data/account/fixture:',
+        'Issues or evidence path:',
+        'Audit hash:',
+        'AO coverage:',
+        'AC coverage:',
+        'Journey coverage:',
+        'Declared changed files:',
+        'Unexplained changed files:',
+        'Audit JSON:',
+        'Audit Markdown:',
+        'Review target-',
+        'Submit the fixed ',
+        'Read GET ',
+        'Inspect classroom DB rows ',
+        'Optionally open the artifact-local prototype ',
+        'Review docs and controller evidence ',
+        'The real API/service path returns ',
+        'The draft detail has ',
+        'capability_invocations adapter_name ',
+        'capability_jobs exposes ',
+        'audit_events contain ',
+        'No evidence shows ',
+    )
+    if normalized.startswith(generated_prefixes):
+        return True
+    if re.fullmatch(r'`[^`]+\.(?:json|txt|yaml|yml|md|go|mjs|sql|html|png)`', normalized):
+        return True
+    if re.fullmatch(r'`[^`]+/`', normalized):
+        return True
+    if re.fullmatch(r'`[^`]+`\s*->\s*passed', normalized):
+        return True
+    if (
+        '## human confirmation' in lowered
+        or 'content hash: sha256:' in lowered
+        or '## 验收证据矩阵' in normalized
+        or '## document deliverables status' in lowered
+        or '## prototype conformance matrix' in lowered
+        or '## visual prototype evidence' in lowered
+        or '## final scope audit' in lowered
+        or '## journey matrix' in lowered
+        or '## agent 提供的人工走查入口' in lowered
+        or '## 人工系统观察记录' in normalized
+        or '## 证据文件' in normalized
+        or '## 人工审阅清单' in normalized
+        or '## 修改清单' in normalized
+        or '## 返工路由' in normalized
+        or '## 返工说明' in normalized
+    ):
+        return True
+    return False
 
 
 def _items_from_plannotator_file_feedback(text: str) -> list[dict[str, str]]:

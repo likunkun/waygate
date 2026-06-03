@@ -9,7 +9,6 @@ from typing import Any
 
 from workflow_controller.acceptance_obligations import active_must_obligations
 from workflow_controller.gates.parsers import gate_body
-from workflow_controller.journeys import final_journey_matrix_rows
 from workflow_controller.rrc_real_runtime import collect_git_changed_files
 
 
@@ -197,6 +196,7 @@ def _acceptance_obligation_coverage(
             'title': obligation.get('title') or '',
             'priority': obligation.get('priority') or '',
             'status': obligation.get('status') or '',
+            'ledger_status': obligation.get('status') or '',
         })
 
     evidence_by_id: dict[str, list[dict[str, Any]]] = {}
@@ -209,12 +209,16 @@ def _acceptance_obligation_coverage(
     required_ids = [item['id'] for item in required_items]
     covered_ids = [item for item in required_ids if item in evidence_by_id]
     uncovered_ids = [item for item in required_ids if item not in evidence_by_id]
+    coverage_status_by_id = _coverage_status_by_id(required_ids, set(covered_ids))
+    for item in required_items:
+        item['coverage_status'] = coverage_status_by_id.get(item['id'], 'uncovered')
     return {
         'required_count': len(required_ids),
         'covered_count': len(covered_ids),
         'required_items': required_items,
         'covered_ids': covered_ids,
         'uncovered_ids': uncovered_ids,
+        'coverage_status_by_id': coverage_status_by_id,
         'evidence_by_id': {key: evidence_by_id[key] for key in covered_ids},
     }
 
@@ -239,11 +243,14 @@ def _acceptance_criterion_coverage(
         'required_ids': required_ids,
         'covered_ids': covered_ids,
         'uncovered_ids': uncovered_ids,
+        'coverage_status_by_id': _coverage_status_by_id(required_ids, set(covered_ids)),
         'evidence_by_id': {key: evidence_by_id[key] for key in covered_ids},
     }
 
 
 def _journey_coverage(state: dict[str, Any], artifacts_dir: Path) -> dict[str, Any]:
+    from workflow_controller.journeys import final_journey_matrix_rows
+
     rows = final_journey_matrix_rows(state, artifacts_dir)
     required_ids: list[str] = []
     evidence_by_id: dict[str, list[dict[str, Any]]] = {}
@@ -268,7 +275,15 @@ def _journey_coverage(state: dict[str, Any], artifacts_dir: Path) -> dict[str, A
         'required_ids': required_ids,
         'covered_ids': covered_ids,
         'uncovered_ids': uncovered_ids,
+        'coverage_status_by_id': _coverage_status_by_id(required_ids, set(covered_ids)),
         'evidence_by_id': evidence_by_id,
+    }
+
+
+def _coverage_status_by_id(ids: list[str], covered_ids: set[str]) -> dict[str, str]:
+    return {
+        item_id: 'covered' if item_id in covered_ids else 'uncovered'
+        for item_id in ids
     }
 
 
@@ -503,15 +518,15 @@ def _scope_audit_markdown(audit: dict[str, Any]) -> str:
         '',
         '## Acceptance Obligation Coverage',
         '',
-        '| AO | Status | Evidence |',
-        '| --- | --- | --- |',
+        '| AO | Ledger Status | Coverage Status | Evidence |',
+        '| --- | --- | --- | --- |',
     ]
     _append_coverage_rows(lines, ao.get('required_items') or [], ao.get('evidence_by_id') or {})
     lines.extend([
         '',
         '## Acceptance Criterion Coverage',
         '',
-        '| AC | Status | Evidence |',
+        '| AC | Coverage Status | Evidence |',
         '| --- | --- | --- |',
     ])
     _append_id_coverage_rows(
@@ -524,7 +539,7 @@ def _scope_audit_markdown(audit: dict[str, Any]) -> str:
         '',
         '## Journey Coverage',
         '',
-        '| Journey | Status | Evidence |',
+        '| Journey | Coverage Status | Evidence |',
         '| --- | --- | --- |',
     ])
     _append_id_coverage_rows(
@@ -566,15 +581,19 @@ def _append_coverage_rows(
     evidence_by_id: dict[str, list[dict[str, Any]]],
 ) -> None:
     if not items:
-        lines.append('| none | covered | No active must AO required. |')
+        lines.append('| none | - | covered | No active must AO required. |')
         return
     for item in items:
         item_id = str(item.get('id') or '').strip()
         evidence = evidence_by_id.get(item_id) or []
-        status = 'covered' if evidence else 'missing'
+        coverage_status = str(item.get('coverage_status') or ('covered' if evidence else 'uncovered'))
+        ledger_status = str(item.get('ledger_status') or item.get('status') or '-')
         title = str(item.get('title') or '').strip()
         label = f'{item_id} {title}'.strip()
-        lines.append(f'| {_markdown_cell(label)} | {status} | {_markdown_cell(_coverage_evidence_text(evidence))} |')
+        lines.append(
+            f'| {_markdown_cell(label)} | {_markdown_cell(ledger_status)} | '
+            f'{coverage_status} | {_markdown_cell(_coverage_evidence_text(evidence))} |'
+        )
 
 
 def _append_id_coverage_rows(
@@ -588,8 +607,8 @@ def _append_id_coverage_rows(
         return
     for item_id in ids:
         evidence = evidence_by_id.get(item_id) or []
-        status = 'covered' if item_id in covered_ids else 'missing'
-        lines.append(f'| {_markdown_cell(item_id)} | {status} | {_markdown_cell(_coverage_evidence_text(evidence))} |')
+        coverage_status = 'covered' if item_id in covered_ids else 'uncovered'
+        lines.append(f'| {_markdown_cell(item_id)} | {coverage_status} | {_markdown_cell(_coverage_evidence_text(evidence))} |')
 
 
 def _coverage_evidence_text(evidence: list[dict[str, Any]]) -> str:
@@ -654,8 +673,13 @@ def _ids_from_value(value: Any, prefix: str) -> list[str]:
         for item in value:
             values.extend(_ids_from_value(item, prefix))
         return _unique_list(values)
+    text = str(value)
     pattern = rf'(?<![A-Za-z0-9_-]){re.escape(prefix)}-[A-Za-z0-9]+(?:[_.-][A-Za-z0-9]+)*'
-    ids = [_normalize_id(match.group(0)) for match in re.finditer(pattern, str(value), re.IGNORECASE)]
+    ids = [
+        _normalize_id(match.group(0))
+        for match in re.finditer(pattern, text, re.IGNORECASE)
+        if not _match_is_wildcard_placeholder(text, match)
+    ]
     return _unique_list(item for item in ids if _id_is_not_placeholder(item, prefix))
 
 
@@ -666,6 +690,11 @@ def _normalize_id(value: Any) -> str:
 def _id_is_not_placeholder(value: str, prefix: str) -> bool:
     suffix = value.removeprefix(prefix + '-')
     return suffix not in {'ID', 'IDS', '待补'}
+
+
+def _match_is_wildcard_placeholder(text: str, match: re.Match[str]) -> bool:
+    suffix = text[match.end():match.end() + 2]
+    return suffix in {'-*', '.*', '_*'}
 
 
 def _unique_list(values: Any) -> list[str]:

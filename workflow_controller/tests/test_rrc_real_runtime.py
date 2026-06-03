@@ -37,6 +37,17 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding='utf-8')
 
 
+def _force_legacy_requirements_entry(state_dir: Path) -> None:
+    session_path = state_dir / 'session.json'
+    state = json.loads(session_path.read_text(encoding='utf-8'))
+    state['currentStep'] = 'REQUIREMENTS_DRAFT'
+    state['nextAllowedActions'] = ['run_requirements_drafter']
+    state['requirementsDraftGenerated'] = False
+    state.pop('stagedRequirementsEnabled', None)
+    state.pop('requirementsPackage', None)
+    session_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
 def test_init_with_target_creates_target_acceptance_unit_and_prompt(tmp_path: Path) -> None:
     workspace = tmp_path / 'courses'
     _write(workspace / 'task_plan.md', '# Target Plan\n\nV1.1 customer delivery/import acceptance.\n')
@@ -608,6 +619,7 @@ raise SystemExit(0)
         str(fake_tmux),
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
 
     draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
     assert draft_result.returncode == 0, draft_result.stderr
@@ -761,6 +773,42 @@ def test_run_verifier_records_failed_command_evidence_row(tmp_path: Path) -> Non
     assert verification['evidence_rows'][0]['status'] == 'failed'
     assert verification['evidence_rows'][0]['result_index'] == 0
     assert verification['evidence_rows'][0]['returncode'] == 7
+
+
+def test_run_verifier_fails_masked_shell_command_not_found(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    command = "sh -c 'printf \"sh: 1: rg: not found\\n\" >&2; exit 0'"
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'test_cases': [
+                    {
+                        'id': 'TC-MISSING-TOOL',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'static',
+                        'command': command,
+                        'expected': 'missing verification tools fail even when shell pipelines mask exit code',
+                    }
+                ],
+                'verification_commands': [command],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification failed'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['passed'] is False
+    assert verification['results'][0]['returncode'] == 0
+    assert verification['results'][0]['ok'] is False
+    assert verification['results'][0]['controller_issue'] == 'missing executable reported by shell: rg'
+    assert verification['evidence_rows'][0]['status'] == 'failed'
 
 
 def test_run_verifier_marks_mocked_browser_e2e_evidence_invalid(tmp_path: Path) -> None:
@@ -1041,6 +1089,74 @@ def test_run_verifier_injects_unit_verification_env_without_inlining_it_in_comma
     verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
     assert verification['passed'] is True
     assert verification['results'][0]['env_keys'] == ['DATABASE_URL']
+
+
+def test_run_verifier_skips_key_only_placeholder_verification_env(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv('OPENMAIC_BASE_URL', raising=False)
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_env': {
+                    'OPENMAIC_BASE_URL': 'required key name only',
+                },
+                'verification_commands': [
+                    "python -c \"import os; from pathlib import Path; "
+                    "Path('openmaic-url.txt').write_text("
+                    "os.environ.get('OPENMAIC_BASE_URL', '<unset>'), encoding='utf-8')\"",
+                ],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    assert (workspace / 'openmaic-url.txt').read_text(encoding='utf-8') == '<unset>'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['results'][0]['env_keys'] == []
+
+
+def test_run_verifier_uses_parent_env_for_key_only_placeholder(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv('OPENMAIC_BASE_URL', 'http://127.0.0.1:18080')
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state = {
+        'currentUnitId': '2-runtime',
+        'workspacePath': str(workspace),
+        'units': [
+            {
+                'id': '2-runtime',
+                'verification_env': {
+                    'OPENMAIC_BASE_URL': '<required key name only>',
+                },
+                'verification_commands': [
+                    "python -c \"import os; from pathlib import Path; "
+                    "Path('openmaic-url.txt').write_text("
+                    "os.environ['OPENMAIC_BASE_URL'], encoding='utf-8')\"",
+                ],
+            }
+        ],
+    }
+    unit_dir = tmp_path / 'artifacts' / '2-runtime'
+
+    result = run_verifier(state, unit_dir, dry_run=False)
+
+    assert result.summary == 'verification passed'
+    assert (workspace / 'openmaic-url.txt').read_text(encoding='utf-8') == 'http://127.0.0.1:18080'
+    verification = json.loads((unit_dir / 'verification.json').read_text(encoding='utf-8'))
+    assert verification['results'][0]['env_keys'] == ['OPENMAIC_BASE_URL']
 
 
 def test_run_verifier_infers_database_url_for_legacy_playwright_session(tmp_path: Path) -> None:

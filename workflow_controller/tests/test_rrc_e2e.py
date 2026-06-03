@@ -28,6 +28,17 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding='utf-8')
 
 
+def _force_legacy_requirements_entry(state_dir: Path) -> None:
+    session_path = state_dir / 'session.json'
+    state = json.loads(session_path.read_text(encoding='utf-8'))
+    state['currentStep'] = 'REQUIREMENTS_DRAFT'
+    state['nextAllowedActions'] = ['run_requirements_drafter']
+    state['requirementsDraftGenerated'] = False
+    state.pop('stagedRequirementsEnabled', None)
+    state.pop('requirementsPackage', None)
+    session_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
 def test_e2e_controller_runs_target_through_tmux_runner_and_verifier(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -219,6 +230,7 @@ if sys.argv[1:2] == ["paste-buffer"]:
         '--force',
     )
     assert init_result.returncode == 0, init_result.stderr
+    _force_legacy_requirements_entry(state_dir)
 
     draft_result = run_rrc('run', '--state-dir', str(state_dir), '--auto-approve')
     assert draft_result.returncode == 0, draft_result.stderr

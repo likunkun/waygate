@@ -2,9 +2,84 @@
 
 All notable project changes should be recorded here.
 
-## 0.6.1a
+## 0.6.2h
+
+- Fixed Requirements Test Strategy 4.6 parsing so the validator consumes only the canonical fixed-column E2E matrix block and does not treat later subsection tables, such as 4.7 AC closure matrices, as 4.6 obligations.
+- Added staged Requirements regression coverage for a valid 11-column 4.6 matrix followed by a 5-column 4.7 closure table containing the same E2E AC.
+- Updated staged Requirements workflow and architecture docs, release notes, and package version metadata to `0.6.2h`.
+- Follow-up: fixed current AC collection so source/provenance prose, source maps, conversion notes, `AC-SPEC-*` wildcard examples, `AC-SPEC-001 -> AC-V10-001` mappings, and source/imported/original AC columns do not create current-version AC obligations. Canonical current AC declarations with verification layers still count, including deliberately adopted external-looking IDs.
+
+## 0.6.2g
+
+- Added Product Design prompt branch handling for no-spec brainstorming in the same tmux conversation, supported-spec compatibility, and backend/API/CLI-only no-UI/no-prototype confirmation based on positive Scope evidence.
+- Removed the annotation-specific tmux pane runtime. Annotation passes now always use the subprocess runtime; `WAYGATE_ANNOTATION_TMUX` is accepted as a deprecated no-op and no longer creates panes, run-local wrappers, run ids, or `done.json` files.
+- Removed Claude Code as an annotation backend. Declared annotation backends are `opencode` and `codex`; persisted Waygate built-in Claude annotation configs migrate to the built-in OpenCode template. Claude Code remains available as a normal `tmux-claude` workflow runner.
+- Hardened env key-only audit metadata so state, events, summaries, artifacts, and captured output record key names and omit env values, tokens, database URL values, passwords, secrets, `api_key` values, signatures, and proxy values.
+- Added V0.6.2g script-entry verification under `scripts/verify/` and updated formal workflow, architecture, usage, release, and roadmap documentation while keeping V0.6.3 Strict Test Presence / Per-Role Runner Configuration as future scope.
+
+## 0.6.2f
+
+- Persist Plannotator approval notes from approved Requirements and Unit Plan gates as audit-only advisory context, then inject them into next-stage prompts under `Approval Notes Non-Contract Context`.
+- Added human gate menu actions `i` and `m`: `i` creates a pending draft from review notes, while `m` adopts a human-edited gate body only when the body hash changed, a reason or notes exist, and deterministic validators pass.
+- Converted Ctrl+C during automatic execution into an auditable `blockedContext.category=human_interrupt` state with best-effort tmux `C-c` delivery and recovery guidance.
+- Split CLI review routes so `waygate approve --reason` uses guarded manual adoption and `waygate revise` without a reason returns to the current approval point, while checkpoint revise still requires `--reason`.
+- Added V0.6.2f review bundle and prototype conformance evidence for approval notes, draft merge, manual adoption, interruption recovery, revise routes, legacy review compatibility, and real Waygate target mapping.
+- Updated README/USAGE/CHANGELOG/ROADMAP, formal workflow/architecture docs, verification scripts, and package version metadata to `0.6.2f` while keeping V0.6.3 Strict Test Presence / Per-Role Runner Configuration as future scope.
+
+## 0.6.2e
+
+- Added `open-spec-package` intake for Open Spec document package directories containing `01-requirements.md` plus at least one supporting package document.
+- Extended Spec Kit feature package detection to arbitrary directory names when `spec.md` is accompanied by feature artifacts such as `plan.md`, `tasks.md`, or `contracts/`.
+- Reject `.specify` workspace/tool roots and ordinary docs directories with guidance to pass `specs/<feature>/` or a concrete `spec.md`.
+- Wrote conversion artifacts for package-directory imports, including package entrypoints in `import-summary.json`, `source-map.json`, and `validation-report.json`.
+- Updated Requirements prompt/brief wording, README/USAGE, workflow/architecture docs, and package version metadata to `0.6.2e`.
+
+## 0.6.2d
+
+- Added a Unit Continuity Gate for multi-unit Unit Plans, including `单元连贯性摘要`, Handoff Matrix expectations, and structured `depends_on` / `handoff` metadata.
+- Added Unit Plan validation for missing dependencies, circular dependencies, vague handoff summaries, unmatched downstream `requires[]`, and ready checks not mapped to commands or test cases.
+- Made Verifier write `artifacts/<unit-id>/handoff-evidence.json` and fail producer verification when declared handoff artifacts or ready checks are missing.
+- Block downstream Builder execution with `blockedContext.category=unit_handoff` when dependency handoff evidence is missing, failed, or mismatched.
+- Documented the workflow policy in `docs/workflow/unit-continuity-handoff-policy.md` and updated package version metadata to `0.6.2d`.
+
+## 0.6.2c
+
+- Made the public staged Requirements checkpoint names Chinese-primary: 需求范围检查点, 产品设计简报, 技术架构简报, and 需求测试策略简报, while keeping internal stage keys unchanged.
+- Updated final Requirements package assembly to show Chinese appendix titles and checkpoint names in the artifact hash table.
+- Added `waygate revise --gate requirements --checkpoint ... --reason ...` for explicit rollback to a staged checkpoint, including Chinese aliases such as `产品设计`.
+- Kept Unit Plan revision behavior unchanged and reject `--checkpoint` with `--gate unit-plan`.
+
+## 0.6.2b
 
 - Added Blocked Assist for controlled diagnosis of `status=blocked` workflows, with summary artifacts, human-confirmed `human_reason`, and explicit controller-selected recovery routes.
+- Promoted the Requirements prototype preview from a temporary Plannotator-only server to a controller process-level preview service.
+- Product Design checkpoints now generate the Plannotator review HTML/manifest after successful validation, using the Scope checkpoint as the requirements reference before the final approval gate exists.
+- Reuse the same preview URL through Architecture, Test Strategy, final Requirements assembly, Requirements human review, and Plannotator-assisted review.
+- Rebuild the review bundle after final Requirements assembly so the manifest records the real approval gate path while keeping the current preview port.
+- Changed preview port binding to start from `WAYGATE_PREVIEW_PORT` or `20001` and increment when the port is occupied.
+- Kept the preview server alive after Plannotator Close and added proxy-environment guidance for `NO_PROXY/no_proxy`.
+
+## 0.6.2a
+
+- Added target surface classification for staged Requirements packages, recording target UI/Web/prototype needs, visible surfaces, and redacted evidence snippets from specs, target context, unit metadata, and feedback.
+- Updated staged Scope, Product Design, Architecture, and Test Strategy prompts so they stay centered on the target product/system instead of Waygate/controller workflow.
+- Preserved Requirements prototype hard gates for classified UI/Web targets, while allowing explicit backend/API/CLI-only targets to declare a no-UI basis.
+- Added preflight rejection for non-Waygate target artifacts whose Product Design or Architecture primarily describes Waygate/controller internals.
+- Improved staged revision routing so UI/prototype feedback returns to Product Design and interaction/API/data-flow feedback returns to Architecture.
+- Routed combined AO mapping or E2E AC/Journey mapping blockers back to Scope before UI/prototype keywords, preventing prototype-related wording from looping through Product Design.
+- Required Product Design checkpoints for classified prototype/Web targets to prompt for and stage-validate `artifacts/requirements-draft/prototype-manifest.json`.
+- Clarified Product Design manifest local path semantics: local prototype paths must resolve from `artifacts/requirements-draft/`, with diagnostics showing the resolved path and guidance for workspace-relative `docs/prototypes/...` mistakes.
+
+## 0.6.2
+
+- Added the Staged Requirements Package flow: Requirements Scope, Product Design Brief, Technical Architecture Brief, and Requirements Test Strategy Brief now run as focused checkpoints before one final human Requirements approval gate.
+- Added final package assembly with checkpoint artifact hashes and appendix content, plus staged package consistency validation.
+- Moved detailed target infrastructure intake into the Unit Plan Infrastructure / Execution Context Matrix while keeping Requirements focused on minimal context.
+- Added Unit Plan inheritance of staged artifact path, hash, and status metadata so scope, ACs, journeys, design, architecture, E2E, and risk obligations continue downstream.
+- Added formal V0.6.2 workflow and architecture docs, and kept Strict Test Presence / Per-Role Runner Configuration in V0.6.3.
+
+## 0.6.1
+
 - Added supported OpenSpec/OpenAPI and Spec Kit intake paths with normalized requirements, source maps, validation reports, and clear unsupported/deferred errors.
 - Added non-approving role-based annotation and verification-assist configuration for Requirements, Unit Plan, and Final Acceptance gates.
 - Added `--annotation-agent` CLI options on `init`, `start`, `go`, `drive`, and `run` so operators can enable risk-only annotation agents without editing `session.json`.

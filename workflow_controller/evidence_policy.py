@@ -6,6 +6,8 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from workflow_controller.requirements_ids import acceptance_criterion_ids_in_text
+
 
 REAL_E2E_ENVIRONMENT_KINDS = {'local_real', 'production_readonly'}
 MOCK_ENVIRONMENT_KINDS = {'component_mock', 'contract_mock', 'visual'}
@@ -404,7 +406,7 @@ def _case_acceptance_criteria(case: dict[str, Any]) -> set[str]:
     )
     refs = set()
     for item in _string_list(raw):
-        refs.update(match.group(0).upper() for match in re.finditer(r'\bAC-\d+(?:[-.]\d+)*\b', item, re.I))
+        refs.update(acceptance_criterion_ids_in_text(item))
     return refs
 
 

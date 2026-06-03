@@ -50,6 +50,41 @@ from workflow_controller.prototype_review import (
     surface_contract_requires_browser_e2e,
     validate_prototype_review_manifest,
 )
+from workflow_controller.requirements_package import (
+    CHECKPOINT_STAGES,
+    REQUIREMENTS_PACKAGE_VERSION,
+    STAGE_APPENDIX_TITLES,
+    artifact_hash,
+)
+from workflow_controller.requirements_ids import (
+    AC_ID_PATTERN,
+    JOURNEY_ID_PATTERN,
+    acceptance_criterion_ids_in_text,
+    journey_ids_in_text,
+)
+from workflow_controller.requirements_surface import (
+    controller_perspective_issue,
+    requirements_surface_declares_no_ui_basis,
+    requirements_surface_explains_unknown,
+    requirements_surface_is_unknown,
+    requirements_surface_requires_product_ui,
+    requirements_surface_requires_prototype,
+    requirements_surface_requires_web_system,
+    requirements_surface_uses_false_flag_as_no_ui_basis,
+    state_targets_waygate_controller,
+)
+from workflow_controller.unit_handoff import (
+    handoff_evidence_artifacts,
+    handoff_human_summary,
+    handoff_produces,
+    handoff_ready_checks,
+    handoff_requires,
+    handoff_summary_is_vague,
+    handoff_text_matches,
+    ready_check_is_mapped,
+    unit_depends_on,
+    unit_handoff,
+)
 
 
 VERIFICATION_EVIDENCE_SCHEMA_VERSION = 'v0.3.5'
@@ -484,6 +519,38 @@ def validate_unit_plan_document_deliverables(
         raise ValueError('unit plan document deliverables are incomplete: ' + '; '.join(issues))
 
 
+def validate_unit_plan_infrastructure_execution_context_matrix(
+    unit_plan_path: Path,
+    state: dict[str, Any],
+) -> None:
+    if not _staged_requirements_package_state(state):
+        return
+    if not unit_plan_path.exists():
+        return
+    content = gate_body(unit_plan_path.read_text(encoding='utf-8'))
+    section = (
+        _markdown_section(content, 'Infrastructure / Execution Context Matrix')
+        or _markdown_section(content, 'Infrastructure / Execution Context')
+        or _markdown_section(content, '执行上下文矩阵')
+    )
+    if not section.strip():
+        raise ValueError(
+            'Unit Plan missing `Infrastructure / Execution Context Matrix`; '
+            'add repository, runtime, debugging, reference environment, documentation, architecture/interface, and dependencies'
+        )
+    normalized = _normalized_requirements_text(section)
+    missing = [
+        label
+        for label, aliases in _REQUIREMENTS_INFRASTRUCTURE_CATEGORIES
+        if not any(_normalized_requirements_text(alias) in normalized for alias in aliases)
+    ]
+    if missing:
+        raise ValueError(
+            'Unit Plan Infrastructure / Execution Context Matrix missing category: '
+            + ', '.join(missing)
+        )
+
+
 def validate_final_document_deliverables(
     unit_plan_path: Path,
     state: dict[str, Any],
@@ -515,8 +582,9 @@ def validate_requirements_acceptance_quality(
     if missing_layers:
         issues.append(
             ', '.join(f'{ac_id} missing verification layer' for ac_id in missing_layers)
-            + '; add one of unit, functional, integration, e2e, or manual in the AC line '
-            + 'or Requirements Traceability Matrix'
+            + '; add a non-placeholder verification layer such as unit, functional, integration, '
+            + 'static, regression, prerequisite, e2e, or manual in the AC line or '
+            + 'Requirements Traceability Matrix'
         )
 
     obligations = active_must_obligations(state)
@@ -559,31 +627,49 @@ def validate_requirements_acceptance_quality(
 
     issues.extend(_requirements_e2e_review_matrix_issues(content, state))
 
+    staged_package = _staged_requirements_package_state(state)
+    if staged_package and state.get('requirementsSurfaceClassification') and not state_targets_waygate_controller(state):
+        if (
+            requirements_surface_is_unknown(state)
+            and not requirements_surface_declares_no_ui_basis(content)
+            and not requirements_surface_explains_unknown(content)
+        ):
+            issues.append(
+                'requirementsSurfaceClassification is unknown; Scope/Product Design must explain whether '
+                'target product UI/Web/prototype is required, or give explicit backend/API/CLI-only no-UI basis'
+            )
+        if requirements_surface_uses_false_flag_as_no_ui_basis(content):
+            issues.append(
+                'default currentUnitNeedsUiDesign/currentUnitIsWebSystem false flags cannot be used as no-UI basis; '
+                'classify the target product surfaces from spec/context/human feedback'
+            )
+
+    prototype_contract_source = (
+        _staged_requirements_appendices_content(content)
+        if staged_package
+        else content
+    )
     prototype_contract_content = _requirements_content_without_e2e_review_section(
-        _requirements_prototype_contract_content(content)
+        _requirements_prototype_contract_content(prototype_contract_source)
     )
     content_declares_prototype_contract = _requirements_declares_prototype_contract(prototype_contract_content, state)
-    if _requirements_need_uiux_prototype(state) and not _requirements_has_uiux_prototype_evidence(prototype_contract_content):
-        issues.append(
-            'UI/UX target requires prototype evidence before Requirements human confirmation; '
-            'add prototype evidence or reviewable design evidence mapped to Product Design Ref'
-        )
-
-    if _requirements_need_clickable_web_prototype(state) and not _requirements_has_clickable_web_prototype_evidence(prototype_contract_content):
-        issues.append(
-            'Web system requires clickable webpage prototype evidence before Requirements human confirmation; '
-            'record access method or URL/start command, page states, click path, and AC mapping'
-        )
-
+    needs_uiux_prototype = _requirements_need_uiux_prototype(state)
+    needs_clickable_web_prototype = _requirements_need_clickable_web_prototype(state)
+    declares_clickable_web_prototype = _requirements_declares_clickable_web_prototype_contract(
+        prototype_contract_content,
+        state,
+    )
     prototype_manifest_required = (
-        _requirements_need_uiux_prototype(state)
-        or _requirements_need_clickable_web_prototype(state)
+        needs_uiux_prototype
+        or needs_clickable_web_prototype
         or content_declares_prototype_contract
     )
+    valid_prototype_manifest = False
+    prototype_manifest_issue: str | None = None
     if prototype_manifest_required:
         manifest_path, artifacts_dir = source_prototype_manifest_path_for_requirements(requirements_path)
         if not manifest_path.exists():
-            issues.append(
+            prototype_manifest_issue = (
                 'UI/UX, Web, or prototype UI contract requires a valid prototype manifest before Requirements human confirmation; '
                 f'write artifacts/requirements-draft/{manifest_path.name}'
             )
@@ -594,20 +680,575 @@ def validate_requirements_acceptance_quality(
                     requirements_path=requirements_path,
                     artifacts_dir=artifacts_dir,
                     require_clickable=(
-                        _requirements_need_clickable_web_prototype(state)
-                        or _requirements_declares_clickable_web_prototype_contract(prototype_contract_content, state)
+                        needs_clickable_web_prototype
+                        or declares_clickable_web_prototype
                     ),
                     require_implementation_targets=True,
                 )
+                valid_prototype_manifest = True
             except ValueError as exc:
-                issues.append(str(exc))
+                prototype_manifest_issue = str(exc)
 
-    if _requirements_target_infrastructure_required(state):
+    if (
+        needs_uiux_prototype
+        and not valid_prototype_manifest
+        and not _requirements_has_uiux_prototype_evidence(prototype_contract_content)
+    ):
+        issues.append(
+            'UI/UX target requires prototype evidence before Requirements human confirmation; '
+            'add prototype evidence or reviewable design evidence mapped to Product Design Ref'
+        )
+
+    if (
+        needs_clickable_web_prototype
+        and not valid_prototype_manifest
+        and not _requirements_has_clickable_web_prototype_evidence(prototype_contract_content)
+    ):
+        issues.append(
+            'Web system requires clickable webpage prototype evidence before Requirements human confirmation; '
+            'record access method or URL/start command, page states, click path, and AC mapping'
+        )
+
+    if prototype_manifest_issue:
+        issues.append(prototype_manifest_issue)
+
+    if staged_package:
+        issues.extend(_staged_requirements_package_consistency_issues(content, state))
+        issues.extend(_staged_requirements_target_perspective_issues(state))
+    elif _requirements_target_infrastructure_required(state):
         issues.extend(_requirements_target_infrastructure_issues(content))
 
     if issues:
         raise ValueError('; '.join(issues))
 
+
+def validate_staged_requirements_package_consistency(
+    requirements: Path | str,
+    state: dict[str, Any],
+) -> None:
+    content = requirements.read_text(encoding='utf-8') if isinstance(requirements, Path) else str(requirements)
+    issues = _staged_requirements_package_consistency_issues(gate_body(content), state)
+    if issues:
+        raise ValueError('; '.join(issues))
+
+
+def validate_staged_requirements_stage_output(
+    state: dict[str, Any],
+    artifacts_dir: Path,
+    stage: str,
+    *,
+    artifact_path: Path | None = None,
+) -> None:
+    content = _staged_requirements_stage_content(state, stage, artifact_path=artifact_path)
+    scope_content = content if stage == 'scope' else _staged_requirements_stage_content(state, 'scope')
+    known_scope_ids = _staged_scope_reference_ids(scope_content)
+    issues: list[str] = []
+
+    if stage == 'scope':
+        issues.extend(_requirements_scope_stage_contract_issues(content))
+    elif stage == 'product_design':
+        issues.extend(_staged_output_unknown_reference_issues(content, known_scope_ids, label='Product Design checkpoint'))
+        issues.extend(_product_design_stage_manifest_issues(state, artifacts_dir, known_scope_ids))
+    elif stage == 'architecture':
+        issues.extend(_staged_output_unknown_reference_issues(content, known_scope_ids, label='Architecture checkpoint'))
+        issues.extend(_architecture_stage_e2e_handoff_issues(content, scope_content))
+    elif stage == 'test_strategy':
+        issues.extend(_staged_output_unknown_reference_issues(content, known_scope_ids, label='Test Strategy checkpoint'))
+        issues.extend(_test_strategy_stage_e2e_matrix_issues(content, scope_content, state))
+    else:
+        raise ValueError(f'Unsupported requirements package stage validation: {stage}')
+
+    if issues:
+        raise ValueError('; '.join(issues))
+
+
+def _staged_requirements_stage_content(
+    state: dict[str, Any],
+    stage: str,
+    *,
+    artifact_path: Path | None = None,
+) -> str:
+    path = artifact_path
+    if path is None:
+        package = state.get('requirementsPackage')
+        artifacts = package.get('artifacts') if isinstance(package, dict) else {}
+        record = artifacts.get(stage) if isinstance(artifacts, dict) else None
+        path_text = record.get('path') if isinstance(record, dict) else None
+        if not path_text:
+            return ''
+        path = Path(str(path_text))
+    try:
+        return path.read_text(encoding='utf-8')
+    except OSError:
+        return ''
+
+
+def _staged_scope_reference_ids(scope_content: str) -> dict[str, set[str]]:
+    return {
+        'acs': _requirements_acceptance_criterion_ids(scope_content),
+        'journeys': _requirements_journey_ids_in_text(scope_content),
+    }
+
+
+def _requirements_scope_stage_contract_issues(content: str) -> list[str]:
+    if not _stage_declares_real_e2e_or_browser_review(content):
+        return []
+    e2e_ac_ids = _requirements_e2e_acceptance_criterion_ids(content)
+    e2e_journey_ids = _requirements_active_e2e_journey_ids(content)
+    if e2e_ac_ids or e2e_journey_ids:
+        return []
+    return [
+        'Requirements Scope checkpoint declares E2E/browser review but does not map it '
+        'to a canonical e2e AC or active e2e Journey; '
+        + _requirements_e2e_mapping_guidance()
+    ]
+
+
+def _staged_output_unknown_reference_issues(
+    content: str,
+    known_scope_ids: dict[str, set[str]],
+    *,
+    label: str,
+) -> list[str]:
+    known_acs = known_scope_ids.get('acs') or set()
+    known_journeys = known_scope_ids.get('journeys') or set()
+    unknown_acs = sorted(_requirements_current_ac_ids_in_text(content) - known_acs)
+    unknown_journeys = sorted(_requirements_journey_ids_in_text(content) - known_journeys)
+    issues: list[str] = []
+    if unknown_acs:
+        issues.append(f'{label} references unknown acceptance criteria: {", ".join(unknown_acs)}')
+    if unknown_journeys:
+        issues.append(f'{label} references unknown Journey: {", ".join(unknown_journeys)}')
+    return issues
+
+
+def _architecture_stage_e2e_handoff_issues(content: str, scope_content: str) -> list[str]:
+    scope_e2e_ids = _requirements_e2e_acceptance_criterion_ids(scope_content) | _requirements_active_e2e_journey_ids(scope_content)
+    if not scope_e2e_ids and not _stage_declares_real_e2e_or_browser_review(content):
+        return []
+    if not scope_e2e_ids:
+        return [
+            'Architecture checkpoint declares E2E/browser handoff but Scope has no canonical '
+            'e2e AC or active e2e Journey; ' + _requirements_e2e_mapping_guidance()
+        ]
+    stage_ids = _requirements_ac_ids_in_text(content) | _requirements_journey_ids_in_text(content)
+    if stage_ids & scope_e2e_ids:
+        return []
+    return [
+        'Architecture checkpoint inherits E2E/browser handoff and must reference Scope canonical '
+        'e2e AC/Journey: ' + ', '.join(sorted(scope_e2e_ids))
+    ]
+
+
+def _test_strategy_stage_e2e_matrix_issues(
+    content: str,
+    scope_content: str,
+    state: dict[str, Any],
+) -> list[str]:
+    scope_declares_e2e = (
+        bool(_requirements_e2e_acceptance_criterion_ids(scope_content))
+        or bool(_requirements_active_e2e_journey_ids(scope_content))
+        or _stage_declares_real_e2e_or_browser_review(scope_content)
+    )
+    stage_declares_e2e = _stage_declares_real_e2e_or_browser_review(content)
+    if not scope_declares_e2e and not stage_declares_e2e:
+        return []
+    if not _requirements_has_fixed_4_6_e2e_heading(content):
+        return [
+            'Requirements Test Strategy checkpoint declares or inherits E2E/browser review but is missing '
+            f'fixed heading `## {_REQUIREMENTS_E2E_REVIEW_FIXED_HEADING}` with the fixed 11-column table'
+        ]
+    combined = scope_content.rstrip() + '\n\n' + content
+    return _requirements_e2e_review_matrix_issues(combined, state)
+
+
+def _product_design_stage_manifest_issues(
+    state: dict[str, Any],
+    artifacts_dir: Path,
+    known_scope_ids: dict[str, set[str]],
+) -> list[str]:
+    if not _product_design_stage_requires_prototype_manifest(state):
+        return []
+
+    manifest_path = artifacts_dir / 'requirements-draft' / 'prototype-manifest.json'
+    if not manifest_path.exists():
+        return [
+            'Product Design checkpoint requires artifacts/requirements-draft/prototype-manifest.json '
+            'when prototype_required=required or web_system=required'
+        ]
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError as exc:
+        return [f'Product Design checkpoint prototype-manifest.json is invalid JSON: {exc.msg}']
+    if not isinstance(payload, dict):
+        return ['Product Design checkpoint prototype-manifest.json must be a JSON object']
+
+    prototypes = payload.get('prototypes')
+    if not isinstance(prototypes, list) or not prototypes:
+        flat_keys = sorted(key for key in _FLAT_PROTOTYPE_MANIFEST_KEYS if key in payload)
+        if flat_keys:
+            return [
+                'Product Design checkpoint prototype-manifest.json missing `prototypes[]`; '
+                'flat top-level prototype manifest keys are not accepted: '
+                + ', '.join(flat_keys)
+                + '. Put prototype access, page_states, click_path, AC/Journey mapping, '
+                'implementation_targets, and surface_contracts under each item in `prototypes[]`.'
+            ]
+        return ['Product Design checkpoint prototype-manifest.json must contain a non-empty `prototypes[]` list']
+
+    issues: list[str] = []
+    for index, prototype in enumerate(prototypes):
+        if not isinstance(prototype, dict):
+            issues.append(f'prototype[{index}] must be an object')
+            continue
+        label = str(prototype.get('id') or index)
+        _stage_require_non_empty(prototype, ['id', 'type', 'title'], f'prototype {label}', issues)
+        prototype_type = str(prototype.get('type') or '').strip().lower()
+        path_value = str(prototype.get('path') or '').strip()
+        url_value = str(prototype.get('url') or '').strip()
+        review_href = str(prototype.get('review_href') or prototype.get('reviewHref') or '').strip()
+        if not path_value and not url_value and not review_href:
+            issues.append(f'prototype {label} missing clickable prototype access method path/url/review_href')
+        if path_value and prototype_type in {'html', 'image', 'markdown', 'md'}:
+            resolved_path = Path(path_value)
+            if not resolved_path.is_absolute():
+                resolved_path = manifest_path.parent / resolved_path
+            if not resolved_path.exists() or not resolved_path.is_file():
+                guidance = (
+                    f'prototype {label} path does not exist: {path_value} '
+                    f'(resolved path: {resolved_path}; paths are resolved relative to '
+                    'artifacts/requirements-draft/prototype-manifest.json parent; '
+                    'copy or generate the prototype into artifacts/requirements-draft, '
+                    'or use an intentional absolute path)'
+                )
+                if path_value.startswith('docs/prototypes/'):
+                    guidance += (
+                        '; workspace-relative docs/prototypes path detected; either copy it under '
+                        'artifacts/requirements-draft/docs/prototypes or rewrite the manifest path '
+                        'to an artifact-local prototypes/<prototype-id>/... file'
+                    )
+                issues.append(guidance)
+        if prototype_type == 'url' and not url_value:
+            issues.append(f'prototype {label} type=url requires url')
+        if _product_design_stage_requires_clickable_web_manifest(state) and prototype_type not in {'html', 'url'}:
+            issues.append(f'prototype {label} must be html or url for web_system=required')
+
+        if not _stage_list_value(prototype, 'page_states', 'pageStates'):
+            issues.append(f'prototype {label} missing page_states')
+        if not _stage_list_value(prototype, 'click_path', 'clickPath'):
+            issues.append(f'prototype {label} missing click_path')
+        if not _stage_list_value(
+            prototype,
+            'linked_acceptance_criteria',
+            'acceptance_criteria',
+            'linked_acs',
+            'acs',
+        ):
+            issues.append(f'prototype {label} missing linked_acceptance_criteria')
+        if not _stage_list_value(prototype, 'linked_journeys', 'journeys'):
+            issues.append(f'prototype {label} missing linked_journeys')
+        if not _stage_list_value(prototype, 'implementation_targets', 'production_targets', 'real_targets'):
+            issues.append(f'prototype {label} missing implementation_targets')
+        issues.extend(_prototype_scope_reference_issues(prototype, known_scope_ids, f'prototype {label}'))
+
+        surface_contracts = _stage_list_value(prototype, 'surface_contracts', 'ui_surfaces', 'page_state_targets')
+        if not surface_contracts:
+            issues.append(f'prototype {label} missing surface_contracts')
+        else:
+            for surface_index, surface in enumerate(surface_contracts):
+                if not isinstance(surface, dict):
+                    issues.append(f'prototype {label} surface_contracts[{surface_index}] must be an object')
+                    continue
+                surface_label = str(surface.get('id') or surface_index)
+                _stage_require_non_empty(surface, ['id', 'title', 'kind'], f'prototype {label} surface {surface_label}', issues)
+                if not _stage_list_value(surface, 'page_states', 'pageStates'):
+                    issues.append(f'prototype {label} surface {surface_label} missing page_states')
+                if not _stage_list_value(surface, 'click_path', 'clickPath'):
+                    issues.append(f'prototype {label} surface {surface_label} missing click_path')
+                if not _stage_list_value(surface, 'entrypoints', 'entry_points', 'entryPoints'):
+                    issues.append(f'prototype {label} surface {surface_label} missing entrypoints')
+                if not _stage_list_value(surface, 'implementation_targets', 'production_targets', 'real_targets'):
+                    issues.append(f'prototype {label} surface {surface_label} missing implementation_targets')
+                if not _stage_list_value(
+                    surface,
+                    'linked_acceptance_criteria',
+                    'acceptance_criteria',
+                    'linked_acs',
+                    'acs',
+                ):
+                    issues.append(f'prototype {label} surface {surface_label} missing linked_acceptance_criteria')
+                issues.extend(_prototype_scope_reference_issues(
+                    surface,
+                    known_scope_ids,
+                    f'prototype {label} surface {surface_label}',
+                ))
+
+    if issues:
+        return ['Product Design checkpoint prototype-manifest.json is incomplete: ' + '; '.join(issues)]
+    return []
+
+
+_FLAT_PROTOTYPE_MANIFEST_KEYS = {
+    'clickable_prototype_access_method',
+    'page_states',
+    'pageStates',
+    'click_path',
+    'clickPath',
+    'linked_acceptance_criteria',
+    'linked_journeys',
+    'implementation_targets',
+    'production_targets',
+    'real_targets',
+    'surface_contracts',
+    'ui_surfaces',
+    'page_state_targets',
+}
+
+
+def _prototype_scope_reference_issues(
+    payload: dict[str, Any],
+    known_scope_ids: dict[str, set[str]],
+    label: str,
+) -> list[str]:
+    known_acs = known_scope_ids.get('acs') or set()
+    known_journeys = known_scope_ids.get('journeys') or set()
+    acs = {str(value).upper() for value in _stage_list_value(
+        payload,
+        'linked_acceptance_criteria',
+        'acceptance_criteria',
+        'linked_acs',
+        'acs',
+    )}
+    journeys = {str(value).upper() for value in _stage_list_value(payload, 'linked_journeys', 'journeys')}
+    issues: list[str] = []
+    unknown_acs = sorted(acs - known_acs)
+    unknown_journeys = sorted(journeys - known_journeys)
+    if unknown_acs:
+        issues.append(f'{label} unknown acceptance criteria: {", ".join(unknown_acs)}')
+    if unknown_journeys:
+        issues.append(f'{label} unknown Journey: {", ".join(unknown_journeys)}')
+    return issues
+
+
+def _product_design_stage_requires_prototype_manifest(state: dict[str, Any]) -> bool:
+    classification = state.get('requirementsSurfaceClassification')
+    if not isinstance(classification, dict):
+        return False
+    return (
+        str(classification.get('prototype_required') or '').strip().lower() == 'required'
+        or str(classification.get('web_system') or '').strip().lower() == 'required'
+    )
+
+
+def _product_design_stage_requires_clickable_web_manifest(state: dict[str, Any]) -> bool:
+    classification = state.get('requirementsSurfaceClassification')
+    return (
+        isinstance(classification, dict)
+        and str(classification.get('web_system') or '').strip().lower() == 'required'
+    )
+
+
+def _stage_require_non_empty(
+    payload: dict[str, Any],
+    keys: list[str],
+    label: str,
+    issues: list[str],
+) -> None:
+    for key in keys:
+        if not str(payload.get(key) or '').strip():
+            issues.append(f'{label} missing {key}')
+
+
+def _stage_list_value(payload: dict[str, Any], *keys: str) -> list[Any]:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if str(item).strip()]
+        if isinstance(value, str) and value.strip():
+            return [part.strip() for part in value.replace(';', ',').split(',') if part.strip()]
+    return []
+
+
+def _stage_declares_real_e2e_or_browser_review(content: str) -> bool:
+    return _requirements_text_explicitly_requires_e2e_review(content, {})
+
+
+def _requirements_has_fixed_4_6_e2e_heading(content: str) -> bool:
+    return re.search(
+        rf'(?m)^\s{{0,3}}##\s+{re.escape(_REQUIREMENTS_E2E_REVIEW_FIXED_HEADING)}\s*#*\s*$',
+        content,
+    ) is not None
+
+
+def _requirements_e2e_mapping_guidance() -> str:
+    return (
+        'canonical Journey rows must use `Status=active` and `Verification Layer=e2e`; '
+        'natural-language values such as `是` or `real integration + DB assertion` are not accepted; '
+        f'after mapping, Test Strategy must include `## {_REQUIREMENTS_E2E_REVIEW_FIXED_HEADING}`. '
+        'Minimal example: `| J-V04-001 | Classroom happy path | active | Open page -> assert persisted status | AC-V04-001 | e2e |`.'
+    )
+
+
+def _staged_requirements_package_state(state: dict[str, Any]) -> bool:
+    package = state.get('requirementsPackage')
+    return isinstance(package, dict) and package.get('version') == REQUIREMENTS_PACKAGE_VERSION
+
+
+def _staged_requirements_package_consistency_issues(content: str, state: dict[str, Any]) -> list[str]:
+    package = state.get('requirementsPackage')
+    artifacts = package.get('artifacts') if isinstance(package, dict) else {}
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+
+    issues: list[str] = []
+    hash_section = _markdown_section(content, 'Artifact Hashes')
+    for stage in CHECKPOINT_STAGES:
+        title = STAGE_APPENDIX_TITLES[stage]
+        if not _markdown_heading_exists(content, title, level=2):
+            issues.append(f'staged requirements package missing appendix for {title}')
+        record = artifacts.get(stage)
+        if not isinstance(record, dict):
+            issues.append(f'staged requirements package missing artifact record for {stage}')
+            continue
+        path_text = str(record.get('path') or '')
+        expected_hash = str(record.get('hash') or '')
+        if not hash_section.strip() or stage not in hash_section or expected_hash not in hash_section:
+            issues.append(f'staged requirements package missing artifact hash row for {stage}')
+        artifact_path = Path(path_text)
+        if not artifact_path.exists():
+            issues.append(f'staged requirements package missing artifact file for {stage}: {path_text}')
+            continue
+        actual_hash = artifact_hash(artifact_path)
+        if actual_hash != expected_hash:
+            issues.append(
+                f'staged requirements package hash mismatch for {stage}: expected {expected_hash}, got {actual_hash}'
+            )
+    issues.extend(_staged_requirements_conflict_issues(content))
+    return issues
+
+
+def _staged_requirements_target_perspective_issues(state: dict[str, Any]) -> list[str]:
+    package = state.get('requirementsPackage')
+    artifacts = package.get('artifacts') if isinstance(package, dict) else {}
+    if not isinstance(artifacts, dict):
+        return []
+
+    issues: list[str] = []
+    for stage, label in (
+        ('product_design', 'Product Design Brief'),
+        ('architecture', 'Technical Architecture Brief'),
+    ):
+        record = artifacts.get(stage)
+        if not isinstance(record, dict):
+            continue
+        path_text = str(record.get('path') or '')
+        if not path_text:
+            continue
+        try:
+            artifact_text = Path(path_text).read_text(encoding='utf-8')
+        except OSError:
+            continue
+        issue = controller_perspective_issue(artifact_text, state, label=label)
+        if issue:
+            issues.append(issue)
+    return issues
+
+
+def _staged_requirements_appendices_content(content: str) -> str:
+    starts: list[int] = []
+    for title in STAGE_APPENDIX_TITLES.values():
+        match = _markdown_heading_match(content, title, level=2)
+        if match:
+            starts.append(match.start())
+    if not starts:
+        return ''
+    return content[min(starts):]
+
+
+def _markdown_heading_exists(content: str, heading_contains: str, *, level: int | None = None) -> bool:
+    return _markdown_heading_match(content, heading_contains, level=level) is not None
+
+
+def _markdown_heading_match(
+    content: str,
+    heading_contains: str,
+    *,
+    level: int | None = None,
+) -> re.Match[str] | None:
+    hashes = f'{{{level}}}' if level is not None else '{1,6}'
+    return re.search(
+        rf'(?im)^\s{{0,3}}#{hashes}\s+.*{re.escape(heading_contains)}.*\s*#*\s*$',
+        content,
+    )
+
+
+def _staged_requirements_conflict_issues(content: str) -> list[str]:
+    issues: list[str] = []
+    ac_layers: dict[str, set[str]] = {}
+    for ac_id, layer in _requirements_ac_layer_pairs(content):
+        ac_layers.setdefault(ac_id, set()).add(layer)
+    for ac_id, layers in sorted(ac_layers.items()):
+        if len(layers) > 1:
+            issues.append(f'staged requirements package conflicting AC verification layers for {ac_id}: {sorted(layers)}')
+
+    journey_statuses: dict[str, set[str]] = {}
+    for journey_id, status in _requirements_journey_status_pairs(content):
+        journey_statuses.setdefault(journey_id, set()).add(status)
+    for journey_id, statuses in sorted(journey_statuses.items()):
+        if 'active' in statuses and statuses & {'inactive', 'deferred', 'rejected'}:
+            issues.append(f'staged requirements package conflicting Journey status for {journey_id}: {sorted(statuses)}')
+    return issues
+
+
+def _requirements_journey_status_pairs(content: str) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    allowed_statuses = {'active', 'inactive', 'deferred', 'rejected'}
+    for rows in _markdown_table_row_groups(content):
+        if not rows:
+            continue
+        indices = _requirements_journey_status_table_indices(rows[0])
+        if not indices:
+            continue
+        for row in rows[1:]:
+            status = _normalized_table_value(_cell_at(row, indices.get('status')))
+            if status not in allowed_statuses:
+                continue
+            journey_cell = _cell_at(row, indices.get('journey'))
+            for journey_id in _requirements_journey_ids_in_text(journey_cell):
+                pairs.append((journey_id, status))
+    return pairs
+
+
+def _requirements_journey_status_table_indices(cells: list[str]) -> dict[str, int]:
+    indices: dict[str, int] = {}
+    for index, cell in enumerate(cells):
+        normalized = _normalized_table_header(cell)
+        if normalized in {'journey', 'journeyid', 'journeyids', 'id', '旅程', '旅程id'}:
+            indices['journey'] = index
+        elif normalized in {'status', 'journeystatus', '状态', '旅程状态'}:
+            indices['status'] = index
+    if 'journey' not in indices or 'status' not in indices:
+        return {}
+    return indices
+
+
+def _markdown_table_row_groups(content: str) -> list[list[list[str]]]:
+    groups: list[list[list[str]]] = []
+    current: list[list[str]] = []
+    for line in content.splitlines():
+        cells = _markdown_table_cells(line)
+        if cells:
+            current.append(cells)
+            continue
+        if _is_markdown_table_separator(line):
+            continue
+        if current:
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups
 
 
 def validate_unit_plan_golden_path(state: dict[str, Any]) -> None:
@@ -689,12 +1330,15 @@ def validate_final_acceptance_manual_observation_record(gate_path: Path) -> None
 
 
 def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
+    issues: list[str] = []
+    issues.extend(_verification_env_declaration_issues('state', state))
     missing: list[str] = []
     state_env_keys = _verification_env_keys(state)
     for unit in state.get('units') or []:
         if not isinstance(unit, dict):
             continue
         unit_id = str(unit.get('id') or 'unknown-unit')
+        issues.extend(_verification_env_declaration_issues(f'unit {unit_id}', unit))
         env_keys = state_env_keys | _verification_env_keys(unit)
         commands = unit.get('verification_commands') or []
         for command in commands:
@@ -706,6 +1350,8 @@ def validate_unit_plan_verification_environment(state: dict[str, Any]) -> None:
                     f'unit {unit_id} command requires {required_key}; '
                     f'add {required_key} to verification_env or inline it in the command: {command_text}'
                 )
+    if issues:
+        raise ValueError('unit plan verification environment is invalid: ' + '; '.join(issues))
     if missing:
         raise ValueError('unit plan verification_env is incomplete: ' + '; '.join(missing))
 
@@ -800,6 +1446,157 @@ def validate_unit_plan_evidence_row_preflight(state: dict[str, Any]) -> None:
                 )
     if issues:
         raise ValueError('unit plan evidence row preflight is incomplete: ' + '; '.join(issues))
+
+
+def validate_unit_plan_handoff_continuity(
+    state: dict[str, Any],
+    unit_plan_path: Path | None = None,
+) -> None:
+    units = [
+        unit for unit in state.get('units') or []
+        if isinstance(unit, dict) and str(unit.get('id') or '').strip()
+    ]
+    if not units:
+        return
+
+    units_by_id = {str(unit.get('id')).strip(): unit for unit in units}
+    issues: list[str] = []
+    dependency_graph: dict[str, list[str]] = {}
+    dependents_by_unit: dict[str, list[str]] = {unit_id: [] for unit_id in units_by_id}
+    for unit_id, unit in units_by_id.items():
+        dependencies = unit_depends_on(unit)
+        dependency_graph[unit_id] = dependencies
+        for dependency in dependencies:
+            if dependency not in units_by_id:
+                issues.append(f'unit {unit_id} depends_on unknown unit {dependency}')
+                continue
+            if dependency == unit_id:
+                issues.append(f'unit {unit_id} depends_on itself')
+                continue
+            dependents_by_unit.setdefault(dependency, []).append(unit_id)
+
+    issues.extend(_unit_handoff_cycle_issues(dependency_graph))
+
+    has_handoff_contract = any(unit_depends_on(unit) or unit_handoff(unit) for unit in units)
+    if len(units) <= 1 and not has_handoff_contract:
+        if issues:
+            raise ValueError('unit plan handoff continuity is incomplete: ' + '; '.join(issues))
+        return
+    if len(units) > 1 and has_handoff_contract and unit_plan_path is not None and unit_plan_path.exists():
+        content = gate_body(unit_plan_path.read_text(encoding='utf-8'))
+        if not _markdown_section(content, '单元连贯性摘要').strip():
+            issues.append('Unit Plan missing `## 单元连贯性摘要` for multi-unit handoff continuity')
+        if not (
+            _markdown_section(content, 'Handoff Matrix').strip()
+            or _markdown_section(content, '交接矩阵').strip()
+        ):
+            issues.append('Unit Plan missing `## Handoff Matrix` for multi-unit handoff continuity')
+
+    for unit_id, unit in units_by_id.items():
+        dependencies = [dependency for dependency in unit_depends_on(unit) if dependency in units_by_id]
+        dependents = dependents_by_unit.get(unit_id) or []
+        handoff = unit_handoff(unit)
+        participates = bool(dependencies or dependents or handoff)
+        if not participates:
+            continue
+
+        if not handoff:
+            issues.append(f'unit {unit_id} participates in dependencies but is missing handoff')
+            continue
+
+        summary = handoff_human_summary(unit)
+        if handoff_summary_is_vague(summary):
+            issues.append(f'unit {unit_id} handoff human_summary is vague: {summary or "<missing>"}')
+
+        if dependencies and not handoff_requires(unit):
+            issues.append(f'unit {unit_id} depends_on {dependencies} but handoff.requires is empty')
+        if dependents and not handoff_produces(unit):
+            issues.append(f'unit {unit_id} feeds downstream unit(s) {dependents} but handoff.produces is empty')
+
+        if not bool(unit.get('passes')):
+            if not _non_placeholder_items(unit.get('done_when') or unit.get('doneWhen')):
+                issues.append(f'unit {unit_id} handoff must be covered by concrete done_when conditions')
+            if not handoff_ready_checks(unit):
+                issues.append(f'unit {unit_id} handoff.ready_checks is empty')
+            if not handoff_evidence_artifacts(unit):
+                issues.append(f'unit {unit_id} handoff.evidence_artifacts is empty')
+            for ready_check in handoff_ready_checks(unit):
+                if not ready_check_is_mapped(unit, ready_check):
+                    issues.append(
+                        f'unit {unit_id} ready_check {ready_check} is not mapped to verification_commands or test_cases'
+                    )
+
+        required_inputs = handoff_requires(unit)
+        if dependencies and required_inputs:
+            producer_outputs_by_dependency = {
+                dependency: handoff_produces(units_by_id[dependency])
+                for dependency in dependencies
+            }
+            for required_input in required_inputs:
+                matching_dependencies = [
+                    dependency for dependency, producer_outputs in producer_outputs_by_dependency.items()
+                    if any(handoff_text_matches(required_input, produced) for produced in producer_outputs)
+                ]
+                if not matching_dependencies:
+                    if len(dependencies) == 1:
+                        issues.append(
+                            f'unit {unit_id} requires {required_input} but dependency {dependencies[0]} does not produce it'
+                        )
+                    else:
+                        issues.append(
+                            f'unit {unit_id} requires {required_input} but no dependency in {dependencies} produces it'
+                        )
+            for dependency, producer_outputs in producer_outputs_by_dependency.items():
+                if not any(
+                    handoff_text_matches(required_input, produced)
+                    for required_input in required_inputs
+                    for produced in producer_outputs
+                ):
+                    issues.append(
+                        f'unit {unit_id} depends_on {dependency} but none of its produces are required by the downstream handoff'
+                    )
+
+    if issues:
+        raise ValueError('unit plan handoff continuity is incomplete: ' + '; '.join(issues))
+
+
+def _unit_handoff_cycle_issues(dependency_graph: dict[str, list[str]]) -> list[str]:
+    issues: list[str] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(unit_id: str, stack: list[str]) -> None:
+        if unit_id in visiting:
+            cycle = stack[stack.index(unit_id):] + [unit_id] if unit_id in stack else [unit_id, unit_id]
+            issues.append('circular dependency in Unit Plan handoff graph: ' + ' -> '.join(cycle))
+            return
+        if unit_id in visited:
+            return
+        visiting.add(unit_id)
+        for dependency in dependency_graph.get(unit_id) or []:
+            if dependency not in dependency_graph:
+                continue
+            visit(dependency, [*stack, dependency])
+        visiting.remove(unit_id)
+        visited.add(unit_id)
+
+    for unit_id in dependency_graph:
+        visit(unit_id, [unit_id])
+    return issues
+
+
+def _non_placeholder_items(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw_items = [str(item).strip() for item in value if str(item).strip()]
+    elif isinstance(value, str) and value.strip():
+        raw_items = [value.strip()]
+    else:
+        raw_items = []
+    placeholders = {'tbd', 'todo', '待补', '待定', 'n/a', 'na', 'none', 'environment ready'}
+    return [
+        item for item in raw_items
+        if item.strip().lower() not in placeholders and '...' not in item
+    ]
 
 
 def validate_unit_plan_script_entry_commands(state: dict[str, Any]) -> None:
@@ -1258,16 +2055,20 @@ _REQUIREMENTS_E2E_REVIEW_COLUMNS = [
     ('assertions', 'Expected Assertions'),
     ('notes', 'Human Review Notes'),
 ]
+_REQUIREMENTS_E2E_REVIEW_FIXED_HEADING = (
+    '4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）'
+)
 
 
 def _requirements_e2e_review_matrix_issues(content: str, state: dict[str, Any]) -> list[str]:
     e2e_ac_ids = _requirements_e2e_acceptance_criterion_ids(content)
-    e2e_journey_ids = _requirements_active_e2e_journey_ids(content)
+    e2e_journey_ac_map = _requirements_active_e2e_journey_ac_map(content)
+    e2e_journey_ids = set(e2e_journey_ac_map)
     explicit_e2e_text = _requirements_text_explicitly_requires_e2e_review(content, state)
     if explicit_e2e_text and not e2e_ac_ids and not e2e_journey_ids:
         return [
-            'Requirements declares E2E/browser review but does not map it to an e2e AC or active e2e Journey; '
-            'map the E2E review to a specific AC or Journey before approval'
+            'Requirements declares E2E/browser review but does not map it to an E2E AC or active e2e Journey; '
+            + _requirements_e2e_mapping_guidance()
         ]
 
     if not e2e_ac_ids and not e2e_journey_ids:
@@ -1276,8 +2077,9 @@ def _requirements_e2e_review_matrix_issues(content: str, state: dict[str, Any]) 
     section = _requirements_e2e_review_section(content)
     if not section.strip():
         return [
-            'Requirements E2E review requires `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）` '
-            'before human approval; add the fixed-column E2E method/prerequisite matrix for every e2e AC and active e2e Journey'
+            f'Requirements E2E review requires `## {_REQUIREMENTS_E2E_REVIEW_FIXED_HEADING}` '
+            'before human approval; add the fixed-column E2E method/prerequisite matrix for every active e2e Journey '
+            'and every e2e AC not covered by a mapped Journey row'
         ]
 
     rows, header_issue = _requirements_e2e_review_rows(section)
@@ -1287,7 +2089,7 @@ def _requirements_e2e_review_matrix_issues(content: str, state: dict[str, Any]) 
     issues: list[str] = []
     row_ids = _requirements_e2e_review_row_ids(rows)
     for ac_id in sorted(e2e_ac_ids):
-        if ac_id not in row_ids:
+        if not _requirements_e2e_ac_is_covered_by_review_row(ac_id, row_ids, e2e_journey_ac_map):
             issues.append(f'{ac_id} missing Requirements 4.6 E2E review matrix row')
     for journey_id in sorted(e2e_journey_ids):
         if journey_id not in row_ids:
@@ -1310,16 +2112,7 @@ def _requirements_e2e_acceptance_criterion_ids(content: str) -> set[str]:
 
 
 def _requirements_e2e_ac_ids_in_section(section: str) -> set[str]:
-    ids: set[str] = set()
-    for line in section.splitlines():
-        if _is_markdown_table_separator(line):
-            continue
-        line_ids = _requirements_ac_ids_in_text(line)
-        if not line_ids:
-            continue
-        if _requirements_verification_layer_from_line(line) == 'e2e':
-            ids.update(line_ids)
-    return ids
+    return {ac_id for ac_id, layer in _requirements_ac_layer_pairs(section) if layer == 'e2e'}
 
 
 def _requirements_e2e_ac_ids_in_traceability(content: str) -> set[str]:
@@ -1358,8 +2151,12 @@ def _requirements_e2e_traceability_indices(cells: list[str]) -> dict[str, int]:
 
 
 def _requirements_active_e2e_journey_ids(content: str) -> set[str]:
+    return set(_requirements_active_e2e_journey_ac_map(content))
+
+
+def _requirements_active_e2e_journey_ac_map(content: str) -> dict[str, set[str]]:
     section = _markdown_section(content, 'Journey Acceptance Matrix')
-    ids: set[str] = set()
+    journey_ac_map: dict[str, set[str]] = {}
     header: dict[str, int] | None = None
     for line in section.splitlines():
         cells = _markdown_table_cells(line)
@@ -1368,18 +2165,22 @@ def _requirements_active_e2e_journey_ids(content: str) -> set[str]:
         if _requirements_journey_matrix_header(cells):
             header = _requirements_journey_matrix_indices(cells)
             continue
-        indices = header or {'journey': 0, 'status': 2, 'layer': 5}
+        indices = header or {'journey': 0, 'status': 2, 'ac': 4, 'layer': 5}
         status = _normalized_table_value(_cell_at(cells, indices.get('status')))
         layer = _normalize_requirements_verification_layer(_cell_at(cells, indices.get('layer')))
         if status == 'active' and layer == 'e2e':
-            ids.update(_requirements_journey_ids_in_text(_cell_at(cells, indices.get('journey'))))
-    return ids
+            ac_ids = _requirements_ac_ids_in_text(_cell_at(cells, indices.get('ac')))
+            for journey_id in _requirements_journey_ids_in_text(_cell_at(cells, indices.get('journey'))):
+                journey_ac_map.setdefault(journey_id, set()).update(ac_ids)
+    return journey_ac_map
 
 
 def _requirements_journey_matrix_header(cells: list[str]) -> bool:
-    normalized = [_normalized_table_header(cell) for cell in cells]
-    return 'journey' in normalized and 'status' in normalized and (
-        'verificationlayer' in normalized or 'layer' in normalized or '验证层级' in normalized
+    normalized = {_normalized_table_header(cell) for cell in cells}
+    return (
+        bool(normalized & {'journey', 'journeyid', 'id', '旅程', '旅程id'})
+        and bool(normalized & {'status', '状态'})
+        and bool(normalized & {'verificationlayer', 'verification', 'layer', '验证层级', '验证方式'})
     )
 
 
@@ -1387,11 +2188,25 @@ def _requirements_journey_matrix_indices(cells: list[str]) -> dict[str, int]:
     indices: dict[str, int] = {}
     for index, cell in enumerate(cells):
         normalized = _normalized_table_header(cell)
-        if normalized in {'journey', 'journeyid', '旅程', '旅程id'}:
+        if normalized in {'journey', 'journeyid', 'id', '旅程', '旅程id'}:
             indices['journey'] = index
+        elif normalized in {
+            'ac',
+            'acs',
+            'linkedac',
+            'linkedacs',
+            'acceptancecriterion',
+            'acceptancecriteria',
+            'linkedacceptancecriterion',
+            'linkedacceptancecriteria',
+            '验收标准',
+            '关联ac',
+            '关联验收标准',
+        }:
+            indices['ac'] = index
         elif normalized in {'status', '状态'}:
             indices['status'] = index
-        elif normalized in {'verificationlayer', 'layer', '验证层级'}:
+        elif normalized in {'verificationlayer', 'verification', 'layer', '验证层级', '验证方式'}:
             indices['layer'] = index
     return indices
 
@@ -1486,18 +2301,28 @@ def _requirements_e2e_review_section(content: str) -> str:
 
 def _requirements_e2e_review_rows(section: str) -> tuple[list[dict[str, str]], str | None]:
     header_indices: dict[str, int] | None = None
+    active_header_indices: dict[str, int] | None = None
     rows: list[dict[str, str]] = []
-    for line in section.splitlines():
+    lines = section.splitlines()
+    for index, line in enumerate(lines):
+        if _is_markdown_table_separator(line):
+            continue
         cells = _markdown_table_cells(line)
         if not cells:
+            active_header_indices = None
             continue
         if _requirements_e2e_review_header(cells):
             header_indices = _requirements_e2e_review_indices(cells)
+            active_header_indices = header_indices
             continue
-        if header_indices is None:
+        next_line_is_separator = index + 1 < len(lines) and _is_markdown_table_separator(lines[index + 1])
+        if next_line_is_separator:
+            active_header_indices = None
+            continue
+        if active_header_indices is None:
             continue
         row = {
-            key: _cell_at(cells, header_indices.get(key))
+            key: _cell_at(cells, active_header_indices.get(key))
             for key, _label in _REQUIREMENTS_E2E_REVIEW_COLUMNS
         }
         if not any(value.strip() for value in row.values()):
@@ -1545,6 +2370,19 @@ def _requirements_e2e_review_row_ids(rows: list[dict[str, str]]) -> set[str]:
     return ids
 
 
+def _requirements_e2e_ac_is_covered_by_review_row(
+    ac_id: str,
+    row_ids: set[str],
+    e2e_journey_ac_map: dict[str, set[str]],
+) -> bool:
+    if ac_id in row_ids:
+        return True
+    for journey_id, journey_ac_ids in e2e_journey_ac_map.items():
+        if journey_id in row_ids and ac_id in journey_ac_ids:
+            return True
+    return False
+
+
 def _requirements_e2e_review_row_has_required_mapping(
     row: dict[str, str],
     e2e_ac_ids: set[str],
@@ -1570,8 +2408,11 @@ def _requirements_e2e_review_row_quality_issues(row: dict[str, str], label: str)
         issues.append(f'{label} Requirements 4.6 User Steps must describe concrete user actions')
     if not _requirements_e2e_fixture_is_specific(row.get('fixture', '')):
         issues.append(f'{label} Requirements 4.6 Fixture / Test Data / Setup must define fixed data or setup')
-    if not _requirements_e2e_command_is_specific(row.get('command', '')):
-        issues.append(f'{label} Requirements 4.6 Verification Command must be a concrete executable command')
+    if not _requirements_e2e_command_intent_is_specific(row.get('command', '')):
+        issues.append(
+            f'{label} Requirements 4.6 Verification Command must describe a non-placeholder '
+            'verification command intent; exact command belongs in Unit Plan'
+        )
     if _normalized_table_value(row.get('environment_kind', '')) not in REAL_E2E_ENVIRONMENT_KINDS:
         issues.append(
             f"{label} Requirements 4.6 Environment Kind must be local_real or production_readonly, not "
@@ -1629,8 +2470,9 @@ def _requirements_e2e_entrypoint_is_real(value: str) -> bool:
     invalid_markers = ['requirements-draft', 'prototype-review', 'prototype manifest', 'screenshot', '截图', 'artifact only']
     if any(marker in normalized for marker in invalid_markers):
         return False
+    clean_value = re.sub(r'[`*_]+', '', str(value or '')).strip()
     return bool(
-        re.search(r'https?://|(?:^|\s)/[A-Za-z0-9_./:-]+', value)
+        re.search(r'https?://|(?:^|\s)/[A-Za-z0-9_./:-]+', clean_value)
         or any(marker in normalized for marker in ['route', 'url', 'page', 'command', 'cli', 'service', '生产', '真实'])
     )
 
@@ -1682,7 +2524,7 @@ def _requirements_e2e_fixture_is_specific(value: str) -> bool:
     return any(marker in normalized for marker in fixture_markers)
 
 
-def _requirements_e2e_command_is_specific(value: str) -> bool:
+def _requirements_e2e_command_intent_is_specific(value: str) -> bool:
     normalized = _normalized_table_value(value)
     if _requirements_e2e_cell_is_placeholder(value):
         return False
@@ -1690,25 +2532,84 @@ def _requirements_e2e_command_is_specific(value: str) -> bool:
         r'^(?:npx\s+|pnpm\s+exec\s+|npm\s+exec\s+)?playwright\s+test$',
         r'^pytest$',
         r'^python\s+-m\s+pytest$',
+        r'^go\s+test$',
         r'^browser\s+test$',
         r'^e2e\s+test$',
         r'^expected\s+playwright\s+command$',
+        r'^后续测试验证$',
+        r'^后续验证$',
+        r'^测试验证$',
     ]
     if any(re.fullmatch(pattern, normalized) for pattern in generic_patterns):
         return False
-    command_markers = ['playwright', 'cypress', 'pytest', 'npm', 'pnpm', 'yarn', 'bun', 'python']
-    has_command = any(marker in normalized for marker in command_markers)
-    has_specific_target = bool(
+    exact_command_markers = [
+        'playwright',
+        'cypress',
+        'pytest',
+        'npm',
+        'pnpm',
+        'yarn',
+        'bun',
+        'python',
+        'go test',
+        'jest',
+        'vitest',
+        'curl',
+    ]
+    command_family_markers = exact_command_markers + [
+        'go service',
+        'service/api',
+        'api/service',
+        'service e2e',
+        'api e2e',
+        'browser e2e',
+        'command',
+        '命令',
+    ]
+    intent_markers = [
+        'e2e',
+        'end-to-end',
+        'end to end',
+        'integration',
+        'real',
+        'production',
+        'local_real',
+        'browser',
+        'service',
+        'api',
+        '端到端',
+        '集成',
+        '真实',
+        '生产',
+        '浏览器',
+    ]
+    target_markers = bool(
         re.search(r'\btests?/', value)
         or re.search(r'\.(?:spec|test)\.(?:ts|tsx|js|jsx|py)\b', value)
         or re.search(r'\s--(?:grep|project|config|headed|browser)\b', value)
+        or re.search(r'\bservices?/[A-Za-z0-9_.-]+', value)
+        or re.search(r'\b[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+', value)
+        or re.search(r'/(?:api|service|services|routes?|pages?)(?:/|\b)', value, flags=re.IGNORECASE)
     )
     command_text = value.replace('`', '').strip()
     has_shell_script_command = bool(
         re.search(r'^(?:bash|sh)\s+[^\s`|;&]+\.sh(?:\s|$)', command_text)
         or re.search(r'^(?:\./|/|[^\s`|;&]+/)[^\s`|;&]*\.sh(?:\s|$)', command_text)
     )
-    return (has_command and has_specific_target) or has_shell_script_command
+    if has_shell_script_command:
+        return True
+    has_command_family = any(marker in normalized for marker in command_family_markers)
+    has_verification_intent = any(marker in normalized for marker in intent_markers)
+    if not has_command_family or not has_verification_intent:
+        return False
+    if target_markers:
+        return True
+    if 'unit plan' in normalized and any(marker in normalized for marker in ['must create', 'create', '生成', '补齐']):
+        return has_verification_intent and any(
+            marker in normalized
+            for marker in ['service', 'api', 'browser', 'route', 'component', 'services/', '真实', '生产']
+        )
+    return any(marker in normalized for marker in exact_command_markers) and len(normalized.split()) >= 3
 
 
 def _requirements_e2e_mock_policy_allows_core_api_mock(value: str) -> bool:
@@ -1781,7 +2682,7 @@ def _requirements_e2e_assertions_are_strong(value: str) -> bool:
 
 
 def _requirements_journey_ids_in_text(text: str) -> set[str]:
-    return {match.group(0).upper() for match in re.finditer(r'\bJ-\d+(?:[-.]\d+)*\b', text, re.IGNORECASE)}
+    return journey_ids_in_text(text)
 
 
 def _normalized_table_header(value: str) -> str:
@@ -2216,11 +3117,35 @@ def _is_controller_prototype_policy_gate(state: dict[str, Any]) -> bool:
 
 
 def _requirements_need_uiux_prototype(state: dict[str, Any]) -> bool:
-    return bool(state.get('currentUnitNeedsUiDesign')) or _state_declares_target_uiux(state)
+    classification = state.get('requirementsSurfaceClassification')
+    if (
+        isinstance(classification, dict)
+        and classification.get('product_ui') == 'not_required'
+        and classification.get('prototype_required') == 'not_required'
+        and state.get('currentUnitNeedsUiDesign') is not True
+    ):
+        return False
+    return (
+        bool(state.get('currentUnitNeedsUiDesign'))
+        or _state_declares_target_uiux(state)
+        or requirements_surface_requires_product_ui(state)
+        or requirements_surface_requires_prototype(state)
+    )
 
 
 def _requirements_need_clickable_web_prototype(state: dict[str, Any]) -> bool:
-    return bool(state.get('currentUnitIsWebSystem')) or _state_declares_target_web_system(state)
+    classification = state.get('requirementsSurfaceClassification')
+    if (
+        isinstance(classification, dict)
+        and classification.get('web_system') == 'not_required'
+        and state.get('currentUnitIsWebSystem') is not True
+    ):
+        return False
+    return (
+        bool(state.get('currentUnitIsWebSystem'))
+        or _state_declares_target_web_system(state)
+        or requirements_surface_requires_web_system(state)
+    )
 
 
 def _requirements_has_uiux_prototype_evidence(content: str) -> bool:
@@ -2235,7 +3160,16 @@ def _requirements_has_clickable_web_prototype_evidence(content: str) -> bool:
     if not evidence_blocks:
         return False
     evidence = '\n'.join(evidence_blocks)
-    if not any(keyword in evidence for keyword in ['clickable webpage prototype', '可点击网页原型', 'web prototype evidence']):
+    if not any(keyword in evidence for keyword in [
+        'clickable webpage prototype',
+        'clickable web prototype',
+        'clickable prototype',
+        'clickable html',
+        'artifact-local clickable html',
+        'web prototype evidence',
+        '可点击网页原型',
+        '可点击原型',
+    ]):
         return False
     has_static_only_marker = any(keyword in evidence for keyword in ['静态截图', 'text-only', '纯文字', '不可点击', 'non-clickable', 'wireframe'])
     has_static_only_rejection = any(keyword in evidence for keyword in ['不能作为', '不接受', '不得', 'not accept', 'cannot be used'])
@@ -2244,12 +3178,34 @@ def _requirements_has_clickable_web_prototype_evidence(content: str) -> bool:
 
     has_access_method = bool(
         re.search(r'https?://|file://', evidence)
-        or any(keyword in evidence for keyword in ['access method', 'start command', '启动命令', '访问方式', 'prototype url', 'local html'])
+        or any(keyword in evidence for keyword in [
+            'access method',
+            'start command',
+            '启动命令',
+            '访问方式',
+            'prototype url',
+            'local html',
+            'artifact-local',
+            'manifest path',
+            'prototype-manifest.json',
+            '.html',
+            'review_href',
+        ])
     )
-    has_page_states = any(keyword in evidence for keyword in ['page states', 'pages ', '页面状态', '关键页面', 'observed page states'])
-    has_click_path = any(keyword in evidence for keyword in ['click path', 'clicked ', '点击路径', '核心点击路径'])
+    has_page_states = any(keyword in evidence for keyword in ['page states', 'page_states', 'pages ', '页面状态', '关键页面', 'observed page states'])
+    has_click_path = any(keyword in evidence for keyword in ['click path', 'click_path', 'clicked ', '点击路径', '核心点击路径'])
     has_ac_mapping = bool(_requirements_ac_ids_in_text(evidence)) and any(
-        keyword in evidence for keyword in ['maps to', 'mapped evidence', 'ac mapping', '映射', '关联 ac']
+        keyword in evidence for keyword in [
+            'maps to',
+            'mapped evidence',
+            'ac mapping',
+            'ac/journey mapping',
+            'journey mapping',
+            'linked ac',
+            'linked_acceptance_criteria',
+            '映射',
+            '关联 ac',
+        ]
     )
     return has_access_method and has_page_states and has_click_path and has_ac_mapping
 
@@ -2561,21 +3517,329 @@ def _requirements_design_architecture_traceability(content: str) -> dict[str, di
 
 
 def _requirements_acceptance_criterion_ids(content: str) -> set[str]:
-    return {match.group(0).upper() for match in re.finditer(r'\bAC-\d+(?:[-.]\d+)*\b', content, re.IGNORECASE)}
+    return _requirements_current_ac_ids_in_text(content)
+
+
+def _requirements_current_ac_ids_in_text(content: str) -> set[str]:
+    ids: set[str] = set()
+    source_ac_indices: set[int] | None = None
+    source_provenance_section_level: int | None = None
+    for line in content.splitlines():
+        heading = _requirements_markdown_heading(line)
+        if heading:
+            level, heading_text = heading
+            if source_provenance_section_level is not None and level <= source_provenance_section_level:
+                source_provenance_section_level = None
+            if _requirements_heading_is_source_ac_provenance(heading_text):
+                source_provenance_section_level = level
+        if _is_markdown_table_separator(line):
+            continue
+        cells = _markdown_table_cells(line)
+        if cells:
+            header_source_indices = _requirements_source_ac_table_indices(cells)
+            if header_source_indices is not None:
+                source_ac_indices = header_source_indices
+                continue
+            if source_ac_indices is not None:
+                for index, cell in enumerate(cells):
+                    if index in source_ac_indices:
+                        continue
+                    ids.update(_requirements_ac_ids_in_text(cell))
+                continue
+            ids.update(_requirements_ac_ids_in_text(line))
+            continue
+        source_ac_indices = None
+        if (
+            source_provenance_section_level is not None
+            and not _requirements_line_is_explicit_current_ac_declaration(line)
+        ):
+            continue
+        if _requirements_line_is_source_ac_provenance(line):
+            continue
+        ids.update(_requirements_ac_ids_in_text(line))
+    return ids
+
+
+def _requirements_source_ac_table_indices(cells: list[str]) -> set[int] | None:
+    indices: set[int] = set()
+    normalized_cells = [_normalized_table_header(cell) for cell in cells]
+    table_has_ac_context = any(
+        'ac' in value or 'acceptancecriterion' in value or 'acceptancecriteria' in value
+        for value in normalized_cells
+    )
+    for index, cell in enumerate(cells):
+        raw = str(cell or '').strip().lower()
+        normalized = normalized_cells[index]
+        if normalized in {
+            'currentac',
+            'currentacs',
+            'currentacceptancecriterion',
+            'currentacceptancecriteria',
+            'canonicalac',
+            'canonicalacs',
+            'targetac',
+            'targetacs',
+        }:
+            continue
+        if normalized in {
+            'sourceac',
+            'sourceacs',
+            'sourceactc',
+            'importedac',
+            'importedacs',
+            'originalac',
+            'originalacs',
+            'sourceid',
+            'sourceids',
+            'importedid',
+            'importedids',
+            'originalid',
+            'originalids',
+            'sourceacceptancecriterion',
+            'sourceacceptancecriteria',
+            'sourceacceptancecriterionid',
+            'sourceacceptancecriteriaid',
+            'sourceacceptancecriterionids',
+            'sourceacceptancecriteriaids',
+            'importedacceptancecriterion',
+            'importedacceptancecriteria',
+            'importedacceptancecriterionid',
+            'importedacceptancecriteriaid',
+            'importedacceptancecriterionids',
+            'importedacceptancecriteriaids',
+            'originalacceptancecriterion',
+            'originalacceptancecriteria',
+            'originalacceptancecriterionid',
+            'originalacceptancecriteriaid',
+            'originalacceptancecriterionids',
+            'originalacceptancecriteriaids',
+        }:
+            indices.add(index)
+            continue
+        if normalized == 'source' and table_has_ac_context:
+            indices.add(index)
+            continue
+        if normalized in {'imported', 'original'} and table_has_ac_context:
+            indices.add(index)
+            continue
+        if normalized.startswith('source') and (
+            normalized.endswith('ac')
+            or 'actc' in normalized
+            or 'acceptancecriterion' in normalized
+            or 'acceptancecriteria' in normalized
+        ):
+            indices.add(index)
+            continue
+        if normalized.startswith('imported') and (
+            normalized.endswith('ac')
+            or 'acceptancecriterion' in normalized
+            or 'acceptancecriteria' in normalized
+        ):
+            indices.add(index)
+            continue
+        if normalized.startswith('original') and (
+            normalized.endswith('ac')
+            or 'acceptancecriterion' in normalized
+            or 'acceptancecriteria' in normalized
+        ):
+            indices.add(index)
+            continue
+        if 'source' in raw and re.search(r'(?:^|[^a-z0-9_])acs?(?:$|[^a-z0-9_])|acceptance\s+criter', raw):
+            indices.add(index)
+            continue
+        if (
+            ('imported' in raw or 'original' in raw)
+            and re.search(r'(?:^|[^a-z0-9_])acs?(?:$|[^a-z0-9_])|acceptance\s+criter', raw)
+        ):
+            indices.add(index)
+    if not indices:
+        return None
+    return indices
+
+
+def _requirements_line_is_explicit_current_ac_declaration(line: str) -> bool:
+    return bool(_requirements_inline_ac_layer_pairs(line)) or _requirements_line_starts_with_layer_bucket(line)
+
+
+def _requirements_heading_is_source_ac_provenance(heading: str) -> bool:
+    normalized = _normalized_requirements_text(heading)
+    compact = _normalized_table_header(heading)
+    if any(
+        marker in normalized
+        for marker in [
+            'source map',
+            'source mapping',
+            'source provenance',
+            'source conversion',
+            'conversion artifact',
+            'conversion matrix',
+            'imported ac',
+            'original ac',
+            'external spec',
+            'source spec',
+            'source label',
+            'provenance',
+        ]
+    ):
+        return True
+    if any(marker in compact for marker in ['sourcemap', 'sourcemapping', 'sourceprovenance']):
+        return True
+    return any(marker in heading for marker in ['来源', '源映射', '映射说明', '导入', '原始', '转换'])
+
+
+def _requirements_line_is_source_ac_provenance(line: str) -> bool:
+    if not _requirements_ac_ids_in_text(line):
+        return False
+    if _requirements_line_is_explicit_current_ac_declaration(line):
+        return False
+    normalized = _normalized_requirements_text(line)
+    compact = _normalized_table_header(line)
+    strong_markers = [
+        'source ac',
+        'source spec',
+        'source id',
+        'source label',
+        'source map',
+        'source-to-current',
+        'source to current',
+        'provenance',
+        'imported ac',
+        'original ac',
+        'external spec',
+        'conversion artifact',
+        'conversion matrix',
+    ]
+    if any(marker in normalized for marker in strong_markers):
+        return True
+    if any(marker in compact for marker in ['sourceac', 'sourceactc', 'importedac', 'originalac']):
+        return True
+    if any(marker in line for marker in ['来源', '源 AC', '源AC', '导入 AC', '导入AC', '原始 AC', '原始AC', '转换']):
+        return True
+    has_mapping_syntax = (
+        '->' in line
+        or '→' in line
+        or '=>' in line
+        or '至' in line
+        or '映射' in line
+        or 'mapped' in normalized
+        or 'maps to' in normalized
+        or 'mapping' in normalized
+    )
+    if re.search(r'\bAC-SPEC-[A-Za-z0-9_-]+\b', line, flags=re.IGNORECASE) and has_mapping_syntax:
+        return True
+    return False
 
 
 def _requirements_acceptance_criterion_layers(content: str) -> dict[str, str]:
     layers: dict[str, str] = {}
+    for ac_id, layer in _requirements_ac_layer_pairs(content):
+        layers.setdefault(ac_id, layer)
+    return layers
+
+
+def _requirements_ac_layer_pairs(content: str) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    table_indices: dict[str, int] | None = None
     for line in content.splitlines():
+        if _is_markdown_table_separator(line):
+            continue
+        cells = _markdown_table_cells(line)
+        if cells:
+            header_indices = _requirements_ac_layer_table_indices(cells)
+            if header_indices:
+                table_indices = header_indices
+                continue
+            if table_indices:
+                ac_cell = _cell_at(cells, table_indices.get('ac'))
+                layer_cell = _cell_at(cells, table_indices.get('layer'))
+                layer = _normalize_requirements_verification_layer(layer_cell)
+                if layer:
+                    for ac_id in _requirements_ac_ids_in_text(ac_cell):
+                        pairs.append((ac_id, layer))
+                continue
+            for cell in cells:
+                pairs.extend(_requirements_inline_ac_layer_pairs(cell))
+            continue
+        table_indices = None
         ac_ids = _requirements_ac_ids_in_text(line)
         if not ac_ids:
+            continue
+        inline_pairs = _requirements_inline_ac_layer_pairs(line)
+        if inline_pairs:
+            pairs.extend(inline_pairs)
+            continue
+        if (
+            _requirements_line_has_journey_inline_verification_marker(line)
+            and not _requirements_line_starts_with_layer_bucket(line)
+        ):
             continue
         layer = _requirements_verification_layer_from_line(line)
         if not layer:
             continue
+        if len(ac_ids) > 1 and not _requirements_line_starts_with_layer_bucket(line):
+            continue
         for ac_id in ac_ids:
-            layers.setdefault(ac_id, layer)
-    return layers
+            pairs.append((ac_id, layer))
+    return pairs
+
+
+def _requirements_inline_ac_layer_pairs(text: str) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    patterns = [
+        rf'({AC_ID_PATTERN})\s*\[\s*verification\s*:\s*([A-Za-z0-9_-]+)\s*\]',
+        rf'({AC_ID_PATTERN})\s*\(\s*(unit|functional|integration|static|regression|prerequisite|e2e|manual)\s*\)',
+        rf'({AC_ID_PATTERN})\s+verification(?:\s+layer)?\s*[:：=]\s*([A-Za-z0-9_-]+)\b',
+        rf'({AC_ID_PATTERN})\s+验证(?:层级|层|方式)?\s*[:：]\s*([A-Za-z0-9_-]+|单元|集成|静态|回归|前置|前置条件|前置依赖|端到端|人工)\b',
+    ]
+    seen: set[tuple[str, str]] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            layer = _normalize_requirements_verification_layer(match.group(2))
+            if not layer:
+                continue
+            pair = (match.group(1).upper(), layer)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            pairs.append(pair)
+    return pairs
+
+
+def _requirements_line_has_journey_inline_verification_marker(line: str) -> bool:
+    patterns = [
+        rf'{JOURNEY_ID_PATTERN}\s*\[\s*verification\s*:\s*[A-Za-z0-9_-]+\s*\]',
+        rf'{JOURNEY_ID_PATTERN}\s*\(\s*(?:unit|functional|integration|static|regression|prerequisite|e2e|manual)\s*\)',
+        rf'{JOURNEY_ID_PATTERN}\s+verification(?:\s+layer)?\s*[:：=]\s*[A-Za-z0-9_-]+\b',
+        rf'{JOURNEY_ID_PATTERN}\s+验证(?:层级|层|方式)?\s*[:：]\s*(?:[A-Za-z0-9_-]+|单元|集成|静态|回归|前置|前置条件|前置依赖|端到端|人工)\b',
+    ]
+    return any(re.search(pattern, line, re.IGNORECASE) for pattern in patterns)
+
+
+def _requirements_line_starts_with_layer_bucket(line: str) -> bool:
+    return bool(
+        re.search(
+            r'^\s*(?:[-*+]\s*)?(?:unit|functional|integration|static|regression|prerequisite|e2e|manual)\b',
+            line,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _requirements_ac_layer_table_indices(cells: list[str]) -> dict[str, int] | None:
+    normalized = [_normalized_table_header(cell) for cell in cells]
+    if any(value in {'journey', 'journeyid', 'acjourney'} for value in normalized):
+        return None
+
+    ac_index: int | None = None
+    layer_index: int | None = None
+    for index, value in enumerate(normalized):
+        if value in {'ac', 'acid', 'acceptancecriterion', 'acceptancecriteria'}:
+            ac_index = index
+        elif value in {'verificationlayer', 'verification', 'layer', '验证层级', '验证方式'}:
+            layer_index = index
+    if ac_index is None or layer_index is None:
+        return None
+    return {'ac': ac_index, 'layer': layer_index}
 
 
 def _requirements_obligation_traceability(content: str) -> set[str]:
@@ -2593,7 +3857,7 @@ def _requirements_obligation_traceability(content: str) -> set[str]:
 
 
 def _requirements_ac_ids_in_text(text: str) -> set[str]:
-    return {match.group(0).upper() for match in re.finditer(r'\bAC-\d+(?:[-.]\d+)*\b', text, re.IGNORECASE)}
+    return acceptance_criterion_ids_in_text(text)
 
 
 def _requirements_ao_ids_in_text(text: str) -> set[str]:
@@ -2611,18 +3875,11 @@ def _normalize_requirements_ao_id(value: str) -> str:
 def _requirements_verification_layer_from_line(line: str) -> str | None:
     if _is_markdown_table_separator(line):
         return None
-    cells = _markdown_table_cells(line)
-    if cells:
-        for cell in cells:
-            layer = _normalize_requirements_verification_layer(cell)
-            if layer:
-                return layer
-
     structured_patterns = [
         r'\bverification(?:\s+layer)?\s*[:：=]\s*([A-Za-z0-9_-]+)\b',
-        r'\b验证(?:层级|层|方式)?\s*[:：]\s*([A-Za-z0-9_-]+|单元|集成|端到端|人工)\b',
+        r'\b验证(?:层级|层|方式)?\s*[:：]\s*([A-Za-z0-9_-]+|单元|集成|静态|回归|前置|前置条件|前置依赖|端到端|人工)\b',
         r'\[\s*verification\s*:\s*([A-Za-z0-9_-]+)\s*\]',
-        r'\(\s*(unit|functional|integration|e2e|manual)\s*\)',
+        r'\(\s*(unit|functional|integration|static|regression|prerequisite|e2e|manual)\s*\)',
     ]
     for pattern in structured_patterns:
         match = re.search(pattern, line, re.IGNORECASE)
@@ -2632,8 +3889,15 @@ def _requirements_verification_layer_from_line(line: str) -> str | None:
         if layer:
             return layer
 
+    cells = _markdown_table_cells(line)
+    if cells:
+        for cell in cells:
+            layer = _normalize_requirements_verification_layer(cell)
+            if layer:
+                return layer
+
     leading_layer = re.search(
-        r'^\s*(?:[-*+]\s*)?(unit|functional|integration|e2e|manual)\b',
+        r'^\s*(?:[-*+]\s*)?(unit|functional|integration|static|regression|prerequisite|e2e|manual)\b',
         line,
         re.IGNORECASE,
     )
@@ -2650,6 +3914,9 @@ def _normalize_requirements_verification_layer(value: str) -> str | None:
         'unit': ('unit', 'unit test', 'unit tests', '单元', '单元测试'),
         'functional': ('functional', 'api', 'api test', 'api tests', '功能', '功能测试', '接口', '接口测试'),
         'integration': ('integration', 'integration test', 'integration tests', '集成', '集成测试'),
+        'static': ('static', 'static check', 'static checks', 'static review', '静态', '静态检查', '静态审查'),
+        'regression': ('regression', 'regression test', 'regression tests', '回归', '回归测试'),
+        'prerequisite': ('prerequisite', 'prerequisites', 'prereq', 'prereqs', '前置', '前置条件', '前置依赖'),
         'e2e': ('e2e', 'end-to-end', 'end to end', 'playwright', 'browser', '端到端', '浏览器'),
         'manual': ('manual', 'manual acceptance', 'uat', '人工', '人工验收', '手工'),
     }
@@ -2816,6 +4083,14 @@ def _markdown_table_cells(line: str) -> list[str]:
     if _is_markdown_table_separator(stripped):
         return []
     return [cell.strip() for cell in stripped.strip('|').split('|')]
+
+
+def _markdown_table_rows(content: str) -> list[list[str]]:
+    return [
+        cells
+        for line in content.splitlines()
+        if (cells := _markdown_table_cells(line))
+    ]
 
 
 def _is_markdown_table_separator(line: str) -> bool:
@@ -3288,8 +4563,6 @@ def _case_journey_ids(case: dict[str, Any]) -> set[str]:
     ids: set[str] = set()
     for value in values:
         ids.update(_requirements_journey_ids_in_text(value))
-        if not ids and re.match(r'(?i)^J-\d+(?:[-.]\d+)*$', value.strip()):
-            ids.add(value.strip().upper())
     return ids
 
 
@@ -3327,7 +4600,59 @@ def _verification_env_keys(payload: dict[str, Any]) -> set[str]:
         value = payload.get(field)
         if isinstance(value, dict):
             keys.update(str(key).strip() for key in value if str(key).strip())
+    for field in ('env_keys', 'envKeys'):
+        value = payload.get(field)
+        if isinstance(value, list):
+            keys.update(str(key).strip() for key in value if _valid_env_key_name(str(key).strip()))
     return keys
+
+
+def _verification_env_declaration_issues(label: str, payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for field in ('verification_env', 'verificationEnv'):
+        value = payload.get(field)
+        if not isinstance(value, dict):
+            continue
+        for key, env_value in value.items():
+            key_text = str(key).strip()
+            if key_text and _is_key_only_env_value(env_value):
+                issues.append(
+                    f'{label} {field}.{key_text} uses a key-only placeholder value; '
+                    'move the variable name to env_keys and store only real non-sensitive values in verification_env'
+                )
+    for field in ('env_keys', 'envKeys'):
+        value = payload.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, list):
+            issues.append(f'{label} {field} must be a list of environment variable names')
+            continue
+        for env_key in value:
+            key_text = str(env_key).strip()
+            if not _valid_env_key_name(key_text):
+                issues.append(
+                    f'{label} {field} must contain names only, not assignments or values: {key_text}'
+                )
+    return issues
+
+
+def _valid_env_key_name(value: str) -> bool:
+    return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', value))
+
+
+def _is_key_only_env_value(value: Any) -> bool:
+    text = str(value).strip()
+    if not text:
+        return False
+    normalized = re.sub(r'[\s_-]+', ' ', text.lower()).strip()
+    key_only_phrases = (
+        'required key name only',
+        'optional key name only',
+        'value must not be recorded',
+    )
+    if any(phrase in normalized for phrase in key_only_phrases):
+        return True
+    return bool(re.fullmatch(r'<[^<>]+>', text))
 
 
 def _required_env_keys_for_verification_command(command: str) -> set[str]:

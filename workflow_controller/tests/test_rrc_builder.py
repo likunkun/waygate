@@ -299,6 +299,14 @@ def test_prepare_builder_prompt_includes_controller_verification_failure_protoco
     assert prompt_path is not None
     prompt = prompt_path.read_text(encoding='utf-8')
     assert 'Controller Verification Failure Protocol' in prompt
+    assert prompt.index('Previous controller failure feedback') < prompt.index(
+        'Current unit from approved Controller State Patch'
+    )
+    assert prompt.index('Controller Verification Failure Protocol') < prompt.index(
+        'Approved requirements gate'
+    )
+    assert 'Machine-readable DONE_FILE fields and stdout/stderr evidence markers are part of the contract' in prompt
+    assert 'writing marker names only inside JSON artifacts is not enough' in prompt
     assert 'failed command index: 2' in prompt
     assert f'exact failed command: {failed_command}' in prompt
     assert f'controller cwd: {tmp_path}' in prompt
@@ -309,3 +317,47 @@ def test_prepare_builder_prompt_includes_controller_verification_failure_protoco
     assert 'controller_failure_resolution' in prompt
     assert 'failed_command' in prompt
     assert 'full_verification_run' in prompt
+
+
+def test_prepare_builder_prompt_ignores_controller_failure_from_other_unit(tmp_path: Path) -> None:
+    approvals_dir = tmp_path / 'approvals'
+    unit_dir = tmp_path / 'artifacts' / 'unit-02'
+    unit_dir.mkdir(parents=True)
+    original_prompt = tmp_path / 'current-prompt.md'
+    original_prompt.write_text('Original context.', encoding='utf-8')
+
+    requirements_path = approvals_dir / 'requirements-and-acceptance.md'
+    write_gate_file(requirements_path, '# Requirements & Acceptance Confirmation\n\nApproved requirement.\n')
+    approve_gate_file(requirements_path, actor='tester')
+    unit_plan_path = approvals_dir / 'unit-plan.md'
+    write_gate_file(unit_plan_path, '# Unit Plan Confirmation\n\nApproved plan.\n')
+    approve_gate_file(unit_plan_path, actor='tester')
+
+    stale_failed_command = 'sh -c "old unit command that cannot pass"'
+    state = {
+        'task_id': 'delivery',
+        'currentUnitId': 'unit-02',
+        'humanGatesRequired': True,
+        'workspacePath': str(tmp_path),
+        'promptPath': str(original_prompt),
+        'requestedOutcome': 'usable-system',
+        'lastFailure': {
+            'unit_id': 'unit-01',
+            'stage': 'VERIFY_UNIT',
+            'details': {'command': stale_failed_command, 'returncode': 1},
+        },
+        'objectiveCoverage': [
+            {'objective': 'Delivery objective', 'units': ['unit-02'], 'status': 'partial'},
+        ],
+        'units': [
+            {'id': 'unit-01', 'name': 'Old unit', 'passes': False},
+            {'id': 'unit-02', 'name': 'Current unit', 'passes': False},
+        ],
+    }
+
+    prompt_path = prepare_builder_prompt(state, approvals_dir, unit_dir)
+
+    assert prompt_path is not None
+    prompt = prompt_path.read_text(encoding='utf-8')
+    assert 'Controller Verification Failure Protocol' not in prompt
+    assert stale_failed_command not in prompt

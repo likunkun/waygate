@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from workflow_controller.approval_notes import render_approval_notes_context
 from workflow_controller.steps._common import (
+    _current_unit_last_failure,
     _find_unit,
     _find_objective_for_unit,
     _read_json_object,
@@ -57,9 +59,11 @@ Previous controller failure feedback:
 
 The controller rejected the previous attempt after running its own checks. Treat this as primary debugging context.
 The controller will rerun the approved verification commands exactly; do not mark DONE only because a manually modified command passed.
+Machine-readable DONE_FILE fields and stdout/stderr evidence markers are part of the contract. For visual evidence, writing marker names only inside JSON artifacts is not enough; the verifier parses `PROTOTYPE_SCREENSHOT:`, `PRODUCTION_SCREENSHOT:`, `INTERACTION_SCREENSHOT:`, and `VISUAL_EVIDENCE:` from command output.
 
 {previous_failure_feedback}
 """
+    approval_notes_section = render_approval_notes_context(state, 'requirements', 'unit-plan')
     return f"""You are executing one approved workflow-controller unit.
 
 Use the approved human gate documents as the source of truth. Do not expand scope beyond them.
@@ -69,6 +73,8 @@ Execution workspace: {state.get('executionWorkspacePath') or state.get('workspac
 Task id: {state.get('task_id')}
 Current unit id: {state.get('currentUnitId')}
 Requested outcome: {state.get('requestedOutcome')}
+
+{previous_failure_section}
 
 Current unit from approved Controller State Patch:
 
@@ -94,17 +100,19 @@ Approved unit plan gate: {unit_plan_path}
 {unit_plan_content}
 ```
 
+{approval_notes_section}
+
 Original target prompt/context: {original_prompt_path}
 
 ```md
 {original_prompt}
 ```
 {final_rejection_section}
-{previous_failure_section}
 
 Builder rules:
 - Implement the shortest verifiable path for the current unit only.
 - Follow the Unit Plan scope, non-goals, done_when, and verification_commands.
+- If this unit declares `depends_on`, the controller has already checked upstream `handoff-evidence.json`; do not bypass that dependency or consume vague prerequisites.
 - 先读取 Unit Plan Test Case Matrix；在实现功能前，创建或更新 command 指向的 `scripts/verify/` 脚本，以及脚本内部调用的测试文件。
 - Unit Plan 中的 `command` / `verification_commands` 只允许是脚本入口。
 - 脚本内部可以运行 pytest、Playwright、环境准备或多步 shell；不要把直接 pytest/Playwright 命令、`bash -lc`、`python -c`、管道或内联 shell 写回 Unit Plan。
@@ -116,6 +124,7 @@ Builder rules:
 - For defect-fix units, add a regression test for each defect when feasible; if not feasible, leave explicit manual evidence.
 - Preserve already accepted work.
 - Leave clear evidence for the verifier.
+- If this unit produces handoff outputs for a downstream unit, make the declared `handoff.evidence_artifacts` exist and ensure the mapped `handoff.ready_checks` command proves they are ready; verifier will write `handoff-evidence.json`.
 
 E2E unit rules (applies when workflow_validation_level is "closure"):
 - Use the `webapp-testing` skill to generate Playwright test files with real data assertions.
@@ -187,7 +196,7 @@ def _render_controller_verification_failure_protocol(
 ) -> str:
     if not isinstance(state, dict):
         return ''
-    last_failure = state.get('lastFailure')
+    last_failure = _current_unit_last_failure(state)
     if not isinstance(last_failure, dict) or last_failure.get('stage') != 'VERIFY_UNIT':
         return ''
     details = last_failure.get('details') if isinstance(last_failure.get('details'), dict) else {}

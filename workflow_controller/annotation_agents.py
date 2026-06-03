@@ -22,7 +22,6 @@ ANNOTATION_ROLES = (
 )
 
 ANNOTATION_BACKENDS = (
-    'claude-code',
     'opencode',
     'codex',
 )
@@ -31,6 +30,17 @@ DEFAULT_VERIFICATION_ASSIST_ROLE = 'final_acceptance_verification_assist'
 VERIFICATION_ASSIST_CASE_STATUSES = {'passed', 'failed', 'blocked', 'needs_human_review'}
 
 FAILURE_POLICIES = {'block', 'warn'}
+
+DEFAULT_ANNOTATION_PROXY_ENV_KEYS = (
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'ALL_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'all_proxy',
+    'no_proxy',
+)
 
 ROLE_ALIASES = {
     'requirements': 'requirements_annotation',
@@ -47,8 +57,6 @@ ROLE_ALIASES = {
 }
 
 BACKEND_ALIASES = {
-    'claude': 'claude-code',
-    'claude-code': 'claude-code',
     'opencode': 'opencode',
     'codex': 'codex',
 }
@@ -203,7 +211,7 @@ def add_annotation_agent_cli_arguments(parser: Any) -> None:
         action='append',
         metavar='ROLE=KEY',
         dest='annotation_agent_env_key',
-        help='Allow one environment variable key through to an annotation role without storing its value',
+        help='Allow one additional non-proxy environment variable key through to an annotation role without storing its value',
     )
     parser.add_argument(
         '--annotation-agent-timeout',
@@ -316,7 +324,7 @@ def _annotation_backend_for_cli(raw: str) -> str:
     if not backend:
         raise ValueError(
             'Unsupported annotation backend: '
-            f'{raw}; expected one of claude-code, claude, opencode, codex'
+            f'{raw}; expected one of opencode, codex'
         )
     return backend
 
@@ -334,20 +342,9 @@ def _default_cli_annotation_agent_config(role: str, backend: str) -> dict[str, A
     if backend == 'codex':
         command = 'codex'
         args = _current_codex_annotation_args()
-    elif backend == 'claude-code':
-        command = 'claude'
-        args = [
-            '-p',
-            DEFAULT_ANNOTATION_REQUEST,
-            '--permission-mode',
-            'bypassPermissions',
-        ]
     else:
         command = 'opencode'
-        args = [
-            'run',
-            DEFAULT_ANNOTATION_REQUEST,
-        ]
+        args = _current_opencode_annotation_args()
     return {
         'role': role,
         'enabled': True,
@@ -373,6 +370,13 @@ def _current_codex_annotation_args() -> list[str]:
     ]
 
 
+def _current_opencode_annotation_args() -> list[str]:
+    return [
+        'run',
+        DEFAULT_ANNOTATION_REQUEST,
+    ]
+
+
 def _legacy_builtin_codex_annotation_args() -> list[str]:
     return [
         'exec',
@@ -383,6 +387,26 @@ def _legacy_builtin_codex_annotation_args() -> list[str]:
         '-o',
         '{artifact_path}',
         DEFAULT_ANNOTATION_REQUEST,
+    ]
+
+
+def _legacy_builtin_claude_code_annotation_args() -> list[str]:
+    return [
+        '-p',
+        DEFAULT_ANNOTATION_REQUEST,
+        '--permission-mode',
+        'bypassPermissions',
+    ]
+
+
+def _current_builtin_claude_code_annotation_args() -> list[str]:
+    return [
+        '--bare',
+        '--no-session-persistence',
+        '-p',
+        DEFAULT_ANNOTATION_REQUEST,
+        '--permission-mode',
+        'bypassPermissions',
     ]
 
 
@@ -402,8 +426,27 @@ def _is_legacy_builtin_codex_annotation_config(
     )
 
 
+def _is_builtin_claude_code_annotation_config(
+    config: dict[str, Any],
+    role: str,
+    args: list[str],
+) -> bool:
+    configured_role = str(config.get('role') or role).strip()
+    backend = str(config.get('backend') or 'codex').strip()
+    command = str(config.get('command') or '').strip()
+    return (
+        configured_role == role
+        and backend == 'claude-code'
+        and command == 'claude'
+        and tuple(args) in {
+            tuple(_legacy_builtin_claude_code_annotation_args()),
+            tuple(_current_builtin_claude_code_annotation_args()),
+        }
+    )
+
+
 def migrate_legacy_annotation_agent_configs(state: dict[str, Any]) -> bool:
-    """Normalize Waygate's old built-in Codex annotation args in persisted state."""
+    """Normalize Waygate's old built-in annotation args in persisted state."""
     changed = False
     for container_key in ('annotationAgents', 'annotationAgentConfig', 'annotation_agents'):
         container = state.get(container_key)
@@ -419,11 +462,20 @@ def migrate_legacy_annotation_agent_configs(state: dict[str, Any]) -> bool:
             if _is_legacy_builtin_codex_annotation_config(raw_config, role, args):
                 raw_config['args'] = _current_codex_annotation_args()
                 changed = True
+            elif _is_builtin_claude_code_annotation_config(raw_config, role, args):
+                raw_config['backend'] = 'opencode'
+                raw_config['command'] = 'opencode'
+                raw_config['args'] = _current_opencode_annotation_args()
+                changed = True
     return changed
 
 
 class AnnotationAgentError(RuntimeError):
     """Raised when an enabled annotation pass cannot safely complete."""
+
+    def __init__(self, message: str, *, runner_metadata: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.runner_metadata = runner_metadata or {}
 
 
 @dataclass(frozen=True)
@@ -446,7 +498,7 @@ class AnnotationAgentConfig:
             'backend': self.backend,
             'command': self.command,
             'args': list(self.args),
-            'env_keys': list(self.env_keys),
+            'env_keys': _annotation_effective_env_keys(self),
             'timeout_seconds': self.timeout_seconds,
             'artifact_path': str(self.artifact_path),
             'prompt_template': self.prompt_template,
@@ -497,20 +549,26 @@ def normalize_annotation_config(
         raise ValueError(f'Annotation role mismatch: expected {role}, got {configured_role}')
 
     backend = str(raw_config.get('backend') or 'codex').strip()
+    command = str(raw_config.get('command') or '').strip()
+    raw_args = raw_config.get('args') or []
+    if not isinstance(raw_args, list):
+        raise ValueError(f'Annotation config for {role} args must be a list')
+    args = [str(arg) for arg in raw_args]
+
+    if _is_builtin_claude_code_annotation_config(raw_config, role, args):
+        backend = 'opencode'
+        command = 'opencode'
+        args = _current_opencode_annotation_args()
+
     if backend not in ANNOTATION_BACKENDS:
         raise ValueError(
             'Unsupported annotation backend: '
             f'{backend}; expected one of {", ".join(ANNOTATION_BACKENDS)}'
         )
 
-    command = str(raw_config.get('command') or '').strip()
     if enabled and not command:
         raise ValueError(f'Annotation config for {role} must include command when enabled')
 
-    raw_args = raw_config.get('args') or []
-    if not isinstance(raw_args, list):
-        raise ValueError(f'Annotation config for {role} args must be a list')
-    args = [str(arg) for arg in raw_args]
     if _is_legacy_builtin_codex_annotation_config(raw_config, role, args):
         args = _current_codex_annotation_args()
 
@@ -1042,8 +1100,10 @@ def run_annotation_pass(
     runner_metadata['prompt_template_hash'] = prompt_hash
     runner_metadata['prompt_path'] = str(prompt_path)
     runner_metadata['gate_content_hash'] = gate_content_hash
+    runner_metadata['runtime'] = 'subprocess'
 
     if not config.enabled:
+        runner_metadata['runtime'] = 'skipped'
         return AnnotationRunResult(
             role=role,
             backend=config.backend,
@@ -1240,7 +1300,7 @@ def _annotation_subprocess_env(config: AnnotationAgentConfig, prompt_path: Path)
         value = os.environ.get(key)
         if value is not None:
             env[key] = value
-    for key in config.env_keys:
+    for key in _annotation_effective_env_keys(config):
         if key in os.environ:
             env[key] = os.environ[key]
     env.update(
@@ -1254,6 +1314,14 @@ def _annotation_subprocess_env(config: AnnotationAgentConfig, prompt_path: Path)
     return env
 
 
+def _annotation_effective_env_keys(config: AnnotationAgentConfig) -> list[str]:
+    env_keys = {key for key in config.env_keys if key}
+    env_keys.update(
+        key for key in DEFAULT_ANNOTATION_PROXY_ENV_KEYS if key in os.environ
+    )
+    return sorted(env_keys)
+
+
 def _expanded_command(config: AnnotationAgentConfig, prompt_path: Path) -> list[str]:
     placeholders = {
         'role': config.role,
@@ -1261,9 +1329,16 @@ def _expanded_command(config: AnnotationAgentConfig, prompt_path: Path) -> list[
         'prompt_path': str(prompt_path),
         'artifact_path': str(config.artifact_path),
     }
-    command = config.command.format(**placeholders)
-    args = [arg.format(**placeholders) for arg in config.args]
+    command = _expand_known_placeholders(config.command, placeholders)
+    args = [_expand_known_placeholders(arg, placeholders) for arg in config.args]
     return [command, *args]
+
+
+def _expand_known_placeholders(value: str, placeholders: dict[str, str]) -> str:
+    expanded = value
+    for key, replacement in placeholders.items():
+        expanded = expanded.replace('{' + key + '}', replacement)
+    return expanded
 
 
 def _normalize_annotation_artifact(
@@ -1281,6 +1356,8 @@ def _normalize_annotation_artifact(
     except json.JSONDecodeError:
         parsed = {'summary': raw_text.strip(), 'issues': []}
     approval_markers = _approval_like_markers(parsed, raw_text)
+    parsed = annotation_payload_with_promoted_summary_json(parsed)
+    approval_markers.update(_approval_like_markers(parsed, raw_text))
     if approval_markers:
         _write_rejected_annotation_artifact(
             config,
@@ -1324,7 +1401,7 @@ def _normalize_annotation_artifact(
         'gate_path': str(gate_path) if gate_path else None,
         'gate_content_hash': gate_content_hash,
         'artifact_path': str(config.artifact_path),
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'summary': summary,
         'issues': issues,
         'risk_taxonomy': list(ROLE_RISK_CATEGORIES[config.role]),
@@ -1335,6 +1412,35 @@ def _normalize_annotation_artifact(
         json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
         encoding='utf-8',
     )
+
+
+def annotation_payload_with_promoted_summary_json(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    summary = value.get('summary')
+    if not isinstance(summary, str):
+        return value
+    text = summary.strip()
+    if not text or text[0] not in '{[':
+        return value
+    try:
+        parsed_summary = json.loads(text)
+    except json.JSONDecodeError:
+        return value
+    if not isinstance(parsed_summary, dict):
+        return value
+
+    promoted = dict(value)
+    nested_summary = parsed_summary.get('summary')
+    if nested_summary is not None:
+        promoted['summary'] = nested_summary
+    nested_issues = parsed_summary.get('issues')
+    top_level_issues = promoted.get('issues')
+    if isinstance(nested_issues, list) and (
+        not isinstance(top_level_issues, list) or not top_level_issues
+    ):
+        promoted['issues'] = nested_issues
+    return promoted
 
 
 def _verification_assist_role_backend(spec: dict[str, Any]) -> tuple[str, str | None]:
@@ -1437,6 +1543,7 @@ def _normalize_verification_assist_artifact(
         'unit_id': unit_id,
         'test_case_id': _verification_assist_case_id(case),
         'artifact_path': str(config.artifact_path),
+        'env_keys': _annotation_effective_env_keys(config),
         'agent_assisted_judgement': judgement,
         'risk_annotations': _verification_assist_risk_annotations(parsed.get('risk_annotations') or parsed.get('riskAnnotations')),
         'structured_evidence_refs': _string_list(
@@ -1476,6 +1583,7 @@ def _write_verification_assist_failure_artifact(
         'unit_id': unit_id,
         'test_case_id': _verification_assist_case_id(case),
         'artifact_path': str(config.artifact_path),
+        'env_keys': _annotation_effective_env_keys(config),
         'agent_assisted_judgement': {
             'status': 'blocked',
             'summary': message,
@@ -1633,6 +1741,14 @@ def _approval_like_fields(value: Any, prefix: str = '') -> set[str]:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             markers.update(_approval_like_fields(child, f'{prefix}[{index}]'))
+    elif isinstance(value, str):
+        text = value.strip()
+        if text and text[0] in '{[':
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return markers
+            markers.update(_approval_like_fields(parsed, prefix))
     return markers
 
 
@@ -1659,7 +1775,7 @@ def _write_rejected_annotation_artifact(
         'gate_path': str(gate_path) if gate_path else None,
         'gate_content_hash': gate_content_hash,
         'artifact_path': str(config.artifact_path),
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'issues': [
             {
                 'category': 'approval_like_payload',
@@ -1701,7 +1817,7 @@ def _write_language_rejected_annotation_artifact(
         'gate_path': str(gate_path) if gate_path else None,
         'gate_content_hash': gate_content_hash,
         'artifact_path': str(config.artifact_path),
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'summary': 'Annotation 输出的人类可见批注字段不是简体中文，已被拒绝。',
         'issues': [
             {
@@ -1764,7 +1880,7 @@ def _handle_annotation_failure(
             'prompt_path': str(prompt_path),
             'prompt_template_hash': prompt_hash,
             'gate_content_hash': gate_content_hash,
-            'env_keys': list(config.env_keys),
+            'env_keys': _annotation_effective_env_keys(config),
             'failure_policy': config.failure_policy,
             'reason': message,
             'returncode': returncode,
@@ -1785,7 +1901,7 @@ def _handle_annotation_failure(
     )
     if config.failure_policy == 'warn':
         return result
-    raise AnnotationAgentError(message)
+    raise AnnotationAgentError(message, runner_metadata=runner_metadata)
 
 
 def _write_failure_artifact(
@@ -1811,7 +1927,7 @@ def _write_failure_artifact(
         'prompt_template_hash': prompt_hash,
         'gate_content_hash': gate_content_hash,
         'artifact_path': str(config.artifact_path),
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'failure_policy': config.failure_policy,
         'summary': f'标注运行失败：{message}',
         'returncode': returncode,
@@ -1862,15 +1978,20 @@ def _default_evidence_refs(role: str, state: dict[str, Any], artifacts_dir: Path
 
 def _allowed_env_values(config: AnnotationAgentConfig) -> list[str]:
     values: list[str] = []
-    for key in config.env_keys:
+    for key in _annotation_effective_env_keys(config):
         value = os.environ.get(key)
         if value:
             values.append(value)
     return values
 
 
-def _redact_text(text: str, secret_values: list[str]) -> str:
-    redacted = text
+def _redact_text(text: str | bytes | None, secret_values: list[str]) -> str:
+    if text is None:
+        redacted = ''
+    elif isinstance(text, bytes):
+        redacted = text.decode(errors='replace')
+    else:
+        redacted = text
     for value in sorted(secret_values, key=len, reverse=True):
         if value:
             redacted = redacted.replace(value, '[redacted]')
@@ -1896,7 +2017,7 @@ def _event_payload(
         'prompt_template': config.prompt_template,
         'prompt_template_hash': prompt_hash,
         'gate_content_hash': gate_content_hash,
-        'env_keys': list(config.env_keys),
+        'env_keys': _annotation_effective_env_keys(config),
         'failure_policy': config.failure_policy,
     }
 

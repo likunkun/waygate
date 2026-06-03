@@ -140,7 +140,7 @@
 - 在 `docs/operations/` 新增双语推荐环境 recommended-environment 文档，包括 `docs/operations/recommended-environment.zh-CN.md`。
 - 在 `docs/product/` 新增双语 Waygate introduction and best practices 文档，包含 10-12 页 PPT 大纲，但不生成 `.pptx`。
 - Debian 包会把新增 product 与 operations 文档安装到 `/usr/share/doc/waygate/docs/`。
-- V0.6.1 External Spec Intake 和 V0.6.2 Strict Test Presence 仍是后续 planned scope，不属于 V0.6.0e 当前交付。
+- V0.6.1 External Spec Intake、V0.6.2 Staged Requirements Package，以及 V0.6.3 Strict Test Presence / Per-Role Runner Configuration 仍是后续 planned scope，不属于 V0.6.0e 当前交付。
 
 ### V0.6.0f - Real E2E Evidence Gate
 
@@ -243,57 +243,172 @@
 - 对已识别但未启用的格式继续给出清晰 unsupported/deferred 错误。
 - 强化 gate 顺序：每个 gate 的人工审批必须是当前阶段最后一步；controller preflight、schema validation、evidence checks 和 annotation pass 都必须在人工审核文件呈现前完成。
 - 为 `requirements_annotation`、`unit_plan_annotation` 和 `final_acceptance_verification_assist` 增加按 role 可配置的 annotation / verification-assist 配置。
-- 通过 command、args、env key allowlist、timeout、artifact path、prompt template 和 failure policy 支持 `claude-code`、`opencode`、`codex` 三类 backend family。
+- 通过 command、args、env key allowlist、timeout、artifact path、prompt template 和 failure policy 支持 `opencode`、`codex` 两类 annotation backend family。旧的 Waygate 内置 Claude annotation 配置迁移到 OpenCode；Claude Code 只保留为普通 workflow runner。
 - 定义共享 non-approval 提示词合同，以及 Requirements、Unit Plan、Final Acceptance 三个阶段的风险标注 prompt template。
 - 允许 verification JSON 同时包含严格命令项、仍执行命令但补充 Agent 判断的 `descriptive_command` 行，以及显式声明 `verification_assist` 且不执行命令的 `agent_assisted_case` 行；辅助验证行必须记录结构化 evidence、`human_review_required` 和 assist artifact 路径。
 - 保持人工审批语义不变：标注 Agent 和 agent-assisted verification 只能帮助人聚焦风险，不能批准、跳过或绕过 controller gate。
 - 将长期流程规则沉淀到 `docs/workflow/external-spec-intake-and-annotation-policy.md`，将模块边界沉淀到 `docs/architecture/external-spec-intake-and-annotation-architecture.md`。
 
-### V0.6.1a - Blocked Assist
+### V0.6.2 - Staged Requirements Package
 
-目标：为显式 `status=blocked` workflow 增加受控诊断对话层，但不赋予 Agent 修改状态的权限。
+目标：降低 Requirements 阶段一次性产物过载，把范围、产品设计、技术架构和测试策略拆成聚焦 checkpoint，同时保留一个最终人工 Requirements approval gate。
 
-状态：已在 package `0.6.1a` 中实现。
+状态：Final Acceptance 已于 2026-05-25 批准；已在 package `0.6.2` 实施。
 
 已交付：
 
-- 为 `go`、`drive` 和 `start` 增加交互式 Blocked Assist 菜单，同时保持 `status` 只读。
-- 持久化 `blockedAssist` 状态指针，并在 `artifacts/blocked-assist/<run-id>/blocked-assist-summary.json` 写入 assist summary。
-- 继续、Unit Plan 返工、Requirements 变更或 Final Acceptance 路由前，都要求非空且经人工确认的 `human_reason`。
-- Agent 输出只作为诊断上下文：assist summary 可以建议路线，但不能自动 unblock、修改 gate 或批准 workflow state。
-- 继续复用既有 unblock 语义，但只允许 environment、external dependency、annotation runtime 和 final-acceptance blocked；合同类 blocker 必须进入正式返工路线。
-- 将流程规则沉淀到 `docs/workflow/blocked-assist-policy.md`，并纳入 Debian 文档包。
+- 将单个过载 Requirements draft 替换为分段 checkpoint：Requirements Scope、Product Design Brief、Technical Architecture Brief 和 Requirements Test Strategy Brief。
+- 组装一个最终 `requirements-and-acceptance.md` 审批包，嵌入所有 checkpoint artifact 并记录 hash。
+- 将详细 `## 4.9 目标项目基础设施信息` intake 从 Requirements 后移到 Unit Plan 的 Infrastructure / Execution Context Matrix；Requirements 只保留最小上下文门槛。
+- 保留 V0.6.1 gate ordering：controller preflight 和 annotation 在最终人工 Requirements gate 前运行；已批准的 legacy gate 不强制迁移。
+- 确保 Unit Plan 显式消费 staged artifact path/hash，让 scope、AC、Journey、产品设计、架构、prototype、E2E 和风险义务持续向下游传递。
+- 将长期流程规则沉淀到 `docs/workflow/staged-requirements-package-policy.md`，将模块边界沉淀到 `docs/architecture/staged-requirements-package-architecture.md`。
 
-### V0.6.2 - Strict Test Presence
+### V0.6.2a - Staged Requirements 目标产品视角修复
+
+目标：让 staged Requirements artifacts 始终围绕目标产品或目标系统，而不是 Waygate/controller 内部流程。
+
+状态：patch release 已在 package `0.6.2a` 实施。
+
+已交付：
+
+- 新增 `requirementsSurfaceClassification`，包含 `product_ui`、`web_system`、`prototype_required`、`visible_surfaces` 和脱敏 `evidence_snippets`。
+- 从 `--spec`、目标上下文、当前 unit metadata 和人工反馈识别目标产品表面；默认 `currentUnitNeedsUiDesign=false` / `currentUnitIsWebSystem=false` 只能作为 ignored context，不能证明不需要 UI。
+- 更新 staged Scope、Product Design、Architecture 和 Test Strategy prompt 合同：Product Design 输出目标产品 UX / 原型 / 审阅表面，Architecture 输出目标系统交互、数据、API 和运行边界，Test Strategy 保持策略层，不提前写 Unit Plan 级 exact cases / commands。
+- 保留 Requirements 硬预检：UI/Web/prototype 目标仍要求合法 prototype manifest，unknown classification 必须解释依据，backend/API/CLI-only 目标必须给出明确 no-UI 依据。
+- 非 Waygate 目标项目中，Product Design 或 Architecture 如果主要描述 Waygate/controller staged package 操作而不是目标产品/系统，会被判 invalid。
+- “产品原型/UI 怎么看”反馈路由到 Product Design，“架构交互/API/数据流缺失”反馈路由到 Architecture，测试策略反馈路由到 Test Strategy，不再所有 staged revision 都回到 Scope。
+
+### V0.6.2b - Product Design 后常驻原型预览
+
+目标：Product Design 成功后立即保持 Requirements-stage 原型预览可访问，而不是只在 Plannotator review 命令期间临时启动。
+
+状态：patch release 已在 package `0.6.2b` 实施。
+
+已交付：
+
+- Product Design checkpoint 校验通过后立即生成 `plannotator-review.html` 和 `prototype-review-manifest.json`。
+- 为显式 `status=blocked` workflow 增加可选 Blocked Assist 对话层，写入 summary artifact，要求人工确认 `human_reason`，并由 controller 菜单选择恢复路线。
+- final Requirements approval gate 尚未装配时，使用 Scope checkpoint 作为 requirements reference。
+- 启动一个随 controller 进程常驻的 prototype preview server，Architecture、Test Strategy、final assembly、Requirements 人工评审和 Plannotator 辅助审阅期间复用同一 URL。
+- final Requirements assembly 后重新生成 review bundle，让 manifest 记录真实 approval gate path，同时保留当前 preview port。
+- 预览端口从 `WAYGATE_PREVIEW_PORT` 或默认 `20001` 起步，被占用时自动递增。
+- Plannotator Close 后保持预览服务可访问，并在 controller 进程退出时关闭。
+
+### V0.6.2c - 中文 Checkpoint 命名与定点 Revise
+
+目标：让 staged Requirements checkpoint 的用户可见名称以中文为主，并允许 operator 带原因回撤到指定 checkpoint。
+
+状态：patch release 已在 package `0.6.2c` 实施。
+
+已交付：
+
+- final gate 附录、hash table、prompt、compact output 和 guidance 使用中文主名：需求范围检查点、产品设计简报、技术架构简报、需求测试策略简报。
+- 保留英文内部 state key、artifact key 和状态机 step，避免历史 session 迁移风险。
+- 增加 `waygate revise --gate requirements --checkpoint scope|product-design|architecture|test-strategy --reason ...`，并支持 `需求范围`、`产品设计`、`技术架构`、`测试策略` 等中文别名。
+- `--checkpoint` 只适用于 Requirements revision；`--gate unit-plan` 保持现有 Unit Plan revision 行为。
+- 指定 checkpoint 及其下游 staged artifacts 会标记 stale；Requirements / Unit Plan approval 会被清除，当前 Unit Plan gate 会被删除，并在 audit event 中记录 explicit checkpoint route。
+
+### V0.6.2d - Unit Continuity Gate
+
+目标：在 Unit Plan approval 前拒绝模糊的多单元 handoff，并在下游 Builder 启动前要求上游 producer evidence。
+
+状态：patch release 已在 package `0.6.2d` 实施。
+
+已交付：
+
+- 多单元 Unit Plan 必须包含 `## 单元连贯性摘要` 和 `## Handoff Matrix`，记录上游单元、下游单元、产出 artifact/readiness、消费输入、证据路径和失败路线。
+- Controller State Patch unit metadata 新增 `depends_on` 和 `handoff.human_summary`、`produces`、`requires`、`ready_checks`、`evidence_artifacts`。
+- Unit Plan validation 新增缺失依赖、缺失 producer handoff、循环依赖、consumer `requires[]` 不匹配、ready checks 未映射到命令/测试用例，以及 `environment ready` 等占位摘要检查。
+- Verifier 会为 producer unit 写入 `artifacts/<unit-id>/handoff-evidence.json`；声明的 handoff 证据缺失或 failed 时 producer verification 失败。
+- 下游 Builder preflight 在依赖 handoff evidence 缺失、无效、failed 或无法满足下游 `requires[]` 时，以 `blockedContext.category=unit_handoff` 阻塞。
+- 长期 workflow 规则沉淀到 `docs/workflow/unit-continuity-handoff-policy.md`。
+
+### V0.6.2e - Requirements Package Directory Intake
+
+目标：让 `--spec` 接受真实需求/spec 文档包目录，同时避免误导入工具根目录或普通 docs 目录。
+
+状态：patch release 已在 package `0.6.2e` 实施。
+
+已交付：
+
+- 新增 `sourceType=open-spec-package`，支持包含 `01-requirements.md` 且至少包含 `02-specification.md`、`03-technical-solution.md`、`04-storage-design.md` 或 `08-stage-handoff.md` 之一的 Open Spec package directory。
+- `requirementsSpec` 保存 package directory path 和目录内容 hash，并生成记录 package entrypoints 的 conversion artifacts。
+- 扩展 Spec Kit feature package 识别：任意目录只要 `spec.md` 同目录有 `plan.md`、`tasks.md`、`research.md`、`data-model.md`、`quickstart.md` 或 `contracts/` 即可识别。
+- `.specify` 工具/工作区根目录和普通 docs 目录会被拒绝，并提示传入 `specs/<feature>/` 或具体 `spec.md`。
+- 更新 Requirements prompt/brief 以及 external spec intake workflow/architecture 文档，明确目录输入是文档包，不是单个 Markdown 文件。
+
+### V0.6.2f - Human Review Control and Interruption Recovery
+
+目标：让人工 approval notes、draft adoption、中断恢复和 review-surface evidence 可审计，同时不改变 approved body/hash 合同。
+
+状态：2026-06-02 终验已批准；已在 package `0.6.2f` 实施。
+
+已交付：
+
+- Requirements 和 Unit Plan 的 Plannotator `decision=approved` payload 中的 approval notes 会保存为 audit artifact 和 state index，并明确标记为 `non-contract context`。
+- 下一阶段 Unit Plan 和 Builder prompt 会在 `Approval Notes Non-Contract Context` 中渲染 approval notes；approved gate body 与 hash 仍是唯一合同事实。
+- Requirements / Unit Plan review menu 新增 `i` 和 `m`：`i` 根据 review notes 生成 pending draft；`m` 只在 hash changed、reason-or-notes、deterministic validator checks 三条件通过后采纳人工已编辑正文。
+- manual adoption 拒绝会记录结构化原因并保持 pending，同时兼容既有 `a`、`r`、`v`、`p`、`q` review 行为。
+- controller drive loop 中的 Ctrl+C 会写入 `status=blocked`、`blockedContext.category=human_interrupt`、interrupted step/action、tmux best-effort `C-c` 结果和恢复 guidance。
+- CLI 语义拆分：`waygate approve --reason` 走 guarded manual adoption；`waygate revise` 无 reason 返回现有 approval point；checkpoint revise 无 `--reason` 会被拒绝。
+- 新增 V0.6.2f review bundle / prototype conformance evidence，将 required surfaces 映射到真实 Waygate terminal menu、CLI、state、artifact、prompt、docs 或 review bundle targets。
+- 长期 workflow 规则沉淀到 `docs/workflow/human-review-control-policy.md`，模块边界沉淀到 `docs/architecture/human-review-control-architecture.md`。
+- V0.6.3 Strict Test Presence / Per-Role Runner Configuration 继续作为后续 planned scope，不属于 V0.6.2f 当前交付。
+
+### V0.6.2g - Product Design Prompt Contract and Visible Annotation Pane
+
+目标：明确 no-spec 与 backend-only 会话下的 Product Design prompt 行为，并让已启用 annotation 的运行在不丢失 subprocess 兼容性和 secret hygiene 的前提下可见。
+
+状态：已在 package `0.6.2g` 实施。
+
+已交付：
+
+- Product Design 无 spec 分支要求 same-conversation brainstorming、逐页或逐入口确认，并且只在确认后写 artifact。
+- supported `requirementsSpec` 会话保持既有 staged artifact flow，不强制 page-by-page brainstorming。
+- backend/API/CLI-only 分支基于 Scope 正向依据做一次 no-UI/no-prototype 确认，不依赖默认 false controller flags。
+- Annotation 执行保持 subprocess-only，并移除 annotation 专用 tmux pane runtime。`WAYGATE_ANNOTATION_TMUX` 是废弃 no-op，不再创建 pane、run-local wrapper、run id 或 `done.json`。
+- 拒绝 `claude` / `claude-code` 作为 annotation backend，同时保留普通 `tmux-claude` 和 `tmux-codex` workflow runner 能力。旧的 Waygate 内置 Claude annotation 配置迁移到 OpenCode，annotation output 仍是 risk-only。
+- annotation audit data 在 state、events、summaries、dispatch metadata、artifacts 和 captured output 中保持 env key-only。
+
+### V0.6.2h - Requirements 4.6 Parser Boundary
+
+目标：将 Requirements Test Strategy 4.6 validation 限定在 canonical 固定列 E2E matrix。
+
+状态：已在 package `0.6.2h` 实施。
+
+已交付：
+
+- Requirements 4.6 row collector 只消费 4.6 heading 下的 canonical 固定列表格块。
+- 遇到非表格行或非 canonical markdown table header 时重置 active 4.6 table state，避免后续 4.7 AC closure matrix 等 subsection 表被解析成 4.6 rows。
+- 保留真实 4.6 row 的严格质量校验，包括非占位 command intent、真实入口、具体步骤、固定 fixture/setup、真实 environment kind、mock policy 和机器可检查 assertions。
+- 新增回归覆盖：有效 11 列 4.6 matrix 后跟 5 列 4.7 closure 表，且包含同一 E2E AC。
+
+### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。
 
 计划：
 
+- 原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。
 - 将 Test Strategist 前移到 requirements 阶段。
 - 要求每条非 manual AC 都有可执行测试用例。
 - Unit Plan test case 必须包含 fixture/setup、command 和 expected assertion。
 - Verifier 和 Final Acceptance 的 evidence rows 必须能映射回 Test Case ID。
+- 将 Final Scope Audit 的 evidence row 缺口前移：Unit Plan 预检必须阻断那些 command 不能被精确执行、不能通过 `command_id` 解析，或只被聚合命令模糊覆盖但无法为每个映射 test case 产出 passed evidence row 的测试用例。
+- 为 Builder、Refiner、Reviewer、Verifier 和 Bug Fix Agent 增加 role-specific runner、command、env 和 timeout 配置。
+- 标准化 artifacts 中的 role metadata。
+- 避免 secrets value 出现在 logs 和 artifacts 中。
 
 测试用例契约强化路线：
 
 - TC1 - Test Case Contract v1：定义稳定的 Unit Plan `test_cases[]` 契约，包含 `acceptance_criteria[]`、`covers_obligations[]`、`covers_journeys[]`、`layer`、`path_type`、`golden_path`、`setup[]`、`entrypoint`、可选 `cleanup[]`、`command_id`、`manual_evidence` 和 `assertions[]`。
 - TC2 - 事实源收敛：以 Controller State Patch 中的 `test_cases[]` 作为权威事实源；Markdown Test Case Matrix 只从结构化数据渲染，不再让 prose 和 JSON 各自成为事实源。
 - TC3 - 旧格式兼容与迁移：继续读取 `acceptance_criterion`、`fixture`、`command`、`evidence`、`expected`、`journey_refs`、`journeyRefs` 等旧字段，但归一化到 v1 契约，并输出迁移 warning。
-- TC4 - 严格 Unit Plan 预检：阻断缺失或未知 AC/AO/Journey 引用、无法解析的 `command_id`、static-only 冒充行为覆盖、弱断言、E2E 缺少 `user_steps`、缺少 setup/entrypoint，以及 manual evidence 冒充自动化通过。
+- TC4 - 严格 Unit Plan 预检：阻断缺失或未知 AC/AO/Journey 引用、无法解析的 `command_id`、static-only 冒充行为覆盖、弱断言、E2E 缺少 `user_steps`、缺少 setup/entrypoint、manual evidence 冒充自动化通过，以及无法在人工 Unit Plan approval 前声明精确 test-case 覆盖关系的聚合命令。
 - TC5 - 人工确认前 Test Case Review Agent：在 Unit Plan 人工确认前运行不具备批准权的审阅 agent，标注浅断言、假 fixture、过宽命令、只覆盖 happy path 的 E2E、AO 只挂名覆盖，以及不能证明所映射 AC 的测试用例。
-- TC6 - Verifier evidence 对齐：每个计划中的 test case 都产出 evidence row，包含 command ID 和结构化 assertions；未执行的计划 test case 明确标记为 `missing`；manual evidence 与自动化 `passed` 结果分开。
+- TC6 - Verifier evidence 对齐：每个计划中的 test case 都产出 evidence row，包含 command ID 和结构化 assertions；未执行的计划 test case 明确标记为 `missing`；manual evidence 与自动化 `passed` 结果分开。不再依赖命令字符串模糊包含匹配；通过 `command_id`、计划 test case id 和结构化 assertions 绑定 evidence row。聚合 pytest 命令必须展开为每个 test case 的 evidence row，否则在 Unit Plan 人工批准前阻断。
 - TC7 - Final Acceptance 矩阵升级：展示从 Requirement / Use Case / Journey / AC / AO 到 Test Case 和 Evidence 的完整链路，让人工审的是可追踪证据而不是 agent 总结。
-
-### V0.6.3 - Per-Role Runner Configuration
-
-目标：Builder、Refiner、Reviewer、Verifier 和 Bug Fix Agent 都可以独立配置。
-
-计划：
-
-- 增加 role-specific runner、command、env 和 timeout 配置。
-- 标准化 artifacts 中的 role metadata。
-- 避免 secrets value 出现在 logs 和 artifacts 中。
 
 ### V0.6.4 - OpenCode Runner
 
@@ -334,6 +449,18 @@
 - 支持 clean checkout 或 clean environment verification。
 - 区分本地预检和权威验证证据。
 - 捕获可复现的 verifier context。
+
+### V0.6.8 - Cross-Platform and QAgent Runner Support
+
+目标：让 Waygate 可用于 Windows 工作站，并把 QAgent 增加为一等 runner family。
+
+计划：
+
+- 增加 Windows 平台支持规划，在保持现有 Linux/tmux 行为稳定的同时，记录平台特定约束。
+- 引入 `psmux` 作为 Windows 下的 pane/session 编排层，承担当前 `tmux` 在 Linux 工作流中的角色。
+- 增加 QAgent runner 支持，并复用现有 runner 的 role runner、dispatch、completion signaling、artifact、metadata、timeout、env allowlist 和 secret redaction 契约。
+- 扩展 `waygate doctor` 诊断，报告 Windows、`psmux` 和 QAgent 可用性，同时不暴露 secret value。
+- 增加 Windows/psmux runner selection、QAgent dispatch、completion、timeout 和 failure mode 回归测试。
 
 ## 长期方向
 

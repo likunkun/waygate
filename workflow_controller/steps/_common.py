@@ -122,6 +122,17 @@ def _find_objective_for_unit(state: dict[str, Any], unit_id: str | None) -> str 
     return None
 
 
+def _current_unit_last_failure(state: dict[str, Any]) -> dict[str, Any] | None:
+    last_failure = state.get('lastFailure')
+    if not isinstance(last_failure, dict):
+        return None
+    failure_unit_id = str(last_failure.get('unit_id') or '').strip()
+    current_unit_id = str(state.get('currentUnitId') or '').strip()
+    if failure_unit_id and current_unit_id and failure_unit_id != current_unit_id:
+        return None
+    return last_failure
+
+
 def _tail_text(text: str, max_chars: int = 4000) -> str:
     if len(text) <= max_chars:
         return text

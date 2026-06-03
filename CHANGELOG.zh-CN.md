@@ -2,9 +2,76 @@
 
 重要项目变更应记录在这里。
 
-## 0.6.1a
+## 0.6.2h
+
+- 修复 Requirements Test Strategy 4.6 解析：validator 只消费 canonical 固定列 E2E 矩阵块，不再把后续 subsection 表格（例如 4.7 AC closure matrix）当作 4.6 obligations。
+- 新增 staged Requirements 回归测试，覆盖有效 11 列 4.6 矩阵后跟 5 列 4.7 closure 表且包含同一 E2E AC 的场景。
+- 同步 staged Requirements workflow / architecture 文档、release notes 和 package version metadata 到 `0.6.2h`。
+
+## 0.6.2g
+
+- Product Design prompt 增加三条分支：无 spec 时在同一 tmux conversation 使用 brainstorming 并逐页/逐入口确认；有 supported spec 时保持兼容 staged artifact flow；backend/API/CLI-only 时基于 Scope 正向依据做一次 no-UI/no-prototype 确认。
+- 移除 annotation 专用 tmux pane runtime。Annotation pass 现在始终使用 subprocess；`WAYGATE_ANNOTATION_TMUX` 作为废弃 no-op 被接受但不再创建 pane、run-local wrapper、run id 或 `done.json`。
+- 移除 Claude Code annotation backend。声明式 annotation backend 仅支持 `opencode` 和 `codex`；已有 session 中的 Waygate 内置 Claude annotation 配置会迁移为内置 OpenCode 模板。Claude Code 仍可作为普通 `tmux-claude` workflow runner 使用。
+- 强化 env key-only audit metadata，state、events、summaries、artifacts 和 captured output 只记录 key 名，不记录 env value、token、database URL value、password、secret、`api_key`、signature 或 proxy value。
+- 新增 V0.6.2g `scripts/verify/` 脚本入口，并同步正式 workflow、architecture、usage、release 和 roadmap 文档；V0.6.3 Strict Test Presence / Per-Role Runner Configuration 继续作为后续范围。
+
+## 0.6.2f
+
+- Plannotator approve payload 中的 Requirements / Unit Plan approval notes 会以 audit-only advisory context 持久化，并在下一阶段 prompt 的 `Approval Notes Non-Contract Context` 中注入。
+- 人工 gate menu 新增 `i` 与 `m`：`i` 只根据 review notes 生成 pending draft；`m` 只在正文 hash 已变化、存在 reason 或 notes、deterministic validator 通过时采纳人工已编辑正文。
+- 自动执行中的 Ctrl+C 会进入可审计 `blockedContext.category=human_interrupt` 状态，记录 tmux `C-c` best-effort 结果并展示恢复 guidance。
+- CLI review route 拆分：`waygate approve --reason` 走受控 manual adoption；`waygate revise` 无 reason 回到当前 approval point；checkpoint revise 继续要求 `--reason`。
+- 新增 V0.6.2f review bundle 与 prototype conformance evidence，覆盖 approval notes、draft merge、manual adoption、interruption recovery、revise routes、legacy review compatibility 和真实 Waygate target mapping。
+- README/USAGE/CHANGELOG/ROADMAP、正式 workflow/architecture 文档、verification scripts 和 package version metadata 同步到 `0.6.2f`，并保持 V0.6.3 Strict Test Presence / Per-Role Runner Configuration 为后续范围。
+
+## 0.6.2e
+
+- 新增 `open-spec-package` intake，支持包含 `01-requirements.md` 且至少包含一个支撑文档的 Open Spec 文档包目录。
+- 扩展 Spec Kit feature package 识别：任意目录只要 `spec.md` 同目录有 `plan.md`、`tasks.md` 或 `contracts/` 等 feature artifact，即可导入。
+- `.specify` 工具/工作区根目录和普通 docs 目录会被拒绝，并提示传入 `specs/<feature>/` 或具体 `spec.md`。
+- package directory 导入会生成 conversion artifacts，并在 `import-summary.json`、`source-map.json` 和 `validation-report.json` 中记录 package entrypoints。
+- 同步 Requirements prompt/brief、README/USAGE、workflow/architecture 文档和 package version metadata 到 `0.6.2e`。
+
+## 0.6.2d
+
+- 新增 Unit Continuity Gate：多单元 Unit Plan 必须包含 `单元连贯性摘要`、Handoff Matrix，以及结构化 `depends_on` / `handoff` metadata。
+- Unit Plan validation 新增缺失依赖、循环依赖、模糊 handoff 摘要、下游 `requires[]` 与上游 `produces[]` 不匹配、ready checks 未映射到命令或测试用例等检查。
+- Verifier 会写 `artifacts/<unit-id>/handoff-evidence.json`；声明的 handoff artifacts 或 ready checks 缺失时 producer verification 失败。
+- 下游 Builder 在依赖 handoff evidence 缺失、failed 或不匹配时，以 `blockedContext.category=unit_handoff` 阻塞执行。
+- 新增 `docs/workflow/unit-continuity-handoff-policy.md` 并将 package version metadata 更新到 `0.6.2d`。
+
+## 0.6.2b
 
 - 新增 Blocked Assist：为 `status=blocked` workflow 提供受控诊断对话、summary artifact、人工确认的 `human_reason`，并由 controller 显式选择恢复路线。
+- 将 Requirements 原型预览从 Plannotator 临时服务提升为 controller 进程级常驻预览服务。
+- Product Design checkpoint 校验通过后立即生成 Plannotator review HTML/manifest；final approval gate 尚未装配时使用 Scope checkpoint 作为 requirements reference。
+- Architecture、Test Strategy、final Requirements assembly、Requirements 人工评审和 Plannotator 辅助审阅期间复用同一个 preview URL。
+- final Requirements assembly 后重新生成 review bundle，让 manifest 补齐真实 approval gate path，同时保留当前预览端口。
+- 预览端口从 `WAYGATE_PREVIEW_PORT` 或默认 `20001` 起步，端口被占用时自动递增。
+- Plannotator Close 后不再关闭预览服务，并在代理环境下提示配置 `NO_PROXY/no_proxy`。
+
+## 0.6.2a
+
+- 为 staged Requirements package 新增目标产品表面分类，记录目标 UI/Web/prototype 需求、可见表面，以及来自 spec、目标上下文、unit metadata 和反馈的脱敏证据片段。
+- 更新 staged Scope、Product Design、Architecture 和 Test Strategy prompt，使其围绕目标产品/目标系统，而不是 Waygate/controller 工作流。
+- 保留 UI/Web 目标的 Requirements prototype 硬门禁，同时允许明确的 backend/API/CLI-only 目标声明不需要 UI 的依据。
+- 非 Waygate 目标项目中，如果 Product Design 或 Architecture 主要描述 Waygate/controller 内部流程，preflight 会判 invalid。
+- 改善 staged revision 路由：UI/prototype 反馈回到 Product Design，交互/API/数据流反馈回到 Architecture。
+- AO 映射或 E2E AC/Journey 映射缺口与 prototype 文案同时出现时，优先回到 Scope，避免因 prototype 关键词误入 Product Design 循环。
+- `prototype_required=required` 或 `web_system=required` 时，Product Design checkpoint prompt 和 stage validation 都要求 `artifacts/requirements-draft/prototype-manifest.json`。
+- 明确 Product Design manifest 本地路径语义：本地原型 path 必须从 `artifacts/requirements-draft/` 解析；缺文件诊断会输出 resolved path，并提示 workspace-relative `docs/prototypes/...` 的修复方式。
+
+## 0.6.2
+
+- 新增 Staged Requirements Package 流程：Requirements Scope、Product Design Brief、Technical Architecture Brief 和 Requirements Test Strategy Brief 作为聚焦 checkpoint 运行，最后仍保留一个人工 Requirements approval gate。
+- 新增最终 package assembly，包含 checkpoint artifact hash、附录内容和 staged package 一致性校验。
+- 将详细目标项目基础设施 intake 后移到 Unit Plan Infrastructure / Execution Context Matrix，Requirements 只保留最小上下文。
+- Unit Plan 继承 staged artifact path、hash 和 status metadata，确保 scope、AC、Journey、设计、架构、E2E 和风险义务继续向下游传递。
+- 新增 V0.6.2 正式 workflow / architecture 文档，并将 Strict Test Presence / Per-Role Runner Configuration 保留在 V0.6.3。
+
+## 0.6.1
+
 - 新增受支持的 OpenSpec/OpenAPI 和 Spec Kit intake 路径，生成 normalized requirements、source maps、validation reports，并对 unsupported/deferred 格式给出清晰错误。
 - 新增 Requirements、Unit Plan、Final Acceptance gate 前的非批准型、按 role 配置的 annotation 和 verification-assist 能力。
 - `init`、`start`、`go`、`drive`、`run` 新增 `--annotation-agent` 系列 CLI 参数，允许操作者启用风险标注 Agent，无需手改 `session.json`。

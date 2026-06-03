@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from workflow_controller.requirements_package import STAGE_TO_ACTION, STEP_TO_STAGE
 from workflow_controller.state_machine.transitions import unit_needs_ui_design
 
 
@@ -13,6 +14,8 @@ def compute_next_allowed_action(state: dict[str, Any]) -> str | None:
     scope_approved = state.get('scopeApproved', False)
     human_gates_required = bool(state.get('humanGatesRequired'))
 
+    if step in STEP_TO_STAGE:
+        return STAGE_TO_ACTION[STEP_TO_STAGE[step]]
     if step == 'REQUIREMENTS_DRAFT':
         return 'run_requirements_drafter'
     if step == 'UNIT_PLAN_DRAFT':

@@ -38,7 +38,7 @@ def make_runner(state: dict[str, Any], role: str | None = None) -> RunnerConfig:
         agent_command=str(state.get('agentCommand') or ''),
         tmux_target=state.get('tmuxTarget') or state.get('tmuxPane'),
         role=role,
-        env=_initial_tmux_env(state),
+        env=_initial_tmux_env(state, backend=backend),
     )
 
 
@@ -73,20 +73,31 @@ def _string_env(raw_env: Any) -> dict[str, str]:
     return env
 
 
-def _initial_tmux_env(state: dict[str, Any]) -> dict[str, str]:
+def _initial_tmux_env(state: dict[str, Any], *, backend: str) -> dict[str, str]:
+    if backend != 'tmux-claude':
+        return {}
     resolution = state.get('tmuxTargetResolution')
     source = resolution.get('source') if isinstance(resolution, dict) else None
-    if (
-        source == 'auto-created'
-        and state.get('currentStep') == 'REQUIREMENTS_DRAFT'
-        and not state.get('requirementsDraftGenerated')
-    ):
+    if source == 'auto-created' and _is_initial_requirements_dispatch(state):
         return {
             'WAYGATE_TMUX_CLEAR_INPUT_BEFORE_DISPATCH': '0',
             'RRC_TMUX_CLAUDE_SUBMIT_DELAY_SECONDS': '2.0',
             'WAYGATE_TMUX_CLAUDE_SUBMIT_WATCHDOG': '1',
         }
     return {}
+
+
+def _is_initial_requirements_dispatch(state: dict[str, Any]) -> bool:
+    if state.get('currentStep') == 'REQUIREMENTS_DRAFT':
+        return not state.get('requirementsDraftGenerated')
+    if state.get('currentStep') != 'REQUIREMENTS_SCOPE_DRAFT':
+        return False
+    package = state.get('requirementsPackage')
+    if not isinstance(package, dict):
+        return False
+    artifacts = package.get('artifacts')
+    scope_record = artifacts.get('scope') if isinstance(artifacts, dict) else None
+    return not (isinstance(scope_record, dict) and scope_record.get('status') == 'complete')
 
 
 __all__ = [

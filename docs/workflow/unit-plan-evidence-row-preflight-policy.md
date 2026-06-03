@@ -79,4 +79,6 @@ waygate revise --gate unit-plan --state-dir <state-dir> --reason "repair missing
 
 This route preserves Requirements approval. The Unit Plan revision prompt includes the missing AC ids, the Final Scope Audit artifact paths, and a reminder to use exact `test_cases[].command` to `verification_commands[]` matches or explicit manual evidence for manual-only closure.
 
+Final Scope Audit keeps AO ledger lifecycle status separate from evidence coverage. Ledger fields such as `status=open` remain in the JSON for audit history, while the derived `coverage_status=covered|uncovered` drives Final Scope Audit tables and gate summaries. This prevents an active but covered AO from looking like missing evidence only because its ledger lifecycle status is still `open`.
+
 Requirements revision is only needed if the approved AC contract itself must change.

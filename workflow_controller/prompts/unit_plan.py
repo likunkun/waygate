@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from workflow_controller.acceptance_obligations import render_acceptance_obligations_markdown
+from workflow_controller.approval_notes import render_approval_notes_context
+from workflow_controller.requirements_package import CHECKPOINT_STAGES, REQUIREMENTS_PACKAGE_VERSION
 from workflow_controller.steps._common import _find_unit
 
 
@@ -55,6 +57,8 @@ Acceptance Obligation Coverage:
 - 除非必须重新执行，否则已完成单元不要放回 `units`；`units` 应只包含下一步要执行的缺陷修复单元。
 - 将 `currentUnitId` 设置为第一个缺陷修复单元。
 """
+    staged_requirements_section = _staged_requirements_unit_plan_section(state)
+    approval_notes_section = render_approval_notes_context(state, 'requirements')
 
     return f"""为 workflow-controller 生成"单元计划确认"Markdown 正文。
 
@@ -87,9 +91,17 @@ Verification command script-entry policy:
 - 脚本内部可以运行 pytest、Playwright、环境准备或多步 shell；Unit Plan 只声明脚本入口和脚本应覆盖的 AC/断言。
 - 不要在 Unit Plan 中写 `pytest ...`、`playwright test ...`、`bash -lc`、`python -c`、管道或内联 shell；把这些内容写入 `scripts/verify/<case>.sh` 或 `scripts/verify/<case>.py`。
 
+Unit continuity / handoff policy:
+- 多单元 Unit Plan 必须写 `## 单元连贯性摘要`，用人能读懂的话说明每个上游单元给下游单元留下什么可消费成果，以及下游如何消费。
+- 多单元 Unit Plan 必须写 `## Handoff Matrix`，列出 Upstream Unit、Downstream Unit、Produced Artifacts / Readiness、Consumed Inputs、Evidence Path、Failure Route。
+- Controller State Patch 中有依赖的 unit 必须写 `depends_on`；参与上游/下游交接的 unit 必须写 `handoff.human_summary`、`handoff.produces`、`handoff.requires`、`handoff.ready_checks`、`handoff.evidence_artifacts`。
+- `human_summary` 不能只写 “environment ready / 环境就绪 / ready / done”；必须命名具体 artifact、状态或接口。
+- 下游 `handoff.requires[]` 必须匹配其 `depends_on` 上游的 `handoff.produces[]`；`ready_checks[]` 必须映射到本 unit 的 test case id、test case command 或 `verification_commands[]`。
+- producer unit 的 verifier 会写 `artifacts/<unit-id>/handoff-evidence.json`；下游 Builder 启动前会检查依赖单元的 handoff evidence，缺失或 failed 会以 `blockedContext.category=unit_handoff` 阻止下游执行。
+
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
-- 必须沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令依赖、环境类型、mock policy 和断言意图；除非创建 Requirements change request 并重新通过 Requirements gate，否则 Unit Plan 不得弱化这些前置审阅结论。
+- 必须沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令意图、环境类型、mock policy 和断言意图，并在 Unit Plan 中落成具体 test case、exact command、fixture 初始化脚本和 evidence row；除非创建 Requirements change request 并重新通过 Requirements gate，否则 Unit Plan 不得弱化这些前置审阅结论。
 - 如果已批准 requirements 包含 `Design/Architecture Traceability Matrix`，每个 test case 还必须保留对应 AC 的 `product_design_refs` 和 `technical_architecture_refs`，并与 requirements 中的 Product Design Ref / Technical Architecture Ref 一致。
 - 如果已批准 requirements 包含 active Journey，closure/E2E test case 必须在 JSON `test_cases[]` 中显式写 Journey 映射字段。推荐使用 `covers_journeys: ["J-001"]` 或 `journey_ids: ["J-001"]`；`journey_refs` / `journeyRefs` 只是历史兼容别名，不作为推荐输出字段。
 - Journey 映射不能只放在 Markdown prose、Journey Acceptance Matrix、设计引用或架构引用中；controller 只从 `test_cases[]` 的结构化字段生成 Journey 合约和证据。
@@ -101,6 +113,7 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - 至少一个 E2E test case 必须标记 `golden_path: true`，表示人工最终验收前必须先跑通的核心正常流程。
 - closure/Web/UI unit 必须在 Controller State Patch 的对应 unit 中写 `final_acceptance_walkthrough.inspection`，由 Agent 提供人工可见系统走查入口；Controller 不猜入口。字段必须包含 `surface_kind: "browser" | "api" | "cli" | "artifact"`、`entrypoint`、`manual_steps[]` 和 `expected_observations[]`。`manual_steps` 必须是真实系统操作，不得只写 `pytest`、`playwright test`、golden path command 或其他测试命令。
 - closure unit 如需最终人工走查启动真实应用，必须同时写 `final_acceptance_walkthrough.launch`：`mode` 只能是 `agent_start` / `manual_only` / `not_required`；`agent_start` 必须写完整 `command`，并至少写一个 `ready_url` / `ready_command` / `ready_output_contains`；`manual_only` 必须写 `manual_launch_instructions`；`env_keys` 只能保存环境变量名，不能保存 secret 值。
+- `verification_env` 只能保存真实、可执行、非敏感的环境变量值；secret、外部服务 URL 或只能声明 key 名的变量必须写入 `env_keys`，不要用 `required key name only`、`value must not be recorded` 或 `<...>` 占位值。
 - `verification_commands` 必须是可执行脚本入口，并由脚本实际执行 E2E 测试、golden path、环境准备和断言；不接受"截图留证"或人工步骤作为完成条件。
 - `done_when` 必须是"测试命令退出码为 0 且断言覆盖 AC"，不接受"截图已上传"、"人工确认"或"浏览器路径已验证"。
 - 每个测试用例必须追溯到一条 AC，并在 `expected` 字段中描述可断言的具体值（如字段值、数组长度、排序关系），不接受"页面正常渲染"、"无报错"或"截图留存"作为唯一断言。
@@ -125,6 +138,10 @@ E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）
 - 可行目标：`{state.get('feasibleOutcome')}`
 - 当前单元 id：`{state.get('currentUnitId')}`
 - 当前单元名称：`{unit.get('name', state.get('currentUnitId'))}`
+
+{staged_requirements_section}
+
+{approval_notes_section}
 
 controller state 中的已知目标覆盖：
 
@@ -162,6 +179,16 @@ Acceptance Criterion -> Test Case -> Journey -> Layer -> Environment -> Real Ent
 缺陷修复模式下，每条验收标准和每个最终验收缺陷都必须至少有一个具体测试用例或明确人工证据。typecheck/lint/tsc 等静态检查可以出现，但不能单独算作行为覆盖。
 E2E 层的测试用例必须有可执行 `command`（`scripts/verify/` 脚本入口），并声明 `fixture` 或测试数据准备方式；`evidence` 字段留空；`expected` 必须描述具体可断言的值，不接受"页面渲染成功"、"无报错"或"截图留存"。
 如果测试用例覆盖 Journey，在表格中写出 Journey id，并在 Controller State Patch 的对应 `test_cases[]` JSON 对象中写 `covers_journeys` 或 `journey_ids`。
+
+## 单元连贯性摘要
+
+多单元计划必须用自然语言说明上游单元完成后给下游单元留下什么具体 artifact、状态或 ready condition。单单元计划可写“不涉及跨单元 handoff”。
+
+## Handoff Matrix
+
+多单元计划必须创建一张表，表达以下精确映射：
+
+Upstream Unit -> Downstream Unit -> Produced Artifacts / Readiness -> Consumed Inputs -> Evidence Path -> Failure Route
 
 ## 文档交付矩阵（Document Deliverables Matrix）
 
@@ -210,6 +237,14 @@ Area -> Target Path -> Action -> Required For Acceptance -> Evidence / Reason
       "scope": ["<scope item>"],
       "non_goals": ["<non-goal item>"],
       "done_when": ["<observable completion condition>"],
+      "depends_on": ["<upstream unit id, omit or [] for first independent units>"],
+      "handoff": {{
+        "human_summary": "<具体说明本 unit 产出/消费什么，不得写 environment ready 这类占位语>",
+        "produces": ["<artifact/readiness/state this unit makes available to downstream units>"],
+        "requires": ["<inputs consumed from depends_on units; [] for first producer units>"],
+        "ready_checks": ["<test case id or exact script entry command proving the handoff is ready>"],
+        "evidence_artifacts": ["<artifact path such as export.json or reports/schema-ready.json>"]
+      }},
       "workflow_validation_level": "fragment",
       "test_cases": [
         {{
@@ -247,7 +282,8 @@ Area -> Target Path -> Action -> Required For Acceptance -> Evidence / Reason
         }}
       ],
       "verification_commands": ["bash scripts/verify/<case>.sh"],
-      "verification_env": {{"DATABASE_URL": "<test database url if required>"}}
+      "verification_env": {{"DATABASE_URL": "file:./tmp/test.db"}},
+      "env_keys": ["OPENMAIC_BASE_URL", "OPENMAIC_API_KEY"]
     }}
   ],
   "currentUnitNeedsUiDesign": false,
@@ -265,6 +301,39 @@ JSON 必须合法，且 `units` 必须列出下一步要执行的每个可执行
 
 使用未勾选的 Markdown checkbox。
 """
+
+
+def _staged_requirements_unit_plan_section(state: dict[str, Any]) -> str:
+    package = state.get('requirementsPackage')
+    if not isinstance(package, dict) or package.get('version') != REQUIREMENTS_PACKAGE_VERSION:
+        return ''
+    artifacts = package.get('artifacts')
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+    lines = [
+        'Staged Requirements Package artifact inheritance:',
+        '',
+        '| Stage | Path | Hash | Status |',
+        '| --- | --- | --- | --- |',
+    ]
+    for stage in CHECKPOINT_STAGES:
+        record = artifacts.get(stage)
+        if isinstance(record, dict):
+            lines.append(
+                f"| {stage} | `{record.get('path')}` | `{record.get('hash')}` | `{record.get('status')}` |"
+            )
+        else:
+            lines.append(f'| {stage} | missing | missing | missing |')
+    lines.extend([
+        '',
+        'Unit Plan 必须从以上 staged artifact path/hash/status 继承 AC、Journey、Product Design、Architecture、Test Strategy、E2E 方法、界面相关义务和风险义务；不要从聊天上下文重建这些事实。',
+        '',
+        'Infrastructure / Execution Context Matrix 约束：',
+        '- Unit Plan 必须新增 `Infrastructure / Execution Context Matrix`。',
+        '- 矩阵必须覆盖七类事实：代码仓库、项目部署运行时环境、调试分析方法、参考环境、文档地址、架构/交互逻辑/接口说明、依赖信息。',
+        '- 每行必须写事实、来源和 Unit Plan 消费方式；环境变量只写 key 名，不写 secret 值。',
+    ])
+    return '\n'.join(lines)
 
 
 def _render_test_strategist_prompt(

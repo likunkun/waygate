@@ -26,9 +26,10 @@ Waygate 不是要把人移出流程，而是把人的注意力放回真正重要
 | --- | --- |
 | 可恢复工作流 | `session.json`、`events.jsonl`、approvals 和 artifacts 是事实源。 |
 | Requirements Gate | 生成人类可审阅的需求与验收标准，并执行可追溯校验，包括 V0.6.0j 基础设施缺口追问和验证留痕。 |
-| 外部 spec intake | V0.6.1 会把受支持的 OpenSpec/OpenAPI 和 Spec Kit 来源导入为可审计 conversion artifacts，并对 unsupported/deferred 格式给出清晰错误。 |
+| 分段 Requirements Package | V0.6.2 把过载的 Requirements draft 拆成 scope、产品设计、架构和测试策略 checkpoint；V0.6.2a 确保这些 checkpoint 围绕目标产品/目标系统表面；V0.6.2b 让 Product Design 原型预览常驻到 Requirements review；V0.6.2c 使用中文主 checkpoint 名称并支持 Requirements checkpoint 定点 revise；V0.6.2d 增加多单元 handoff 连贯性硬门禁，要求下游 Builder 启动前已有上游证据；V0.6.2e 允许 `--spec` 导入真实需求文档包目录；V0.6.2f 增加 approval notes 非合同上下文、人工编辑正文受控采纳、Ctrl+C human_interrupt 恢复和 review surface 一致性证据；V0.6.2g 增加无 spec Product Design brainstorming prompt 分支，并保持 annotation pass 只走 subprocess；V0.6.2h 将 4.6 E2E matrix validation 限定在 canonical 固定列表格块。 |
+| 外部 spec intake | V0.6.1 会把受支持的 OpenSpec/OpenAPI 和 Spec Kit 来源导入为可审计 conversion artifacts；V0.6.2e 同时支持 Open Spec package directory 和 Spec Kit feature package directory，并对 unsupported/deferred 格式给出清晰错误。 |
 | Unit Plan Gate | Unit Plan 必须映射目标、AC、测试用例、Journey 和验证命令。 |
-| 标注 Agent | V0.6.1 支持在 Requirements、Unit Plan 和 Final Acceptance 人工 gate 前运行非批准型、按 role 配置的 annotation / verification-assist pass。 |
+| 标注 Agent | V0.6.1 支持在 Requirements、Unit Plan 和 Final Acceptance 人工 gate 前运行非批准型、按 role 配置的 annotation / verification-assist pass。Annotation 只通过 subprocess 执行，声明 backend 仅支持 `opencode` 和 `codex`。Claude Code 仍可作为普通 `tmux-claude` workflow runner，但不能作为 annotation agent backend。 |
 | Runner 支持 | 支持 subprocess、`tmux-claude`、`tmux-codex`；可以自动识别已有 tmux pane。 |
 | 精修与评审 | Builder 之后可进入 CodeSimplifier/Refiner 和 Reviewer。 |
 | 验证证据 | Verifier 输出结构化 evidence rows，覆盖 AC、Test Case、命令和 artifact。 |
@@ -55,9 +56,9 @@ Waygate 以 Python 3 代码运行。本地开发和验证使用 `python -m pytes
 - 项目需要的 agent skills 由 agent runtime 加载，不由 Debian 包安装；`waygate doctor` 会扫描常见本地 skill 根目录并给出建议性缺口提示。
 - Debian package 构建需要标准 shell 工具和 `dpkg-deb`。
 
-Waygate Markdown spec intake 仍可通过 `init`、`start`、`go` 的 `--spec <path>` 使用。V0.6.1 还支持受支持 OpenSpec/OpenAPI 输入和受支持 Spec Kit 输入；识别到但 unsupported 或 deferred 的格式会清晰失败，不会被静默导入。
+Waygate Markdown spec intake 仍可通过 `init`、`start`、`go` 的 `--spec <path>` 使用。`--spec` 也接受 Open Spec package directory（包含 `01-requirements.md`，并至少包含 `02-specification.md` 等一个支撑文档）和 Spec Kit feature package directory（包含 `spec.md`，并有 `plan.md`、`tasks.md` 或 `contracts/` 等 feature companion）。`.specify` 工具/工作区根目录和普通 docs 目录会被拒绝，并提示传入 `specs/<feature>/` 或具体 `spec.md`。V0.6.1 还支持受支持 OpenSpec/OpenAPI 输入；识别到但 unsupported 或 deferred 的格式会清晰失败，不会被静默导入。
 
-V0.6.1 外部 spec intake、annotation、提示词合同和灵活验收证据规则见 [docs/workflow/external-spec-intake-and-annotation-policy.md](docs/workflow/external-spec-intake-and-annotation-policy.md) 和 [docs/architecture/external-spec-intake-and-annotation-architecture.md](docs/architecture/external-spec-intake-and-annotation-architecture.md)。V0.6.0m golden-path E2E 前置校验和 V0.6.2 Requirements E2E 审阅规则见 [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md)。V0.6.0j Requirements 基础设施追问与验证规则见 [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md)。V0.6.0k UI/UX skill policy 见 [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md)。V0.6.0i 文档生命周期入口见 [docs/README.md](docs/README.md)。V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
+V0.6.2 staged Requirements package 规则见 [docs/workflow/staged-requirements-package-policy.md](docs/workflow/staged-requirements-package-policy.md) 和 [docs/architecture/staged-requirements-package-architecture.md](docs/architecture/staged-requirements-package-architecture.md)。V0.6.1 外部 spec intake、annotation、提示词合同和灵活验收证据规则见 [docs/workflow/external-spec-intake-and-annotation-policy.md](docs/workflow/external-spec-intake-and-annotation-policy.md) 和 [docs/architecture/external-spec-intake-and-annotation-architecture.md](docs/architecture/external-spec-intake-and-annotation-architecture.md)。V0.6.0m golden-path E2E 前置校验和 V0.6.2 Requirements E2E 审阅规则见 [docs/workflow/requirements-e2e-review-policy.md](docs/workflow/requirements-e2e-review-policy.md)。V0.6.0j Requirements 基础设施追问与验证规则见 [docs/workflow.zh-CN.md](docs/workflow.zh-CN.md)。V0.6.0k UI/UX skill policy 见 [docs/workflow/ui-ux-skill-policy.md](docs/workflow/ui-ux-skill-policy.md)。V0.6.0i 文档生命周期入口见 [docs/README.md](docs/README.md)。V0.6.0h 推荐环境见 [docs/operations/recommended-environment.zh-CN.md](docs/operations/recommended-environment.zh-CN.md)。面向同学讲解的介绍与最佳实践材料见 [docs/product/waygate-introduction-and-best-practices.zh-CN.md](docs/product/waygate-introduction-and-best-practices.zh-CN.md)。
 
 ## Waygate Agent 使用的 Skills
 

@@ -25,6 +25,8 @@ Explicit agent or controller `blocked` means the workflow needs a reasoned route
 - Requirements blockers mean approved requirements, acceptance criteria, out-of-scope decisions, or journey contracts must change.
 - Final Acceptance blocked route means the reviewer could not judge because environment, data, access, or evidence was unavailable.
 
+Blocked guidance prints the derived blocker category next to the reason, then prints the matching recovery command. Long validator blocker lists are compacted to the first few actionable items; the complete list remains in the referenced artifact, such as `artifacts/final-scope-audit/scope-audit.json`.
+
 Interactive `waygate drive`, `waygate start`, and `waygate go` can open a Blocked Assist menu at a blocked stop. Blocked Assist may ask diagnostic questions, suggest checks, and write `artifacts/blocked-assist/<run-id>/blocked-assist-summary.json`; it cannot change controller state on its own. `waygate status` remains read-only and never opens the menu.
 
 Any state-changing blocked route requires a non-empty human `human_reason`. The assist summary can be reused as a draft or reference, but the human reason is authoritative. Contract blockers cannot use the continue/unblock route even when the assist summary claims the issue is resolved; they must route through Requirements, Unit Plan, or Final Acceptance. Full details are registered in [blocked-assist-policy.md](blocked-assist-policy.md).

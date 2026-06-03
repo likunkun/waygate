@@ -13,6 +13,12 @@ Interactive `waygate drive`, `waygate start`, and `waygate go` show a blocked me
 
 `waygate status` stays read-only. It may print guidance that Blocked Assist is available from interactive commands, but it does not open a menu.
 
+## Dialogue Wait Semantics
+
+Blocked Assist is a human-facing diagnostic dialogue. While the assist runner is active, the controller disables tmux idle nudges and does not enforce a hard agent timeout. This prevents automatic `继续` prompts from interrupting a blocked diagnosis while the agent is waiting for the human to answer.
+
+The no-idle/no-timeout behavior is request-local to the Blocked Assist runner. It is not written as global runner state, and it does not change normal workflow stages. After the human leaves the blocked menu through continue, Unit Plan rework, Requirements change, Final Acceptance routing, or keep-blocked, subsequent Requirements, Unit Plan, Builder, Refiner, Bug Fix, and Final Sync agent runs use their normal idle monitor and timeout behavior.
+
 ## Assist Artifact
 
 Each assist run writes a summary under:

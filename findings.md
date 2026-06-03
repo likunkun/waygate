@@ -1,5 +1,107 @@
 # 发现与决策
 
+## 2026-06-03 Requirements AC-SPEC provenance prose boundary
+
+- Source/provenance prose is not a current-version Acceptance Criteria declaration. Lines such as `AC-SPEC-001 -> AC-V10-001`, `AC-SPEC-001 至 AC-SPEC-012`, source spec mapping notes, conversion artifact notes, and `AC-SPEC-*` wildcard examples must not create missing-layer, coverage, unknown-current-AC, or E2E obligations.
+- Source-like table columns are also provenance when their headers identify source/imported/original IDs, including `Source AC`, `Source AC / TC`, `Imported AC`, and `Original AC`. Current/canonical AC columns in the same table remain readable.
+- The parser boundary is contextual, not prefix-based. `AC-SPEC-001 [verification: integration]` still becomes a current AC if it is explicitly adopted in canonical Acceptance Criteria or another current AC/layer declaration.
+- This is a V0.6.2h follow-up parser fix. Package version, README/USAGE version references, ROADMAP version scope, and Debian metadata remain `0.6.2h`; recovery should rerun the blocked Requirements gate through the normal controller route.
+
+## 2026-06-03 Requirements 4.6 fixed-table parser boundary
+
+- Requirements Test Strategy 4.6 validation is scoped to the canonical fixed-column E2E matrix block. Later subsection tables under the same markdown section, such as `### 4.7 Scope AC Verification Layer Closure`, are review/closure material and must not inherit the previous 4.6 header.
+- The parser must reset active 4.6 table state when it sees a non-table line or a noncanonical markdown table header. This prevents a valid 5-column closure table row such as `AC-V10-010` from being interpreted as a malformed 11-column 4.6 row with missing `Verification Command`.
+- This is a parser boundary fix, not a Scope contract change. Live Requirements artifacts and `session.json` remain untouched; recovery should rerun the Requirements Test Strategy through normal controller routes.
+- Strict 4.6 quality checks remain unchanged for rows inside the canonical 4.6 matrix: command intent, real entrypoint, user steps, fixture/setup, environment kind, mock policy, assertions, and notes still block when empty or placeholder.
+
+## 2026-06-03 Requirements source-label and AC/Journey parser boundary
+
+- `Source AC` / `Source AC / TC` columns are provenance, not current-version acceptance obligations. Imported source IDs such as `AC-SPEC-001` and wildcard examples such as `AC-SPEC-*` must not create missing-layer, coverage, or unknown-current-AC failures unless the same ID is declared in a canonical current AC field.
+- AC/Journey ID extraction must reject trailing-hyphen fragments and wildcard partials. `AC-V10-*` and `AC-V10-` are examples/placeholders, not IDs; `AC-V10-001` remains a valid current AC ID.
+- Journey-local inline markers such as `J-V10-006 [verification: manual]` apply to the Journey reference only. They must not be used by line-level fallback to assign `manual` to an AC mentioned elsewhere in the same prose line.
+- `staged requirements package conflicting AC verification layers ...` exposes an upstream AC/Journey contract conflict. It routes to Scope with semantic key `scope:ac_verification_layer_conflict`, not to Test Strategy, even though the reason text includes `verification layer`.
+
+## 2026-06-02 Annotation subprocess-only runtime and backend boundary
+
+- Annotation Agent execution is subprocess-only. Deprecated `WAYGATE_ANNOTATION_TMUX`, inherited `TMUX_PANE`, and tmux-backed controller state must not create annotation panes or annotation-specific run wrappers.
+- The historical `scripts/verify/v062g-annotation-tmux-runtime.sh` name is retained for existing Unit Plan command references, but the script now proves the removed tmux path stays inactive even when old tmux environment is present.
+- Declared annotation backends are limited to `opencode` and `codex`. `claude` / `claude-code` are rejected as annotation backends; Claude Code remains available only through normal workflow runners such as `tmux-claude`.
+- Persisted Waygate built-in Claude annotation configs are compatibility input, not a supported runtime choice. They are migrated to the built-in OpenCode template. Operator custom commands are preserved only when the declared backend remains supported.
+
+## 2026-06-02 Final Acceptance 非浏览器 Prototype Conformance target-aware evidence
+
+- Requirements-stage artifact-local prototype review can be a valid acceptance contract for controller/workflow surfaces without being a production browser route. When the approved manifest maps a required `surface kind=other` to `module`、`artifact`、`state` 或 `events` targets, Final Acceptance should accept passed non-mock `integration/local_real` evidence plus complete visual evidence instead of forcing `layer=e2e`.
+- Browser-visible production targets remain stricter: `kind=route`, target path starting with `/`, and surface kinds `route/page/component/dialog/drawer/panel/form` still require real E2E evidence with no core API mock, real environment, real entrypoint, and no browser runtime errors.
+- A stale deterministic `final acceptance gate invalid:` blocked state can be cleared by controller revalidation when the underlying rule changes and all current evidence now passes. The recovery boundary is `status=blocked` + `currentStep=FINAL_WALKTHROUGH_PREPARE`; the controller recomputes Final Acceptance preflight and records `final_acceptance_gate_invalid_blocker_cleared` rather than editing live `session.json` by hand.
+- Focused verification for the historical annotation tmux script now confirms annotation remains on subprocess even in tmux-like environments; live `waygate drive` checks must not create annotation panes.
+
+## 2026-06-02 V0.6.2g annotation subprocess 测试隔离
+
+- Annotation runtime 的边界是 subprocess；`WAYGATE_ANNOTATION_TMUX` 不再是有效控制开关，设置为任意值都不能创建 annotation pane。
+- 测试策略边界是：annotation verification scripts 可以显式设置旧环境变量来证明它被忽略，但 fake `tmux` 不能收到 annotation 专用 `split-window`、`set-buffer`、`paste-buffer`、`send-keys` 或 `kill-pane` 调用。
+- 子进程测试 helper 默认移除继承的 `TMUX` 和 `TMUX_PANE`。普通 workflow runner 的 tmux 行为测试必须显式传入这些 env keys 并配套 fake tmux PATH；annotation tests 只验证这些 tmux hints 被忽略。
+
+## 2026-06-02 V0.6.2e `--spec` 文档包目录 intake
+
+- Open Spec 文档包目录与 OpenAPI/OpenSpec API 文档语义不同。`openspec` 继续表示 OpenAPI/OpenSpec API source；Open Spec skill 产出的 01-08 文档包使用新增 `sourceType=open-spec-package`，避免 prompt、artifact 和审计记录混淆。
+- Open Spec package 的导入边界是 `01-requirements.md` 加至少一个支撑文档。只存在普通 docs/README 或单个任意 Markdown 文件的目录不能被猜测为需求源；否则 controller 会把长期文档目录误导入为当前版本需求。
+- Spec Kit 支持的是 feature package，不是 `.specify` 工具/工作区根目录。任意目录名可以被识别为 Spec Kit feature package，但需要 `spec.md` 和同目录 feature companion（如 `plan.md`、`tasks.md`、`contracts/`）；`.specify` root 必须提示传 `specs/<feature>/` 或具体 `spec.md`。
+- 对 package directory 的 `requirementsSpec.hash` 必须使用目录内容 hash；只 hash 目录名或单一 entrypoint 会漏掉 specification / technical solution / handoff 等补充事实变化。
+- Package directory conversion artifacts 可以记录 entrypoint path、source map 和 normalized summaries，但不能写入 secret value、token、database URL 或环境变量值。脱敏仍在转换层执行，避免后续 prompt/annotation 读取 artifact 时泄露敏感内容。
+
+## 2026-06-01 Verifier 环境占位值与重复失败保护
+
+- `verification_env` 是可执行环境值合同，不能承载 `required key name only`、`optional key name only`、`value must not be recorded` 或 `<...>` 这类说明性占位。只声明变量名时必须使用 `env_keys`，避免 controller 把占位说明注入 subprocess 并覆盖父进程真实环境。
+- key-only 环境声明的运行时边界是：父进程已有同名真实值时 verifier 继承该值并只记录 key 名；父环境没有值时 controller 不注入，让验证脚本自己的默认值或 `.env` 加载逻辑决定。controller artifact 仍不能记录 secret 或外部 URL value。
+- Unit Plan gate 应在人工批准前拒绝 `verification_env` 占位 value 和 `env_keys` 中的 `KEY=value` / URL / 非变量名条目；`env_keys` 可以满足“该验证依赖外部环境变量名已声明”的计划合同，但不代表 controller 持有可执行 value。
+- `lastFailure` 是按 unit/stage/fingerprint 计数的重复失败事实源。`REFINE_UNIT` / `REVIEW_UNIT` 成功只能清理同 stage failure，不能清掉前一轮 `VERIFY_UNIT` failure；否则同一 verifier failure 会在 Builder/Refiner/Reviewer 成功路径中丢失计数并绕过 repeated-failure block。
+
+## 2026-06-01 Staged Requirements 无 spec Scope 首轮澄清
+
+- Staged Requirements 的默认入口是 `REQUIREMENTS_SCOPE_DRAFT`，不能只继承 legacy `REQUIREMENTS_DRAFT` 的首轮澄清策略。无 supported `requirementsSpec`、无 `requirementsRevisionFeedback`、且 Scope artifact 尚未 complete 时，Scope prompt 必须先要求 agent 在 tmux pane 向人工提一个需求澄清问题。
+- 这个首轮问题的职责是确认当前版本目标、明确非目标、验收重点和事实来源/文档入口。人工回答前不能立即读取项目上下文并写 `requirements-scope.md`；人工回答后再读取项目事实源并生成 Scope artifact。
+- `--auto-approve` 不是需求澄清跳过开关。它只能影响后续 gate 自动确认倾向，不能跳过无 spec Requirements 首轮人工澄清。
+- tmux-backed no-spec Scope 首轮等待人工回答时应关闭 idle monitor，并保留 7200 秒 agent timeout，与 legacy Requirements Draft 等待语义一致。有 supported spec、已有 revision feedback、或 Scope 已完成的后续 checkpoint run 保持默认 idle monitor，避免扩大到 Product Design、Architecture、Test Strategy、Builder 或 Unit Plan。
+
+## 2026-05-31 stale Builder blocked artifact 恢复边界
+
+- `artifacts/<unit>/builder-summary.json` 是 Builder run 的审计 artifact，不是跨 Unit Plan revision 永久有效的阻塞事实。Unit Plan 重新批准后，早于本次 approval 的 Builder `blocked` summary 必须视为 stale audit context，不能在 `status` / `go` 中重新升级为官方 `blocked`。
+- freshness cutoff 优先使用 `state.unitPlanAcceptedAt`。为了兼容旧 session，若只有 `unitPlanAcceptedHash`，且 `approvals/unit-plan.md` 仍为 approved 并且 body hash 匹配，则用该 gate 文件 mtime 作为 cutoff。没有 cutoff 的 legacy session 继续保留旧行为，避免误放过真实当前 Builder blocked。
+- Unit Plan approval 后的 ignored context 不能只覆盖当时的 `currentUnitId`。Approved Unit Plan 可能包含多个 unit，旧 blocker 可以藏在下游 unit 的 artifact 中；approval 成功路径必须扫描 `units[].id` 与 `currentUnitId`，把已存在 Builder blocked summaries 全部记入 `ignoredBuilderBlockedContexts`。
+- 已处于 `status=blocked` 的 live session 也应通过正常 `waygate status/go` 恢复：如果 `blockedContext.source=builder_agent` 已 ignored 或其 summary 早于 Unit Plan approval cutoff，controller 可以清理 `blockedReason/blockedContext` 并回到 `EXECUTE_UNIT`。这不是绕过 Unit Plan 合同，而是撤销 stale audit artifact 对新批准 Unit Plan 的误阻塞。
+- 真实合同类 blocker 边界保持不变：`unit_plan_contract`、`unit_handoff`、Requirements contract、Final Acceptance blocker 等不因这条 stale Builder summary 规则放宽。
+
+## 2026-05-31 V0.6.2d Unit Continuity Gate
+
+- 多单元 Unit Plan 的自然语言“前置环境就绪”不能作为下游启动依据。只要 unit 之间存在 `depends_on` 或 handoff 关系，Controller State Patch 必须记录结构化 `handoff`：`human_summary`、`produces`、`requires`、`ready_checks`、`evidence_artifacts`。
+- `human_summary` 是人工审阅入口，但不能单独作为完成依据。Producer readiness 必须由 mapped ready check 和具体 evidence artifact 证明；下游 `requires[]` 必须能匹配依赖单元 `produces[]`。
+- 多上游依赖可以拆分满足下游 `requires[]`，例如一个 upstream 产出 schema、另一个 upstream 产出 fixture；正确规则是每个 required input 至少由一个依赖产出，且每个声明的依赖至少贡献一个 required input，不能要求每个依赖都产出所有 input。
+- Producer handoff evidence 属于 producer unit verification 的一部分，而不是 downstream unit 的猜测责任。Verifier 写 `artifacts/<unit-id>/handoff-evidence.json`，并在声明证据缺失或 ready check 未通过时让 producer verification fail。
+- Downstream Builder preflight 必须在 prompt 生成和 agent dispatch 前检查上游 handoff evidence。缺失、无效、failed 或产出不匹配时进入 `blockedContext.category=unit_handoff`，避免 Builder 在模糊前置条件下启动。
+- `unit_handoff` blocker 的恢复边界是先让上游产出 passed handoff evidence；若依赖、Handoff Matrix 或 requires/produces 本身写错，则走 `waygate revise --gate unit-plan --reason ...`，不能用普通 `go` 绕过。
+
+## 2026-05-31 tmux 2 号窗口 blocked 诊断
+
+- Classroom V0.4 live session 中，`target-v0-4-prereq-env-fixture` 的 Builder prompt 被旧的 `target-v0-4-openmaic-course-draft` verifier failure 污染：`lastFailure.unit_id` 已记录旧 unit，但 Builder prompt 渲染和 Builder done 后的 controller failure resolution 检查没有按 `currentUnitId` 过滤。
+- 结果是当前 prerequisite 单元收到旧 secret scan 内联命令的 `Controller Verification Failure Protocol`，agent 按 protocol 判断“历史命令无法在 dash 下变成 0”，于是返回 `status=blocked` / `category=unit_plan_contract`。这属于 controller bug：跨单元 stale `lastFailure` 不应约束新单元。
+- `blocked` 菜单里选择 `c` 不能继续是设计行为：`unit_plan_contract` 类 blocked 不能通过普通 continue/unblock 清除，必须走 Unit Plan/Requirements/Final Acceptance 正式路线。和 agent 继续聊天、或让 agent 直接编辑 `session.json`，不会被 controller 当作 gate transition，也可能留下 `status=blocked` 但 `blockedContext=null` 的不一致状态。
+- 修复边界：同一 unit 的 verifier failure 仍必须注入 Builder prompt 并要求 `done_payload.controller_failure_resolution`；不同 unit 的 stale `lastFailure` 必须在 prompt 和 resolution gate 中忽略。
+
+## 2026-05-30 Annotation Agent 默认代理环境
+
+- Annotation Agent subprocess 的网络代理应来自启动 `waygate` 的父进程环境，而不是要求用户把代理 key 写进 `--annotation-agent-env-key`。默认继承范围固定为 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写形式；父进程不存在的代理 key 不会凭空新增。
+- `--annotation-agent-env-key` 继续作为额外非代理变量的高级入口。持久化 config 仍只保存用户显式配置的 custom key；每次运行的 metadata、event 和 artifact 记录 effective `env_keys`，包含实际存在的默认代理 key 和显式 custom key。
+- 由于代理 URL 可能包含凭据，annotation / verification-assist 的 stdout、stderr 和 agent artifact 归一化必须把 effective env values 纳入脱敏源；审计输出只允许出现 env key 名称，不允许出现代理值。
+- 已经挂住的 annotation subprocess 无法原地注入新代理。正确恢复路径是修复启动 shell 的代理环境后中断/恢复当前 annotation runtime blocker，让 controller 重跑 pending annotation；不要为代理问题修改 Requirements 或 Unit Plan 合同。
+
+## 2026-05-30 V0.6.2c 中文 Checkpoint 命名与定点 Revise
+
+- staged Requirements 的用户可见名称可以中文化，但内部事实源不应迁移。`requirementsPackage.artifacts`、state-machine step、action 和 artifact filename 继续使用英文 key，final gate / prompt / compact / guidance 只改人类可见 label，降低历史 session 兼容风险。
+- Requirements checkpoint 定点回撤应复用现有 downstream invalidation helper。指定 `product-design` 时保留 Scope，标记 Product Design、Architecture、Test Strategy 和 Final Gate stale；指定 `architecture` 时保留 Scope/Product Design；指定 `test-strategy` 时只 stale Test Strategy / Final Gate。
+- `--checkpoint` 是 Requirements staged package 的路由输入，不是 Unit Plan 概念。Unit Plan revision 仍只处理执行计划返工，不能接受 Requirements checkpoint 参数。
+- 非交互 CLI 对 staged Requirements revision 需要 `--reason` 或 `--checkpoint`，否则审计上无法区分“人工已写反馈”与“误触 revise”。Legacy 非 staged Requirements gate 仍保持已有行为，允许从已编辑 gate 或 Plannotator submitted feedback 返工。
+- explicit checkpoint revise event 需要记录 `gate`、`checkpoint`、`checkpoint_label`、`reason`、`reason_key` 和 `routing_source`，这样可以审计是人工指定 checkpoint 还是 semantic routing 推断。
+
 ## 2026-05-30 tmux Claude 后台 shell 等待语义
 
 - Claude pane 中出现 `shell ·` 或 `1 shell still running` 这类状态时，说明 agent 仍有后台 shell/tool 在运行；controller 不能把这种状态称为 pane idle 或 no-response timeout。
@@ -12,6 +114,125 @@
 - 不再把 Markdown 表格管道符解析作为当前修复方向。统一要求把完整验证逻辑写入 `scripts/verify/` 下的 `.sh` 或 `.py` 脚本，Unit Plan 中只保留脚本入口命令，避免 inline shell、管道、`bash -c` / `bash -lc`、`python -c` 和直接工具调用绕过流程规则。
 - 脚本入口策略不等同于只允许 bash。有效入口包括 `bash/sh scripts/verify/*.sh`、`python/python3 scripts/verify/*.py`，以及可执行脚本形式 `./scripts/verify/*.sh` / `./scripts/verify/*.py`。
 - Requirements 确认阶段不需要解析命令。Requirements 负责需求和验收准则，真正的可执行命令在 Unit Plan `Controller State Patch` 中出现，并在 Unit Plan 人工确认前与 approval 后两处执行 deterministic preflight。
+
+## 2026-05-28 7号窗口 Requirements Auto-Rework 后续整改
+
+- Journey contract parser 应优先接受同一业务合同的合理表头变体，而不是迫使 Scope 为 parser 改写内容。`Title` 缺失时可用 Journey ID 兜底；`Acceptance contract` 与 `Path / assertion focus` 可作为步骤来源；controller prompt/feedback 仍应要求推荐最小表头 `Journey / Title / Status / Steps / AC / Verification Layer`，让后续输出稳定回到 canonical 形态。
+- Staged Requirements assembled gate 可能同时包含 Scope 概览表、Scope canonical matrix 和 Test Strategy 4.7 Journey matrix。它们表达同一 Journey ID 时，parser 应合并兼容重复行，优先保留更完整的 steps、AC、Unit、Test Case 和 command；`status` 或 `verification_layer` 冲突仍应阻断，成功写出的 `journeys.json` 不应泄露内部 merge bookkeeping。
+- `journey contract required for e2e or closure acceptance` 是 Scope 合同缺口，不是 Test Strategy 4.6 row 质量问题。自动返工 semantic key 应归为 `scope:journey_contract_required`，并在 feedback 中展示缺失字段和最小合格 Journey 表头；只有已存在 Journey/AC 后的 E2E method、environment kind、mock policy、fixture/setup 或 assertion 质量问题才归 Test Strategy。
+- 此条历史决策已被 2026-06-02 annotation subprocess-only runtime and backend boundary 取代：Claude Code annotation backend 的旧 built-in args 曾会继承历史交互 session/thinking 状态并触发 API 400；当前不再支持 `claude-code` annotation backend，内置 Claude annotation 配置迁移到 OpenCode，operator 自定义 command/args 只有在声明 backend 为 `opencode` 或 `codex` 时保留。
+- 本机 Claude Code 2.1.152 对 V2.1 完整 Requirements annotation prompt 仍可能在 `--bare --no-session-persistence` 下返回 `content[].thinking` API 400；这是 annotation backend runtime 条件，不是 Requirements 合同缺陷。现场恢复应优先用 controller 支持的 backend override（例如 `--annotation-agent requirements=codex`）重跑 pending annotation，而不是手改 live state 或 Requirements 文档。
+- Annotation runtime blocker 恢复仍只表示 CLI/凭据/参数等外部运行条件已修好。`waygate unblock` 后应重跑 pending annotation 并回到原 human gate，不应重写 Requirements 或把 runtime 问题误导为 Requirements preflight auto-revision。
+
+## 2026-05-28 Controller Requirements Auto-Rework
+
+- Requirements final preflight 的 controller-validation-only 自动打回应以 controller validation error 为路由事实源，不能用完整旧 Requirements gate 正文做主判断。旧 gate 正文仍可作为人工上下文，但其中的 Scope/E2E 历史文本不能抢走 `product_design:product_experience`、prototype manifest、page states、click path 或访问方式这类 Product Design 问题。
+- `requirements_staged_revision_routed` 事件需要记录 `reason_key`、`routing_source` 和 `routing_reason`。这能区分是 human change reason、普通 revision feedback，还是 controller validation error 触发的路由，便于审计误路由。
+- Controller validation feedback 注入 staged prompt 时应短而可执行：原始 reason、归属 stage、semantic reason key、缺失字段和期望输出示例。把完整旧 gate 正文塞进 routing/prompt 主段落会放大噪音并诱发 agent 修改错误 checkpoint。
+- Final Requirements preflight 可以把通过 `validate_prototype_review_manifest(..., require_clickable=True)` 的 manifest 视为 clickable webpage prototype evidence；不应要求 Product Design 再复制一段 prose 证明同一件事。文本 evidence fallback 仍应接受 artifact-local clickable HTML / URL、manifest path、page states、click path 和 AC/Journey mapping。
+- Prototype evidence 严格边界保持不变：manifest 缺文件、缺 `page_states`、缺 `click_path`、缺 AC mapping、unsupported prototype kind、未知 AC/Journey 或 surface contract 缺口仍然阻断 Requirements approval。
+- 未批准 Requirements 的 final preflight 内容类失败可以在 tmux runner 可用时自动打回归属 checkpoint；同一 semantic reason 连续超过 `requirementsAutoRevisionMax` 后必须进入 `blockedContext.category=requirements_contract`。恢复命令是 `waygate revise --gate requirements --reason "..."`，不能用 `retry` 或普通 `unblock` 清除 Requirements contract hard block。
+
+## 2026-05-28 Staged Test Strategy auto-rework
+
+- Requirements Test Strategy prompt 必须与 stage validator 同步到字段级合同。4.6 仍不要求 Unit Plan exact command / test case matrix，但必须在 Requirements 人工批准前审阅真实入口、具体 user/API/service steps、fixture/setup、`local_real|production_readonly`、核心业务 API no mock/stub policy、machine-checkable assertions，以及截图只能作为辅助 artifact。
+- staged checkpoint 在 Requirements 人工批准前仍是草案。Scope、Product Design、Architecture、Test Strategy 的 deterministic stage validation failure 如果发生在 tmux-backed runner 下，应自动打回同一 checkpoint，并把 `_requirements_stage_validation_feedback()` 写入 `requirementsRevisionFeedback`，让下一次 prompt 看到精确 validator reason。
+- stage validation auto-rework 复用 Requirements 自动打回的进程内 consecutive same-reason 预算和 `requirementsAutoRevisionMax`。事件 `requirements_stage_auto_revision_requested` 记录 stage、action、reason、reason_key、attempt 和 total_attempt；连续同类 reason 超预算才进入 `requirements_stage_validation` blocked。
+- Requirements 一旦已经人工批准，staged checkpoint validation failure 不应自动改合同。此时必须保持 hard block 或走显式 `waygate revise --gate requirements` / `waygate unblock` 恢复路径，避免绕过已批准的 Requirements/Unit Plan 合同边界。
+
+## 2026-05-28 Waygate block / 返工边界补充
+
+- Annotation artifact 是人工 gate 前的风险提示，不是审批事实源。若 annotation backend 把完整 JSON 包进顶层 `summary` 字符串，controller 应先解析并提升嵌套 `summary` / `issues[]`，再做中文字段校验、artifact 写回和终端风险数量统计；否则终端显示的风险数量会低于真实 annotation 输出。
+- Final Scope Audit 的 evidence coverage 必须和 AO ledger 生命周期状态分离。`AO.status=open` 表示人工反馈义务仍在生命周期中，不表示 evidence 未覆盖；Final Scope Audit JSON 和 Markdown 应使用派生 `coverage_status=covered|uncovered` 表达覆盖状态，同时保留 ledger 原始状态用于审计。
+- blocked guidance 需要同时给出 blocker category 和对应恢复命令。长 blocker 列表只在终端展示前几条关键项，完整列表指向 artifact；环境 / annotation runtime blocker 走 `unblock`，Unit Plan / Requirements 合同 blocker 走对应 `revise`，Final Acceptance 合同问题仍走 rejection route。
+
+## 2026-05-27 Unit Plan annotation 中断恢复
+
+- Final Acceptance rejection 只有明确的人类返工意见才应进入 Acceptance Obligation Ledger。生成式 final gate 正文、证据矩阵、文件列表、Final Scope Audit/Journey Matrix、人工走查清单、默认 `返工说明` 提示语和 Human Confirmation 元数据都不是新的用户验收义务。
+- `final_acceptance_rejection` source 的 AO 需要能区分真实人工反馈与 controller 生成内容。真实反馈如“homepage logo is still text-only”应保留为 active must AO；旧版本把生成式 gate 内容拆出的 AO 应标记为 `out_of_scope`，保留审计但不参与 Requirements、Unit Plan 或 Final Scope Audit active coverage。
+- Final Scope Audit blocker 若只由旧生成式 final rejection AO 造成，controller 可以在 cleanup 后重新计算 audit 并清除 blocker；这不是绕过 Final Acceptance，而是撤销错误生成的内部 AO 污染。后续仍必须停在真实 Final Acceptance human gate 等待人工批准。
+
+- Unit Plan draft preflight 通过后，进入 annotation 是人工 gate 前的风险标注阶段，不应再把 workflow 视为“草案尚未生成”。在运行可能长时间阻塞或被人工中断的 annotation 前，controller 必须先持久化 `currentStep=WAITING_UNIT_PLAN_APPROVAL`、`unitPlanDraftGenerated=true` 和 pending annotation context。
+- `UNIT_PLAN_DRAFT` 状态下若已经存在有效的 `approvals/unit-plan.md`，且没有 Unit Plan revision feedback、gate 不早于当前 Requirements gate、并能通过同一套 Unit Plan validator，正确恢复是接回已有 gate、恢复缺失 draft body/summary artifact，然后继续 Unit Plan annotation/human gate；不应重派 drafter。
+- 该恢复路径不是绕过 gate：它只接受 validator 已认可的 Unit Plan gate，仍会重新运行 annotation freshness 检查和后续人工确认。exact command、test case、fixture 和 evidence policy 仍由 Unit Plan validator 负责。
+- live artifact 缺 `unit-plan-body.md` 是重复派发 drafter 的副作用，不是 Requirements/Test Strategy 内容问题。修复 controller 后应使用正常 `waygate go` 恢复，不手改 `session.json`。
+
+## 2026-05-27 Annotation timeout bytes 输出
+
+- Annotation agent timeout 是 runner/runtime 问题，不是 Requirements / Unit Plan 合同问题。Requirements deterministic preflight 已通过时，annotation 超时只应按配置的 `failure_policy` 进入 warning 或 blocked guidance，不能因为 artifact 写入崩溃把用户误导到 Requirements revise。
+- Python `subprocess.TimeoutExpired.output` 和 `stderr` 可能是 `bytes`，即使调用 `subprocess.run(..., text=True, capture_output=True)`。所有 annotation / verification-assist timeout 与 failure artifact 在 JSON 序列化前都必须先做文本归一化和 secret redaction。
+- 对 `failure_policy=warn` 的 annotation runtime failure，controller 可以继续进入人工 gate；warning artifact 是风险提示，不批准、不修改 gate，也不能替代 deterministic preflight 结果。
+
+## 2026-05-27 Requirements Journey 表头与 support layer
+
+- Journey Acceptance Matrix 的机器解析不能只接受唯一英文 canonical 表头。Requirements agent 合法输出可能使用 `Journey id`、`User steps`、`Linked AC`、`Name` 等同义表头；这些表头仍然表达相同合同，不能因为 parser 过窄就迫使 agent 改需求内容。
+- `static`、`regression`、`prerequisite` 不只适用于 AC，也适用于 support/baseline/prerequisite Journey。它们是合法非 E2E Journey layer，应进入 Journey contract 和后续 Unit Plan 映射，但不触发 Requirements 4.6 real E2E command strictness。
+- 只有归一化为 `e2e` 的 active Journey 才需要 Requirements 4.6 row，并在 Unit Plan 中映射到 `layer=e2e` test case。`regression` Journey 可以保持 active，用回归测试或等价最小基线证明，不应被硬改成 `integration` 来迎合旧 parser。
+- Classroom V0.4 的 `J-V04-006` legacy 兼容 Journey 使用 `Verification Layer=regression` 是合理表达；正确修复是 controller 接受该 support Journey layer，并识别 `User steps` 中的步骤，而不是让 2 号窗口修改 Scope artifact。
+
+## 2026-05-27 Staged Requirements explicit verification tag parser
+
+- Requirements 阶段的 verification layer 不应只允许执行型五类。`static`、`regression`、`prerequisite` 是合法的 Requirements-stage 支撑分类，用于边界/文档/secret 静态审阅、历史基线回归和 fixture/env 前置条件；它们满足 AC 已分类的要求，但不触发 4.6 real E2E strictness。
+- 只有归一化为 `e2e` 的 AC/Journey 才进入 Requirements 4.6 E2E review matrix、Unit Plan real-E2E 映射和 local_real/production_readonly 严格检查。把 `prerequisite` AC 因为被 e2e Journey 引用就升级成 e2e，或把 `static/regression/prerequisite` 当作 missing layer，都会把 Unit Plan 职责提前压回 Requirements。
+- Classroom V0.4 的 `AC-V04-008` 至 `AC-V04-013` 使用 `static`、`regression`、`prerequisite` 是目标 Requirements 内容的合理表达；正确修复是 controller 接受这些非 E2E layer，而不是让 2 号窗口 agent 把它们硬改成 `integration` 或 `e2e` 来过 gate。
+
+- AC/layer 解析不能从普通说明表做整单元格或整行扩散。visible surface、API visible output、coverage map、supporting output 这类表常会在同一 note 中同时引用 direct e2e AC 和 integration/prerequisite AC；其中 `AC-... [verification: e2e]` 只证明被标记的 AC 是 e2e，不能把同一 note 里的其他 AC 提升为 e2e。
+- 正式 layer 事实只来自三类位置：带 `AC id` + `verification layer` 的 canonical 表格列、AC 自身紧邻的 inline marker（如 `AC-... [verification: e2e]`）、以及清晰的非表格 layer bucket 行。解释性引用、supporting coverage 和上下文说明不能覆盖 AC 行自己的结构化 layer。
+- Classroom V0.4 的 `AC-V04-003` 至 `AC-V04-007` 被误报为 `['e2e', 'integration']` 属于 controller parser 误判，不应通过删减真实 E2E 旅程、拆掉可见表面说明或手工改 live artifact 来规避。
+
+- AC 表格的 verification layer 必须按列解析，不能按整行解析。`AC-V04-013` 这类 prerequisite row 的 expected/setup 单元格可以引用 `AC-V04-001 [verification: e2e]` 或 `AC-V04-002 [verification: e2e]` 作为前置关系；这些引用不能把 `AC-V04-013` 自身升级成 e2e。
+- 对带 `AC id` + `verification layer` 的 Markdown 表格，layer 事实源是 layer 单元格，AC 事实源是 AC 单元格。其他说明单元格里的 AC/Journey 引用只作为说明，不参与当前 row 的 layer 映射。
+- 无表格上下文时继续支持 cell-local 或 line-local `[verification: ...]` 标记；但任何跨单元格/跨列引用都不能覆盖 AC 行自身的结构化 layer。
+
+- Requirements / staged package validator 解析 verification layer 时，显式结构化标记必须优先于自然语言说明。`AC-V04-001 [verification: e2e]` 所在行即使包含 `service/API E2E`、`API visible output` 或 `DB evidence`，也不能因为 `API` alias 被降级/改判为 `functional`。
+- 自然语言 alias（如 `api` -> functional、`browser` -> e2e）只能作为缺少显式结构化标记时的回退，不能覆盖 AC 行、Journey Direct AC cell 或 4.6 row 中的 `[verification: ...]`。
+- Classroom V0.4 的 `AC-V04-001`、`AC-V04-002`、`AC-V04-014` 既可以保留真实 API/service E2E 描述，也可以保留 direct-only `AC ... [verification: e2e]` 标签；正确修复是 controller parser 优先级，而不是要求 agent 避免写 `API` 这个词。
+
+## 2026-05-27 Staged Requirements stage-validation recovery
+
+- `requirements_stage_validation` blocker 的默认恢复路径是解除阻塞并重跑当前 checkpoint，但下一次 prompt 必须携带上一轮 controller validation error；否则 agent 容易在缺少具体错误的情况下重新生成同一类坏 artifact。
+- `unblock` 对 stage validation blocker 不只是清空 `blockedReason`，还要把 `_requirements_stage_validation_feedback()` 写入 `requirementsRevisionFeedback`，让 staged prompt 的 revision feedback 区块成为事实输入。
+- stage validation blocker 有两类：stage output 写坏了，和 stage validator 暴露了上游 AC/Journey/Requirements 合同冲突。前者用 `waygate unblock` 重跑当前 checkpoint；后者必须允许 `waygate revise --gate requirements --reason ...` 从 staged checkpoint blocker 回到 Scope/Product/Architecture/Test Strategy 的语义路由，不能要求用户等到 final gate 或手工改 state。
+- 终端 guidance 不能再笼统说“不要 revise”。正确提示是默认 unblock 重跑；如果 blocker 说明合同本身要改，使用 Requirements revise 并写清 contract change reason。
+
+## 2026-05-27 Requirements 4.6 与 Unit Plan 职责边界
+
+- Requirements/Test Strategy 4.6 的职责是让人工在批准前审阅真实 E2E 方法、真实入口、用户/API/service 步骤、fixture/setup 类型、命令意图、环境类型、mock policy 和断言意图；它不负责生成 Unit Plan 级别的 test case、exact command、fixture 初始化脚本或 evidence row。
+- `Verification Command` 在 4.6 中应理解为 command intent / command family / runner intent。可接受的写法必须包含非占位的工具、组件和验证意图，例如 “Unit Plan must create Go service/API E2E command for services/api real OpenMAIC PDF integration”；`pytest`、`playwright test`、`待 Unit Plan 补充` 或泛化“后续测试验证”仍应阻断。
+- 4.6 row 覆盖以 active e2e Journey 为优先事实：active e2e Journey 必须有 row；该 row 映射的 e2e AC 不需要重复独立 row。只有未被任何 Journey row 覆盖的 e2e AC 才需要独立 row。
+- prototype-only artifact review 不能被当成真实生产 E2E。它应通过 Product Design prototype manifest 和 Unit Plan prototype conformance 合同承接；只有 Requirements 同时要求真实 browser/production E2E proof 时才进入 4.6 real E2E 校验。
+
+## 2026-05-27 Requirements staged checkpoint validation 前移
+
+- Staged Requirements 不能只依赖 final Requirements gate 发现结构性合同错误。Scope、Product Design、Technical Architecture、Requirements Test Strategy 每个 checkpoint 生成后都必须运行 deterministic stage-output validation，失败时停在当前 checkpoint 并写 stage validation artifact。
+- Scope 是 staged package 的 AC/Journey ID 权威来源。E2E/browser/prototype review 必须在 Scope 中映射到 `AC-... [verification: e2e]` 或 Journey row 的 exact `Status=active` + `Verification Layer=e2e`；中文 `是`、`real integration + DB assertion` 等自然语言值不能自动归一。
+- Product Design 和 Technical Architecture 不得发明新的 AC/Journey ID。Product Design manifest、surface contracts 和 stage artifact 引用的 ID 必须来自 Scope；Architecture 继承 E2E/browser/prototype handoff 时必须引用 Scope canonical e2e AC/Journey，而不是只写测试策略说明。
+- Requirements Test Strategy 若 Scope 或自身声明 E2E/browser review，必须输出固定 `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）` 和固定 11 列矩阵；`## 6 E2E / Browser 审阅映射` 等替代标题不能作为机器可读合同。
+- Final Requirements gate 仍保留完整 `validate_requirements_acceptance_quality()` 作为最后防线。E2E/browser 映射类 blocker 必须继续路由回 Scope，不能因为错误文案同时出现 `Verification Layer`、`## 4.6`、prototype 或 Web 关键词而被吸到 Test Strategy 或 Product Design。
+- Unit Plan 不拆 staged checkpoint；draft pre-human preflight 和 approved revalidation 必须继续共用 `_apply_and_validate_unit_plan_gate()`，保证 infrastructure matrix、final evidence candidates、golden path、real E2E、Journey、prototype、AO/AC coverage 和 walkthrough validation 不分叉。
+
+## 2026-05-27 Requirements versioned ID 与 no-UI false flag
+
+- Requirements、prototype manifest、Journey 和 evidence policy 的 AC/Journey ID 提取不能假设 ID 只有数字和点号。真实目标版本会使用 `AC-V04-001`、`J-V04-001` 这类版本化 ID；共享提取规则应接受字母、数字、下划线和短横线，并过滤 `AC-ID` 等模板占位符。
+- `currentUnitNeedsUiDesign=false` / `currentUnitIsWebSystem=false` 仍只是 controller 默认状态，不能作为 no-UI/no-Web/no-prototype 的正向依据；但 Requirements 文本如果明确写“不能/不得把 false flag 当作不需要 UI/原型的证据”，validator 不应把这句话反向当作违规 no-UI claim。
+- Classroom V0.4 当时剩余 blocker 不是版本化 ID parser 或 false-flag detector 问题。后续 live 运行进一步暴露了 Journey 表头别名与 support Journey layer 解析缺口，已在本文件的 Requirements Journey 表头与 support layer 决策中单独收敛；恢复仍不应绕过 Requirements gate 或手改 `session.json`。
+
+## 2026-05-27 Waygate terminal state 与人工 gate 边界
+
+- `blocked/done/failed` 是 workflow terminal state；即使 `currentStep` 仍停在 `WAITING_REQUIREMENTS_ACCEPTANCE` 或 `WAITING_UNIT_PLAN_APPROVAL`，也不能再被 `_pending_gate_info()` 解释成人工确认 gate。
+- Requirements / Unit Plan 自动打回可能在 controller deterministic preflight 阶段写入 `blocked`。`drive()` 必须在每个 auto-revision helper 返回后立刻检查 terminal state，并输出 blocked guidance，而不是继续进入人工 gate 菜单。
+- tmux “进入人工评审”提醒只属于真实 pending human gate。发送提醒前必须重新读取 state 并拒绝 terminal state，避免向 agent pane 发送错误的“不要继续沟通/进入人工评审”指令。
+- terminal blocked reason 是停止事实源；status/get_status 的 gate validation refresh 不应在 terminal state 上用新的 gate invalid reason 覆盖自动打回上限、annotation runtime、Builder blocked 等已经写入的阻塞原因。
+- invalid deterministic preflight blocked 不运行 annotation agent。Annotation agent 的边界仍是 preflight 通过后、人工 gate 暴露前的 risk-only context。
+
+## 2026-05-27 Staged Requirements 语义路由与自动打回状态
+
+- Staged Requirements revision routing 不能再依赖整段自然语言 reason 的关键词顺序。真实 preflight 文案可能同时包含 Scope blocker、prototype/Web、page states、mock policy 等词；正确边界是先分类成语义 issue，再按上游优先级 `scope > product_design > architecture > test_strategy` 选择 checkpoint。
+- E2E review 未映射到 E2E AC 或 active Journey、unknown acceptance criteria / Journey、AO mapping / coverage 缺口和 `requirementsSurfaceClassification` 矛盾属于 Scope/traceability 问题；即使同一 reason 提到 prototype manifest、Web 或 page states，也必须回 `REQUIREMENTS_SCOPE_DRAFT`。
+- 纯 prototype manifest、prototype path、page states、click path 或访问方式问题属于 Product Design；已有 AC/Journey 后的 mock policy、`environment_kind`、E2E method、fixture/setup、verification layer 和 expected assertions 质量问题属于 Test Strategy。包含 `core API stubs` 的 mock policy 反馈不能因为出现 `API` 就误路由到 Architecture。
+- Requirements auto-revision 的同类问题计数不能作为持久 workflow state 写入或读取 `session.json`。`requirementsAutoRevisionLastReasonKey`、`requirementsAutoRevisionConsecutiveCount` 和 `requirementsAutoRevisionTotalCount` 只允许作为旧 session 兼容清理字段；控制流预算应保存在当前 `RalphRefinerController` 进程内，覆盖单次 `waygate go` 内的 staged checkpoint cycle 防循环。
+- 同一 controller 进程中同一 semantic key 连续超过 `requirementsAutoRevisionMax` 仍应 block，防止单次 go 内无限打回；但进程退出、人工 `waygate revise --gate requirements`、下一次 `waygate go` 都应从 0 重新计数，避免旧计数污染新一轮。
+- `requirements_draft_auto_revision_requested` / `requirements_draft_auto_revision_blocked` event 是审计历史，只记录当时的 `attempt` / `total_attempt` / reason key，不参与后续控制流预算。
 
 ## 2026-05-26 Recoverable wait 恢复入口收敛
 
@@ -27,6 +248,40 @@
 - continue 语义必须继续复用 `unblock_blocked_workflow()`，并保持当前 unblock 白名单：environment、external dependency、annotation runtime、final acceptance blocked。Unit Plan / Requirements / Final Acceptance 合同类 blocked 即使被 assist 判断为“已解决”，也不能直接继续，必须走正式返工路线。
 - `status` 是只读检查入口。它可以提示 interactive `drive/start/go` 有 Blocked Assist 菜单，但不能在 status 命令中打开菜单、启动 Agent 或修改 `blockedAssist`。
 - Assist artifact 和事件只能记录必要路径、分类和脱敏原因；prompt 和 summary 必须避免写入 token、数据库 URL、密码或环境变量值。
+
+## 2026-05-26 Auto-created Claude pane staged Requirements 首次派发
+
+- 旧 auto-created Claude pane 首次派发保护只覆盖 legacy `REQUIREMENTS_DRAFT`，没有覆盖 V0.6.2 staged Requirements 默认入口 `REQUIREMENTS_SCOPE_DRAFT`。因此新建或 stale 后重建的 `tmux-claude` pane 会在首次 Scope checkpoint dispatch 前收到 Claude 默认清输入序列 `C-c` / `C-u`。
+- staged Requirements 首次派发的判定边界应是：`tmuxTargetResolution.source=auto-created`、`agentRunner=tmux-claude`、`currentStep=REQUIREMENTS_SCOPE_DRAFT`，且 `requirementsPackage.artifacts.scope.status` 尚未为 `complete`。scope 已完成后的后续派发仍应保留清输入，避免人工草稿或残留 prompt 污染下一轮任务。
+- `tmux-codex` 不能复用 Claude 的首次派发保护。Codex 清输入策略仍应保持只发 `C-u` 的既有行为，避免重新引入 Codex pane 被 `C-c` 中断的问题。
+- stale auto-created pane 的恢复边界不需要扩大：state 中记录的 auto-created Claude pane 消失时，controller 继续重建 pane 并保留 `tmuxTargetResolution.source=auto-created`；本次缺口只在 runner env 的 staged 首次 dispatch 条件。
+
+## 2026-05-26 V0.6.2a Staged Requirements 目标产品视角
+
+- Staged Requirements 的 Product Design / Architecture checkpoint 必须以目标产品/目标系统为主语；Waygate/controller staged package、checkpoint、runner、state transition 和 artifact hash 只在目标项目本身就是 Waygate/controller 时才是产品/架构对象。
+- `currentUnitNeedsUiDesign=false` 和 `currentUnitIsWebSystem=false` 是默认状态字段，不能作为“不需要 UI/原型”的证据。UI/Web/prototype 判断必须来自 `--spec`、目标上下文、当前 unit metadata 或人工反馈，并落入 `requirementsSurfaceClassification`。
+- spec 或目标上下文出现入口、页面、控制台、状态回看、详情页等可见产品表面时，应分类为 `product_ui=required` / `prototype_required=required`，并继续触发 prototype manifest 等既有 Requirements 硬门禁。
+- `unknown` classification 不能被静默解释成“无 UI”；Requirements artifact 必须解释未知原因或回到 Scope/Product Design。明确 `not_required` 需要 backend/API/CLI-only 等正向依据。
+- Revision routing 应按反馈内容回到最小必要 checkpoint：UI/prototype/“怎么看”反馈回 Product Design，架构交互/API/数据流/状态写入反馈回 Architecture，测试策略反馈回 Test Strategy，范围或分类不清再回 Scope。
+- 组合型 preflight reason 需要先识别 Scope blocker，再看 prototype/UI 关键词。缺 AO requirements mapping、缺 AO coverage、E2E review 未映射到 active E2E AC/Journey 都是 Scope 问题；即使同一 reason 也提到 prototype manifest，也不能路由到 Product Design。
+- Product Design checkpoint 对 `prototype_required=required` 或 `web_system=required` 负有 stage-owned manifest 合同：prompt 必须要求写 `artifacts/requirements-draft/prototype-manifest.json`，并给出 canonical 顶层 `prototypes[]` schema；stage 完成前必须校验 manifest 的可访问原型、page states、click path、AC/Journey mapping、implementation targets 和 surface contracts。扁平顶层 `clickable_prototype_access_method` / `page_states` / `click_path` 不是合法最终 manifest。缺失或 schema 错误时应直接暴露 Product Design stage 问题，而不是等 final Requirements preflight 循环打回。
+- Product Design manifest 的本地 `path` 语义是 artifact-local，不是 workspace-relative。相对路径必须从 `artifacts/requirements-draft/prototype-manifest.json` 所在目录解析；推荐把 HTML/图片/Markdown 原型生成或复制到 `artifacts/requirements-draft/prototypes/<prototype-id>/...` 后引用。`docs/prototypes/...` 只有在同一路径实际存在于 artifact tree 下时才有效；不能因为 workspace 中存在同名文件就通过 stage validation。
+- Product Design stage validation failure 应保持 `currentStep=REQUIREMENTS_PRODUCT_DESIGN_BRIEF`，写入 stage validation artifact 和 `blockedContext.category=requirements_stage_validation`，恢复路径是重新运行 Product Design checkpoint；不要引导用户 `waygate revise --gate requirements`，除非 Requirements 范围本身需要改变。
+- Waygate target 初始化模板中的通用条件句（如 “Any browser-visible acceptance is explicitly verified when UI is touched”）不是目标产品表面证据，不能触发 UI/Web classification。
+
+## 2026-05-25 Staged Requirements 自动打回路由
+
+- Staged Requirements 的 final gate 是 assembled snapshot，不是修订任务入口。final gate 预检失败后，如果 `_revise_requirements_gate(controller_validation_only=True)` 已经把 package 标记 stale 并路由回 `REQUIREMENTS_SCOPE_DRAFT`，自动修订 loop 必须停止验证旧 final gate。
+- legacy `REQUIREMENTS_DRAFT` 与 staged Requirements 的自动打回边界不同：legacy 修订可以在同一 loop 内继续预检新 gate；staged 修订必须让下一轮 `drive()` 执行 `run_requirements_scope_drafter`，从 Scope checkpoint 重新派发 agent。
+- 判断是否继续自动修订应基于重新读取的 controller state，而不是调用修订前的旧 `WAITING_REQUIREMENTS_ACCEPTANCE` 上下文；否则会出现同一秒重复打回、blocked event 和旧人工 gate 菜单，与 `session.json` 的真实恢复点分叉。
+
+## 2026-05-25 Requirements staged 默认入口与 Unit Plan 批准路径一致性
+
+- V0.6.2 staged Requirements 已成为新建 target session 的默认入口；`target` 初始化不能再落到 legacy `REQUIREMENTS_DRAFT`，否则 live target 会跳过 Scope / Product Design / Architecture / Test Strategy checkpoint 和 artifact package hash 继承。
+- Unit Plan approval path 必须与 pre-human preflight 使用同一 validator 序列。只在 `_unit_plan_gate_invalid_reason()` 中新增 validator 会让人工批准后的路径漏掉新规则，尤其是 staged `Infrastructure / Execution Context Matrix` 和 final-valid AC evidence candidate 校验。
+- `verification_assist` 仍是辅助证据，不能静态证明 Final Scope Audit 可计数的 AC coverage；人工批准 Unit Plan 后也必须重新拒绝 assist-only AC candidate。
+- Staged Requirements state 下的 controller-generated Unit Plan template 必须包含 `Infrastructure / Execution Context Matrix`，否则 dry-run/local-template gate 会与批准校验合同分叉。
+- Live V0.4 证明新入口和 staged package orchestration 已生效：Scope、Product Design、Architecture、Test Strategy checkpoint 和 final gate hash rows 都能生成；后续阻塞属于目标 Requirements 内容问题，而不是 legacy 初始化路径问题。
 
 ## 2026-05-25 Unit Plan AC 证据闭环预检
 

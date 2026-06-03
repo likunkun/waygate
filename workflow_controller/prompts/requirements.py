@@ -97,15 +97,34 @@ Controller 会记录本轮 requirements revision diff artifact；请解决这些
         if requirements_spec.get('sourceType') == 'waygate-markdown':
             spec_source_instruction = 'Read the Waygate Markdown spec file at the path above as a requirements fact source.'
             clarification_spec_source = 'Read the Waygate Markdown spec file before writing the Requirements Gate.'
+        elif requirements_spec.get('sourceType') == 'open-spec-package':
+            spec_source_instruction = 'Read the Open Spec package directory docs at the path above as requirements fact sources.'
+            clarification_spec_source = 'Read the Open Spec package docs before writing the Requirements Gate.'
+        elif requirements_spec.get('sourceType') == 'spec-kit':
+            spec_source_instruction = 'Read the Spec Kit feature package or spec.md at the path above as a requirements fact source.'
+            clarification_spec_source = 'Read the Spec Kit feature package docs before writing the Requirements Gate.'
         if conversion_artifacts:
             conversion_artifact_lines = '\n'.join(
                 f"- Conversion artifact {key}: `{value}`" for key, value in sorted(conversion_artifacts.items())
             )
-            spec_source_instruction = (
-                'Read the conversion artifacts above as requirements fact sources, especially normalizedRequirements, '
-                'sourceMap, importSummary, and validationReport. Do not re-parse or guess the external source from the original path.'
-            )
-            clarification_spec_source = 'Read the supported requirements spec conversion artifacts before writing the Requirements Gate.'
+            if requirements_spec.get('sourceType') == 'open-spec-package':
+                spec_source_instruction = (
+                    'Read the Open Spec package docs at the path above together with the conversion artifacts, especially '
+                    'normalizedRequirements, sourceMap, importSummary, and validationReport.'
+                )
+                clarification_spec_source = 'Read the Open Spec package docs and conversion artifacts before writing the Requirements Gate.'
+            elif requirements_spec.get('sourceType') == 'spec-kit':
+                spec_source_instruction = (
+                    'Read the Spec Kit feature package docs together with the conversion artifacts, especially '
+                    'normalizedRequirements, sourceMap, importSummary, and validationReport.'
+                )
+                clarification_spec_source = 'Read the Spec Kit feature package docs and conversion artifacts before writing the Requirements Gate.'
+            else:
+                spec_source_instruction = (
+                    'Read the conversion artifacts above as requirements fact sources, especially normalizedRequirements, '
+                    'sourceMap, importSummary, and validationReport. Do not re-parse or guess the external source from the original path.'
+                )
+                clarification_spec_source = 'Read the supported requirements spec conversion artifacts before writing the Requirements Gate.'
         spec_section = f"""
 Supported Requirements Spec:
 - Path: `{requirements_spec.get('path')}`
@@ -206,7 +225,7 @@ UI/原型设计约束：
 
 使用可观察、可测试的标准。每条标准都要说明可证明它的证据。
 每条验收标准必须有稳定 ID（如 `AC-01`、`AC-02`），并描述可观察行为；不要写“体验良好”“流程正常”等不可测试表述。
-每条验收标准必须声明 verification layer：unit / functional / integration / e2e / manual，推荐格式：`- AC-01 [verification: e2e]: ...`。
+每条验收标准必须声明 verification layer：常用行为验证层为 unit / functional / integration / e2e / manual；Requirements 辅助类 AC 可使用 static / regression / prerequisite，推荐格式：`- AC-01 [verification: e2e]: ...`。
 涉及用户可见闭环、数据流、导入导出、列表、状态流转、权限或持久化的 AC，必须包含固定测试数据或 fixture、操作路径、可断言的期望值（如字段值、数量、排序、状态、错误文案、导出内容）。
 后续 E2E 必须从这些 AC 生成测试用例，不能用截图或人工观察替代断言。
 
@@ -223,7 +242,7 @@ UI/原型设计约束：
 - 不能在一个模糊 AC 里合并多个 AO；如果多个 AO 共享同一个 AC，也要逐行列出 AO。
 - 如果 AO 不进入本版本，Status 必须是 `deferred`、`rejected` 或 `out_of_scope`，并在 Evidence/Reason 写明原因。
 - Status 只能使用 covered/deferred/rejected/out_of_scope。
-- Verification Layer 只能使用 unit / functional / integration / e2e / manual。
+- Verification Layer 必须填写非占位值；常用行为验证层为 unit / functional / integration / e2e / manual，Requirements 辅助类 AC 可使用 static / regression / prerequisite。
 
 ## 4.5 设计与架构可追溯矩阵（Design/Architecture Traceability Matrix）
 
@@ -241,7 +260,7 @@ UI/原型设计约束：
 
 ## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）
 
-当任一 AC 为 `verification: e2e`、任一 active Journey 为 `e2e`、测试策略明确要求 Playwright/browser/end-to-end，或 Web/原型/UI 合约需要真实浏览器证明时，必须填写本节并接受人工审阅。否则可以保留表头并说明“不涉及真实 E2E / 浏览器验收”。
+当任一 AC 为 `verification: e2e`、任一 active Journey 为 `e2e`、测试策略明确要求 Playwright/browser/end-to-end，或 Web/UI 合约需要真实浏览器证明时，必须填写本节并接受人工审阅。否则可以保留表头并说明“不涉及真实 E2E / 浏览器验收”。prototype-only artifact review 通过 prototype manifest 和 Unit Plan prototype conformance 承接，不伪装成真实 E2E。
 
 必须包含这个固定表头：
 
@@ -249,18 +268,18 @@ UI/原型设计约束：
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 规则：
-- 每个 e2e AC 和每个 active e2e Journey 必须至少有一行，`AC / Journey` 写明对应 AC ID 和 / 或 Journey ID。
+- 每个 active e2e Journey 必须至少有一行；e2e AC 如果已经被 active e2e Journey 行覆盖，不需要重复独立行。`AC / Journey` 写明对应 AC ID 和 / 或 Journey ID。
 - E2E Method 必须说明真实端到端方法，例如 Playwright/Cypress/pytest API/service E2E；API-only 或 service-only 项目不要求浏览器，但必须调用真实 API/service 入口。不要只写“人工查看”。
 - Real Entrypoint 必须是真实生产 route、URL、页面、CLI 或服务入口，不能只指向 prototype、artifact、mock server 或截图。
 - User Steps 必须写打开入口后的具体用户/API/service 操作路径。
 - Fixture / Test Data / Setup 必须写固定测试数据、fixture、seed、迁移、测试账号或 setup 方式。
-- Verification Command 必须是具体可执行命令，不能只写 `playwright test`、`pytest` 或“待 Unit Plan 补充”。
+- Verification Command 必须是非占位的命令意图、command family 或 runner intent，不能只写 `playwright test`、`pytest` 或“待 Unit Plan 补充”；最终 exact command、test case、fixture 初始化脚本和 evidence row 属于 Unit Plan。
 - Requirements 阶段的 Verification Command 用于审阅测试方法和命令依赖；Unit Plan 阶段必须把所有自动化执行命令落成 `scripts/verify/` 下的脚本入口，实际 Playwright/pytest/API/service 命令写入脚本内部。
 - Environment Kind 只能是 `local_real|production_readonly`（即 `local_real` 或 `production_readonly`）。
 - Required Env / Dependencies 只能写 env key 名称、服务/端口/依赖名称，不得写 token、密码、真实数据库 URL 或私有凭据值。
 - Mock Policy 必须声明核心业务 API 不得 mock/stub；只允许记录外部不可控依赖的测试账号、沙箱或只读策略。
 - Expected Assertions 必须包含 DOM/API/数据库/状态/数量/排序/权限/导出内容等可机器断言的具体期望；截图只能作为辅助 artifact，不能作为唯一断言。
-- Human Review Notes 说明人工在批准前需要重点确认的方法、入口、fixture、命令、环境、mock policy 和断言意图。
+- Human Review Notes 说明人工在批准前需要重点确认的方法、入口、fixture、命令意图、环境、mock policy 和断言意图。
 
 ## 4.7 Journey Acceptance Matrix
 
@@ -274,7 +293,7 @@ UI/原型设计约束：
 - Status 只能使用 active / deferred / rejected / out_of_scope。
 - active Journey 必须填写 Journey ID、Title、Steps、AC 和 Verification Layer。
 - Steps 使用 `->` 分隔关键路径步骤；AC 必须列出关联的 AC ID。
-- Verification Layer 只能使用 functional / integration / e2e / manual。
+- Verification Layer 常用 functional / integration / e2e / manual；support/baseline/prerequisite Journey 可使用 static / regression / prerequisite。
 - Verification Command、Test Case、Unit 如尚未由 Unit Plan 生成，可写明预期命令、预期测试用例 ID 或待 Unit Plan 映射的说明。
 - 不涉及跨页面、跨模块、端到端或 closure 验收时，可以保留表头并不填写数据行。
 
