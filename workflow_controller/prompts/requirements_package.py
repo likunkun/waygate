@@ -71,6 +71,7 @@ def render_scope_prompt(state: dict[str, Any], *, output_path: Path) -> str:
 - 用户旅程：目标产品/目标系统的正常路径、局部返工路径、失败恢复路径和 legacy 兼容路径。
 - 可见产品表面：列出入口、页面、状态回看、详情页、控制台、API/CLI 输出等当前版本可审阅表面；把当前版本需求和后续版本候选分开记录。
 - 验收标准：稳定 AC id、verification layer、fixture/setup、可断言 expected。
+- Product Journey Contract：按真实用户任务记录 actor、任务起点、主业务对象、关键状态/事件、成功终点、AC/Journey 映射和 production target；这是所有后续 Agent 的共同事实源。
 - verification layer 必须是非占位值；常用行为验证层为 unit / functional / integration / e2e / manual，Requirements 辅助类 AC 可使用 static / regression / prerequisite。
 - AO traceability：active must AO 的覆盖、延期、拒绝或范围外理由。
 - 最小上下文：只记录后续 checkpoint 必须继承的事实、约束和 artifact 入口。
@@ -129,6 +130,8 @@ def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) ->
     stage_rules = [
         '必须围绕目标产品或目标系统的用户体验，不得设计 Waygate staged package、checkpoint 操作者体验或 controller 人工 gate 流程，除非目标项目本身就是 Waygate/controller。',
         '如果需要 UI/Web/prototype，必须说明原型证据、审阅入口、页面状态、核心点击路径和 AC/Journey 映射。',
+        'V0.6.2i 1:1 用户任务原型合同：每个 prototype/surface 必须对应一个真实用户任务，写明 actor、任务起点、点击路径、页面状态、主业务对象、成功终点、AC/Journey 映射和 production target。',
+        'prototype artifact 不能替代产品旅程闭环；fixture、工程层、截图或静态原型只能作为辅助证据，不能单独证明真实用户任务从起点到成功终点闭合。',
         '如果确实不需要 UI/原型，必须引用 Scope 中的明确 backend/API/CLI-only 依据。',
     ]
     if contract['branch'] == 'no_spec_visible_surface':
@@ -183,6 +186,10 @@ def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) ->
             '      "id": "course-center",\n'
             '      "type": "html",\n'
             '      "title": "课程生产中心",\n'
+            '      "actor": "teacher",\n'
+            '      "task_start": "teacher opens /teacher/course-center with one draftable course",\n'
+            '      "main_business_object": "course draft",\n'
+            '      "success_endpoint": "course draft detail shows generated chapter count and ready status",\n'
             '      "path": "prototypes/course-center/index.html",\n'
             '      "linked_acceptance_criteria": ["AC-07"],\n'
             '      "linked_journeys": ["J-01"],\n'
@@ -196,6 +203,10 @@ def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) ->
             '          "id": "course-center-page",\n'
             '          "title": "课程生产中心页面",\n'
             '          "kind": "page",\n'
+            '          "actor": "teacher",\n'
+            '          "task_start": "teacher opens /teacher/course-center",\n'
+            '          "main_business_object": "course draft",\n'
+            '          "success_endpoint": "draft detail is reachable and shows ready status",\n'
             '          "page_states": ["入口页", "生成中状态", "草稿详情"],\n'
             '          "click_path": ["打开课程生产中心", "点击生成课程", "查看草稿详情"],\n'
             '          "entrypoints": ["/teacher/course-center"],\n'
@@ -210,6 +221,8 @@ def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) ->
             '  ]\n'
             '}\n'
             '```\n'
+            '示例中的 `actor`、`task_start`、`main_business_object` 和 `success_endpoint` 是 prompt-level Product Journey 字段，'
+            '用于防止示意图冒充产品任务；V0.6.2i 不把这些字段变成 controller validator 必填字段。\n'
             '不要把 `clickable_prototype_access_method`、`page_states`、`click_path` 写成扁平顶层字段；'
             '这些字段必须位于 `prototypes[]` 的 prototype object 或 `surface_contracts[]` object 内。'
         )
@@ -269,6 +282,7 @@ def render_test_strategy_prompt(state: dict[str, Any], *, output_path: Path) -> 
         stage_goal='在策略层说明风险、验证层级、真实 E2E/浏览器/API/service 审阅方法、mock policy 和证据形态。',
         stage_rules=[
             '只写 Requirements 阶段测试策略，不要提前生成 Unit Plan 级别的 exact commands、完整测试用例矩阵或实现任务。',
+            '必须继承 Scope/Product Design 的 Product Journey Contract，并按真实用户任务、主业务对象、起点、状态/事件、成功终点来说明测试策略风险。',
             '必须说明哪些风险需要 Unit Plan 承接为 fixtures、commands、assertions 和 evidence rows。',
             '如果 Scope 或本 checkpoint 声明真实 E2E / browser review，必须写固定标题 `## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）`，并使用 11 列：`AC / Journey`, `E2E Method`, `Real Entrypoint`, `User Steps`, `Fixture / Test Data / Setup`, `Verification Command`, `Environment Kind`, `Required Env / Dependencies`, `Mock Policy`, `Expected Assertions`, `Human Review Notes`。',
             '`Environment Kind` 只能填写 `local_real` 或 `production_readonly`；`component_mock`、`contract_mock`、`visual` 只能留到 Unit Plan 的辅助非 E2E 测试。',
@@ -368,7 +382,7 @@ def _render_initial_scope_clarification_section(state: dict[str, Any]) -> str:
         '无 supported `requirementsSpec` 的 Scope 首轮人工澄清：\n'
         '- 这是无 `--spec` 的 staged Requirements Scope 首轮；`--auto-approve` 不能跳过这一步。\n'
         '- 先在 tmux agent pane 向人工提 1 个需求澄清问题，问题必须同时确认：'
-        '当前版本目标、明确非目标、验收重点、事实来源/文档入口。\n'
+        '当前版本目标、明确非目标、验收重点、成功/失败证据和范围边界、事实来源/文档入口。\n'
         '- 在人工回答前，不要立即读取项目上下文，不要立即写 `requirements-scope.md`，也不要输出 artifact。\n'
         '- 等待人工回答后，再读取 `AGENTS.md`、`ROADMAP.md`、`task_plan.md`、'
         '`progress.md`、`findings.md`、`docs/README.md` 和 Controller state-dir `session.json`，'

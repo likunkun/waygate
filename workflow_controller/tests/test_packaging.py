@@ -19,7 +19,7 @@ def _timestamped_version_line_re() -> str:
 
 
 def test_version_flag_outputs_package_version() -> None:
-    assert __version__ == '0.6.2h'
+    assert __version__ == '0.6.2i'
     result = subprocess.run(
         [sys.executable, '-m', 'workflow_controller.cli', '--version'],
         text=True,

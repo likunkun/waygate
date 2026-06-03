@@ -117,6 +117,8 @@ Builder rules:
 - Unit Plan 中的 `command` / `verification_commands` 只允许是脚本入口。
 - 脚本内部可以运行 pytest、Playwright、环境准备或多步 shell；不要把直接 pytest/Playwright 命令、`bash -lc`、`python -c`、管道或内联 shell 写回 Unit Plan。
 - 读取 Unit Plan Document Deliverables Matrix；`Required For Acceptance = true` 的文档动作必须在本 unit 中落到对应 `docs/*` 或登记入口，纯代码小修则保持 Unit Plan 中的“不需要正式文档变更”说明。
+- 读取 Unit Plan 的 Product Journey Contract 和 `主业务对象血缘拆分矩阵`；实现必须保留 actor、真实用户任务、主业务对象、起点、状态/事件、成功终点、AC/Journey 映射和 production target。
+- 不要用 fixture、工程层、截图或 prototype artifact 替代产品旅程闭环；它们只能作为辅助证据，DONE summary 必须说明真实用户任务如何从起点走到成功终点。
 - 当本 unit 涉及 UI、Web、可点击原型、prototype evidence 或生产 UI 一致性验证时，使用 `ui-ux-pro-max` skill；`frontend-design` 不能替代既有产品 UI/原型一致性工作，只能辅助全新视觉探索或局部润色。
 - UI/Web/prototype 实现和验证必须覆盖交互、可访问性、布局、遮挡检查，并基于真实 route、DOM/组件、既有页面结构、截图、历史设计或参考环境。
 - 优先创建并跑通标记为 `golden_path: true` 的测试；这是交给人工最终验收前必须先通过的核心正常流程。

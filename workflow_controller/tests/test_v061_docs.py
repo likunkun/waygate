@@ -245,6 +245,50 @@ def test_staged_requirements_docs_and_roadmap_registry_exist() -> None:
     assert '原 V0.6.2 Strict Test Presence 范围并入 V0.6.3。' in roadmap_zh
 
 
+def test_v062i_prompt_document_contract_docs_and_roadmap_exist() -> None:
+    workflow_doc = _read('docs/workflow/staged-requirements-package-policy.md')
+    architecture_doc = _read('docs/architecture/staged-requirements-package-architecture.md')
+    registry = _read('docs/README.md')
+    roadmap = _read('ROADMAP.md')
+    roadmap_zh = _read('ROADMAP.zh-CN.md')
+    changelog = _read('CHANGELOG.md')
+    changelog_zh = _read('CHANGELOG.zh-CN.md')
+    readme = _read('README.md')
+    readme_zh = _read('README.zh-CN.md')
+    usage = _read('USAGE.md')
+    usage_zh = _read('USAGE.zh-CN.md')
+
+    for text in [workflow_doc, architecture_doc, registry, roadmap, roadmap_zh, changelog, changelog_zh]:
+        assert 'V0.6.2i' in text
+
+    for expected in [
+        'Requirements acceptance-first intake',
+        '1:1 user-task prototype',
+        'Product Journey Contract',
+        'main business object lineage',
+        'fixture, engineering layer, screenshot, or prototype artifact cannot replace product journey closure',
+    ]:
+        assert expected in workflow_doc
+
+    for expected in [
+        'Product Journey Contract',
+        '主业务对象血缘拆分矩阵',
+        'workflow_controller/prompts/requirements_package.py',
+        'workflow_controller/prompts/unit_plan.py',
+        'workflow_controller/prompts/builder.py',
+    ]:
+        assert expected in architecture_doc
+
+    assert 'docs/workflow/staged-requirements-package-policy.md' in registry
+    assert 'docs/architecture/staged-requirements-package-architecture.md' in registry
+    assert 'Prompt-only release' in roadmap
+    assert '不新增 deterministic validator、state schema、CLI 参数或 hard gate' in roadmap_zh
+    assert '0.6.2i' in readme
+    assert '0.6.2i' in readme_zh
+    assert 'waygate_0.6.2i_all.deb' in usage
+    assert 'waygate_0.6.2i_all.deb' in usage_zh
+
+
 def test_unit_plan_evidence_row_preflight_policy_doc_and_registry_exist() -> None:
     workflow_doc = _read('docs/workflow/unit-plan-evidence-row-preflight-policy.md')
     registry = _read('docs/README.md')

@@ -2,6 +2,14 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2i
+
+- V0.6.2i is a prompt-only release for the staged Requirements prompt and documentation contract.
+- Added prompt-only Requirements acceptance-first intake language: no-`--spec` sessions must first confirm current-version goal, non-goals, acceptance focus, success/failure evidence, and scope boundary before drafting or narrowing scope.
+- Strengthened Product Design prompt contracts so each UI/Web/prototype surface is a 1:1 user-task prototype with actor, task start, click path, page states, main business object, success endpoint, AC/Journey mapping, and production target.
+- Added Product Journey Contract handoff language for Unit Plan, Builder, Test Strategist, and Refiner prompts, including the `主业务对象血缘拆分矩阵` and explicit wording that fixture, engineering layer, screenshot, or prototype artifact cannot replace product journey closure.
+- Updated formal workflow/architecture docs, README/USAGE, roadmap, registry, and package version metadata to `0.6.2i` without adding deterministic validators, state schema fields, CLI options, or hard gates.
+
 ## 0.6.2h
 
 - Fixed Requirements Test Strategy 4.6 parsing so the validator consumes only the canonical fixed-column E2E matrix block and does not treat later subsection tables, such as 4.7 AC closure matrices, as 4.6 obligations.

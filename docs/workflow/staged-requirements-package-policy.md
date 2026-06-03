@@ -1,6 +1,6 @@
 # Staged Requirements Package Policy
 
-This document records the V0.6.2 workflow policy for Staged Requirements Package, including V0.6.2d unit continuity handoff hardening, the V0.6.2e requirements package directory intake extension, the V0.6.2f human review control handoff, and the V0.6.2g Product Design prompt contract. It reduces Requirements-stage overload by splitting the old single draft into focused checkpoints, while preserving one final human Requirements approval gate.
+This document records the V0.6.2 workflow policy for Staged Requirements Package, including V0.6.2d unit continuity handoff hardening, the V0.6.2e requirements package directory intake extension, the V0.6.2f human review control handoff, the V0.6.2g Product Design prompt contract, and the V0.6.2i Prompt and Documentation Journey Contract. It reduces Requirements-stage overload by splitting the old single draft into focused checkpoints, while preserving one final human Requirements approval gate.
 
 Current annotation note: annotation uses subprocess only. `WAYGATE_ANNOTATION_TMUX` is a deprecated no-op and does not create annotation panes. Persisted audit data remains env key-only.
 
@@ -25,7 +25,7 @@ Scope must stay focused. It must not ask the drafter to produce the complete pro
 
 Staged Requirements inherit the legacy no-`--spec` first-turn clarification rule. When a target uses staged Requirements, has no supported `requirementsSpec`, has no `requirementsRevisionFeedback`, and the 需求范围检查点 artifact is not complete yet, the first Scope runner must ask the human one clarification question in the tmux agent pane before writing `artifacts/requirements-scope/requirements-scope.md`.
 
-That question must confirm the current-version goal, explicit non-goals, acceptance focus, and the fact sources or documentation entry points to use. The agent must wait for the human answer, then read the project facts and write the Scope artifact. It must not immediately read project context and draft an artifact before the answer.
+That question must confirm the current-version goal, explicit non-goals, acceptance focus, success/failure evidence, scope boundary, and the fact sources or documentation entry points to use. The agent must wait for the human answer, then read the project facts and write the Scope artifact. It must not immediately read project context, narrow the current-version scope, or draft an artifact before the answer.
 
 `--auto-approve` does not skip this clarification. It only affects later approval behavior after the required human clarification and checkpoint generation path have produced reviewable artifacts. If a supported spec exists, revision feedback already exists, or the Scope artifact is already complete, this first-turn clarification rule does not trigger for later checkpoint runs.
 
@@ -56,6 +56,15 @@ V0.6.2g makes the Product Design checkpoint branch explicit instead of relying o
 - Backend/API/CLI-only scope: the prompt asks once for explicit no-UI/no-prototype confirmation, cites positive Scope basis, and does not infer no-UI from default false controller flags.
 
 This is a prompt contract, not a new deterministic transcript blocker. V0.6.2g does not add per-page controller gates, and it does not turn artifact-local prototype review into production browser route evidence. The subprocess-only annotation runtime, deprecated no-op `WAYGATE_ANNOTATION_TMUX`, supported `opencode` / `codex` annotation backends, and env key-only audit terms are handled by the annotation policy while Product Design remains focused on target-product review evidence.
+
+V0.6.2i extends the same prompt-only boundary:
+
+- Requirements acceptance-first intake means no-`--spec` Requirements and Scope prompts ask for current-version goal, non-goals, acceptance focus, success/failure evidence, and scope boundary before drafting or narrowing scope.
+- A Product Design prototype is a 1:1 user-task prototype. Every prototype or surface must map to one real user task and record actor, task start, click path, page states, main business object, success endpoint, AC/Journey mapping, and production target.
+- The Product Journey Contract is the shared downstream fact source for Unit Plan, Builder, Test Strategist, Refiner, Verifier, and Final Acceptance review. Unit Plan turns it into main business object lineage and the `主业务对象血缘拆分矩阵`.
+- fixture, engineering layer, screenshot, or prototype artifact cannot replace product journey closure. These artifacts can support setup, implementation, visual review, or evidence, but they cannot stand in for the real user task moving from start to success endpoint.
+
+V0.6.2i does not add a deterministic validator, required state schema field, CLI option, manifest hard requirement, or hard gate. Prompt examples may include Product Journey / user-task fields, but the controller does not block solely because those prompt-level fields are absent.
 
 V0.6.2b promotes the prototype review bundle from a temporary Plannotator helper to a controller process-level preview service. After 产品设计简报 validation succeeds, the controller generates `plannotator-review.html` and `prototype-review-manifest.json`, starts the preview server, and prints the prototype preview URL. Before final Requirements assembly exists, the bundle uses the 需求范围检查点 as the requirements reference. Final assembly regenerates the bundle with the real `approvals/requirements-and-acceptance.md` approval gate metadata, while the already-started preview server keeps the same port. Requirements Plannotator review reuses that server, Plannotator Close does not shut it down, and the controller closes it only when the process exits.
 
@@ -167,6 +176,8 @@ When `requirementsPackage.version` is `v0.6.2-staged`, the Unit Plan prompt must
 
 Natural-language summaries are not sufficient as the handoff contract. The artifact path/hash/status records are the traceable source.
 
+V0.6.2i also requires the Unit Plan prompt to preserve the Product Journey Contract and render `## 主业务对象血缘拆分矩阵`. The matrix decomposes each accepted user task by Actor -> 用户任务 -> 主业务对象 -> 起点 -> 状态/事件 -> 成功终点 -> AC/Journey -> Production Target -> Unit -> Test Case/Evidence. This is main business object lineage: it records how the primary business object is created, read, transformed, persisted, surfaced, and accepted from the user's task start to the success endpoint.
+
 V0.6.2d adds a hard Unit Continuity Gate for multi-unit plans. Any unit that declares `depends_on`, or participates in handoff metadata, must declare structured `handoff` data in Controller State Patch: `human_summary`, `produces`, `requires`, `ready_checks`, and `evidence_artifacts`. The Unit Plan body must include `## 单元连贯性摘要` and `## Handoff Matrix` so human reviewers can see upstream unit, downstream unit, produced artifacts/readiness, consumed inputs, evidence path, and failure route. The validator rejects vague summaries such as `environment ready`, missing dependencies, circular dependencies, unmatched `requires[]`, dependencies that contribute no required input, and ready checks that do not map to commands or test cases. When a downstream unit depends on multiple upstream units, different dependencies may satisfy different `requires[]` entries.
 
 Producer unit verification writes `artifacts/<unit-id>/handoff-evidence.json`. Missing declared evidence artifacts or failed ready checks make producer verification fail. Before Builder starts a downstream unit, the controller checks every dependency's handoff evidence and blocks with `blockedContext.category=unit_handoff` when the upstream evidence is missing, invalid, failed, or does not produce the downstream required input. The detailed policy lives in `docs/workflow/unit-continuity-handoff-policy.md`.
@@ -210,6 +221,8 @@ V0.6.2 delivers Staged Requirements Package. The original Strict Test Presence /
 V0.6.2f adds approval notes, guarded manual adoption, human interruption recovery, and review-surface conformance evidence for the Waygate review control surface. It does not implement V0.6.3 Strict Test Presence, Test Case Contract v1, or Per-Role Runner Configuration.
 
 V0.6.2g adds Product Design prompt branch behavior. Annotation remains subprocess-only; the removed annotation tmux runtime does not change annotation approval authority, and ordinary `tmux-claude` / `tmux-codex` workflow runners remain available.
+
+V0.6.2i adds prompt and documentation contracts only. It does not add deterministic validators, state schema fields, CLI parameters, manifest hard requirements, or hard gates; V0.6.3 remains the planned line for strict test presence and role runner configuration.
 
 V0.6.2 also does not add unrelated UI/prototype artifacts, Debian package installation behavior, or role runner configuration changes unless a later unit explicitly requests them.
 

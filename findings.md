@@ -1,5 +1,14 @@
 # 发现与决策
 
+## 2026-06-04 V0.6.2i prompt-only Product Journey Contract boundary
+
+- V0.6.2i is a Prompt+documentation release. It deliberately does not add deterministic validators, required state schema fields, CLI parameters, manifest hard requirements, or hard gates. Product Journey / user-task fields may appear in prompt examples, but they are not controller-blocking manifest fields in this version.
+- No-`--spec` Requirements intake must be acceptance-first: before drafting or narrowing scope, the agent asks for current-version goal, non-goals, acceptance focus, success/failure evidence, and scope boundary. This keeps current release scope separate from later backlog candidates.
+- Product Design UI/Web/prototype work must be framed as 1:1 user-task prototypes. Each prototype or surface should name actor, task start, click path, page states, main business object, success endpoint, AC/Journey mapping, and production target, so a diagram or static artifact cannot masquerade as the product task.
+- Product Journey Contract is the shared prompt fact source for Unit Plan, Builder, Test Strategist, and Refiner. Unit Plan expresses it through `主业务对象血缘拆分矩阵`, while downstream prompts preserve the actor, main business object, state/event lineage, success endpoint, AC/Journey mapping, and production target.
+- fixture, engineering layer, screenshot, or prototype artifact cannot replace product journey closure. Those artifacts can support setup, implementation, visual review, or evidence, but they cannot be treated as proof that the real user task moved from start to success endpoint.
+- Requirements Test Strategy stage validation should inherit Scope as the AC/Journey contract, but it must not re-validate stale 4.6 E2E matrix prose embedded in Scope. When validating the current Test Strategy checkpoint, Scope's own E2E review section is stripped before the current 4.6 matrix is evaluated; this is a boundary fix for the existing validator, not a new V0.6.2i hard gate.
+
 ## 2026-06-03 Requirements AC-SPEC provenance prose boundary
 
 - Source/provenance prose is not a current-version Acceptance Criteria declaration. Lines such as `AC-SPEC-001 -> AC-V10-001`, `AC-SPEC-001 至 AC-SPEC-012`, source spec mapping notes, conversion artifact notes, and `AC-SPEC-*` wildcard examples must not create missing-layer, coverage, unknown-current-AC, or E2E obligations.

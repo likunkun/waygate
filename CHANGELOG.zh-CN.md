@@ -2,6 +2,14 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2i
+
+- V0.6.2i 是 staged Requirements prompt 与正式文档合同的 prompt-only 版本。
+- 新增 prompt-only 的 Requirements 验收前置 intake 文案：无 `--spec` 会话必须先确认当前版本目标、非目标、验收重点、成功/失败证据和范围边界，不能在用户回答前直接起草或缩小范围。
+- 强化 Product Design prompt 合同：每个 UI/Web/prototype surface 都必须是 1:1 用户任务原型，写明 actor、任务起点、点击路径、页面状态、主业务对象、成功终点、AC/Journey 映射和 production target。
+- Unit Plan、Builder、Test Strategist 和 Refiner prompt 增加 Product Journey Contract 交接文案，要求 `主业务对象血缘拆分矩阵`，并明确 fixture、工程层、截图或 prototype artifact 不能替代产品旅程闭环。
+- 同步正式 workflow/architecture 文档、README/USAGE、路线图、docs registry 和 package version metadata 到 `0.6.2i`；不新增 deterministic validator、state schema 字段、CLI 参数或 hard gate。
+
 ## 0.6.2h
 
 - 修复 Requirements Test Strategy 4.6 解析：validator 只消费 canonical 固定列 E2E 矩阵块，不再把后续 subsection 表格（例如 4.7 AC closure matrix）当作 4.6 obligations。

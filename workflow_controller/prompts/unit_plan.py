@@ -99,6 +99,12 @@ Unit continuity / handoff policy:
 - 下游 `handoff.requires[]` 必须匹配其 `depends_on` 上游的 `handoff.produces[]`；`ready_checks[]` 必须映射到本 unit 的 test case id、test case command 或 `verification_commands[]`。
 - producer unit 的 verifier 会写 `artifacts/<unit-id>/handoff-evidence.json`；下游 Builder 启动前会检查依赖单元的 handoff evidence，缺失或 failed 会以 `blockedContext.category=unit_handoff` 阻止下游执行。
 
+Product Journey Contract 约束：
+- 已批准 Requirements、staged Scope/Product Design/Architecture/Test Strategy artifact path/hash/status 是 Product Journey Contract 的事实源；不要从聊天上下文重建用户任务。
+- Unit Plan 必须把 Product Journey Contract 展开为 `## 主业务对象血缘拆分矩阵`，按 `主业务对象 -> 起点 -> 状态/事件 -> 成功终点` 拆分每个单元和测试用例。
+- 每行必须写 actor、真实用户任务、主业务对象、起点、产生/读取的状态或事件、成功终点、AC/Journey 映射、生产目标、覆盖单元和验证方式。
+- fixture、工程层、截图或 prototype artifact 都不能替代产品旅程闭环；它们只能证明准备、辅助视觉或实现细节，不能单独证明真实用户任务闭合。
+
 E2E 单元约束（`workflow_validation_level: closure` 的单元必须遵守）：
 - 测试用例矩阵必须以 AC 为主键；每个 test case 必须包含 `id`、`acceptance_criterion`、`layer`、`fixture` 或测试数据准备方式、`command`、`expected`。
 - 必须沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令意图、环境类型、mock policy 和断言意图，并在 Unit Plan 中落成具体 test case、exact command、fixture 初始化脚本和 evidence row；除非创建 Requirements change request 并重新通过 Requirements gate，否则 Unit Plan 不得弱化这些前置审阅结论。
@@ -189,6 +195,12 @@ E2E 层的测试用例必须有可执行 `command`（`scripts/verify/` 脚本入
 多单元计划必须创建一张表，表达以下精确映射：
 
 Upstream Unit -> Downstream Unit -> Produced Artifacts / Readiness -> Consumed Inputs -> Evidence Path -> Failure Route
+
+## 主业务对象血缘拆分矩阵
+
+必须创建一张表，表达以下精确映射：
+
+Actor -> 用户任务 -> 主业务对象 -> 起点 -> 状态/事件 -> 成功终点 -> AC/Journey -> Production Target -> Unit -> Test Case/Evidence
 
 ## 文档交付矩阵（Document Deliverables Matrix）
 
@@ -327,6 +339,7 @@ def _staged_requirements_unit_plan_section(state: dict[str, Any]) -> str:
     lines.extend([
         '',
         'Unit Plan 必须从以上 staged artifact path/hash/status 继承 AC、Journey、Product Design、Architecture、Test Strategy、E2E 方法、界面相关义务和风险义务；不要从聊天上下文重建这些事实。',
+        'Unit Plan 必须把 Scope/Product Design 中的 Product Journey Contract 作为所有 Agent 的共同事实源，并在 `主业务对象血缘拆分矩阵` 中按主业务对象血缘拆分单元。',
         '',
         'Infrastructure / Execution Context Matrix 约束：',
         '- Unit Plan 必须新增 `Infrastructure / Execution Context Matrix`。',
@@ -409,6 +422,8 @@ Constraints:
 - Static checks such as lint, typecheck, eslint, prettier, biome, or tsc cannot be the only coverage for an acceptance criterion.
 - Prefer user-visible or behavior-visible verification when the requirement has observable runtime behavior.
 - For E2E or closure coverage, derive test cases directly from AC IDs and include executable commands plus concrete assertions over real fixture data.
+- Use the Product Journey Contract as the shared fact source: each real user task must preserve actor, main business object, task start, state/event lineage, success endpoint, AC/Journey mapping, and production target.
+- Flag any strategy that treats fixture, engineering layer, screenshot, or prototype artifact as a substitute for real user task closure.
 - Unit Plan commands must be script entrypoints under scripts/verify. Do not suggest direct `pytest ...`, `playwright test ...`, `python -c`, `bash -lc`, pipes, or inline shell as Unit Plan commands.
 - Put the direct pytest, Playwright, environment setup, or multi-step shell commands inside the referenced scripts instead.
 - Do not use screenshots, page-load checks, or manual observation as the only E2E evidence.

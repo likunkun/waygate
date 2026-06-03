@@ -1,5 +1,28 @@
 # 进度日志
 
+## 会话：2026-06-04
+
+### V0.6.2i Prompt 与文档合同
+- **状态：** implementation verified; pre-commit focused/full regression passed; Debian package built as `0.6.2i`.
+- 范围：本版是 Prompt+文档版本，不新增 deterministic validator、state schema、CLI 参数、manifest 必填字段或 hard gate。
+- 修复：legacy Requirements 与 staged Scope prompt 的无 `--spec` intake 改为验收前置，先确认当前版本目标、非目标、验收重点、成功/失败证据和范围边界，避免 agent 在用户回答前直接缩小当前版本范围。
+- 修复：Product Design prompt 增加 1:1 用户任务原型合同，每个 prototype/surface 必须对应真实用户任务，写明 actor、任务起点、点击路径、页面状态、主业务对象、成功终点、AC/Journey 映射和 production target；明确 prototype artifact 不能替代产品旅程闭环。
+- 修复：Unit Plan、Builder、Test Strategist、Refiner prompt 继承 Product Journey Contract，并要求 Unit Plan 写 `主业务对象血缘拆分矩阵`；fixture、工程层、截图或 prototype artifact 只能作为辅助证据，不能替代真实用户任务闭环。
+- 补充修复：Test Strategy stage validation 组合 Scope 合同时忽略 Scope 中陈旧的 4.6 E2E matrix，避免旧截图/人工观察类 4.6 行覆盖当前 Test Strategy 的有效 4.6；这是既有 validator 边界修复，不新增 hard gate。
+- 文档/版本：同步 `docs/workflow/staged-requirements-package-policy.md`、`docs/architecture/staged-requirements-package-architecture.md`、`docs/README.md`、README/USAGE、ROADMAP/CHANGELOG、findings/task_plan 和 package version metadata 到 `0.6.2i`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_rrc_refiner.py workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q -k 'v062i or version_flag or scope_prompt_without_spec or product_design_prompt_requires_manifest_contract_for_required_prototype or product_design_prompt_no_spec_requires_brainstorming_and_one_surface_at_a_time or prompt_contracts_require_ac_mapped_executable_e2e_assertions or run_refiner_enabled_invokes_refiner_runner_and_uses_agent_result'` -> 修复前 7 failed。
+  - GREEN: 同一命令 -> `7 passed, 196 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `108 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q` -> `12 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `879 passed, 1 skipped in 111.44s`。
+  - Pre-commit fresh: `python3 -m pytest workflow_controller/tests -q` -> `881 passed in 95.19s`。
+  - Pre-commit fresh: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `109 passed`。
+  - Pre-commit fresh: `python3 -m pytest workflow_controller/tests/test_v061_docs.py workflow_controller/tests/test_packaging.py -q` -> `12 passed`。
+  - Pre-commit fresh: `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2i_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2i_all.deb Version` -> `0.6.2i`。
+
 ## 会话：2026-06-03
 
 ### Requirements AC-SPEC provenance prose parser / V0.6.2h follow-up

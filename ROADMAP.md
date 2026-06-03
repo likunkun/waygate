@@ -384,6 +384,21 @@ Delivered work:
 - Preserve strict quality checks for real 4.6 rows, including non-placeholder command intent, real entrypoints, concrete steps, fixed fixture/setup, real environment kind, mock policy, and machine-checkable assertions.
 - Add regression coverage for a valid 11-column 4.6 matrix followed by a 5-column 4.7 closure table containing the same E2E AC.
 
+### V0.6.2i - Prompt and Documentation Journey Contract
+
+Goal: make agent prompts carry acceptance-first intake, 1:1 user-task prototypes, and Product Journey Contract handoff without expanding controller enforcement.
+
+Status: Prompt-only release implemented in package `0.6.2i`.
+
+Delivered work:
+
+- Add Requirements acceptance-first intake language so no-`--spec` sessions must first confirm current-version goal, non-goals, acceptance focus, success/failure evidence, and scope boundary before drafting or narrowing scope.
+- Require Product Design UI/Web/prototype prompts to treat each prototype or surface as a 1:1 user-task prototype with actor, task start, click path, page states, main business object, success endpoint, AC/Journey mapping, and production target.
+- Make Product Journey Contract a shared prompt fact source for Unit Plan, Builder, Test Strategist, and Refiner, including the `主业务对象血缘拆分矩阵` and main business object lineage.
+- State that fixture, engineering layer, screenshot, or prototype artifact cannot replace product journey closure.
+- Update formal workflow/architecture docs, README/USAGE, CHANGELOG, docs registry, and package version metadata.
+- Do not add deterministic validators, required state schema fields, CLI parameters, manifest hard requirements, or hard gates in this release.
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 Goal: prevent non-manual acceptance criteria from passing without executable test cases or explicit evidence.

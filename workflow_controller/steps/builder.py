@@ -443,6 +443,8 @@ Result artifact: `{unit_dir / 'simplifier-result.json'}`
 ## Refinement Rules
 - Preserve behavior exactly. Improve clarity, consistency, and maintainability only.
 - Do not expand scope beyond the current unit, its changed files, and its approved non-goals.
+- Preserve the Product Journey Contract exactly: keep actor, main business object / 主业务对象, task start, state/event lineage, success endpoint, AC/Journey mapping, and production target intact.
+- fixture、工程层、截图或 prototype artifact 都不能替代产品旅程闭环；do not simplify away code or tests that prove the real user task from start to success endpoint.
 - Focus only on recently changed code unless a tiny adjacent cleanup is required to keep behavior clear.
 - Do not introduce unrelated refactors, new dependencies, or broad architectural changes.
 - If cleanup is safe and complete, write `status: "ok"`.

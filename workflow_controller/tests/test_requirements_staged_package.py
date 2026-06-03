@@ -395,6 +395,7 @@ def test_scope_prompt_without_spec_requires_initial_human_clarification() -> Non
 
     assert '无 supported `requirementsSpec` 的 Scope 首轮人工澄清' in prompt
     assert '先在 tmux agent pane 向人工提 1 个需求澄清问题' in prompt
+    assert '当前版本目标、明确非目标、验收重点、成功/失败证据和范围边界' in prompt
     assert '等待人工回答后' in prompt
     assert '不要立即读取项目上下文' in prompt
     assert '不要立即写 `requirements-scope.md`' in prompt
@@ -573,6 +574,15 @@ def test_product_design_prompt_requires_manifest_contract_for_required_prototype
     assert 'linked_journeys' in prompt
     assert 'implementation_targets' in prompt
     assert 'surface_contracts' in prompt
+    assert '1:1 用户任务原型' in prompt
+    assert 'actor' in prompt
+    assert '任务起点' in prompt
+    assert '页面状态' in prompt
+    assert '主业务对象' in prompt
+    assert '成功终点' in prompt
+    assert 'AC/Journey 映射' in prompt
+    assert 'production target' in prompt
+    assert 'prototype artifact 不能替代产品旅程闭环' in prompt
 
 
 def test_product_design_prompt_contract_classifies_no_spec_spec_and_backend_only_branches() -> None:
@@ -653,6 +663,7 @@ def test_product_design_prompt_no_spec_requires_brainstorming_and_one_surface_at
     assert '`brainstorming` skill' in prompt
     assert 'same tmux conversation' in prompt
     assert 'one page or entrypoint at a time' in prompt
+    assert '每个 prototype/surface 必须对应一个真实用户任务' in prompt
     assert 'only after those confirmations' in prompt
     assert 'product-design-brief.md' in prompt
     assert 'artifacts/requirements-draft/prototype-manifest.json' in prompt

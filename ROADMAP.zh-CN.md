@@ -384,6 +384,21 @@
 - 保留真实 4.6 row 的严格质量校验，包括非占位 command intent、真实入口、具体步骤、固定 fixture/setup、真实 environment kind、mock policy 和机器可检查 assertions。
 - 新增回归覆盖：有效 11 列 4.6 matrix 后跟 5 列 4.7 closure 表，且包含同一 E2E AC。
 
+### V0.6.2i - Prompt and Documentation Journey Contract
+
+目标：把验收前置 intake、1:1 用户任务原型和 Product Journey Contract 交接写进 Agent prompt 和正式文档，但不扩大 controller 强制规则。
+
+状态：Prompt-only release 已在 package `0.6.2i` 实施。
+
+已交付：
+
+- Requirements acceptance-first intake 文案：无 `--spec` 会话必须先确认当前版本目标、非目标、验收重点、成功/失败证据和范围边界，再起草或缩小范围。
+- Product Design UI/Web/prototype prompt 要求每个 prototype 或 surface 都是 1:1 用户任务原型，写明 actor、任务起点、点击路径、页面状态、主业务对象、成功终点、AC/Journey 映射和 production target。
+- Unit Plan、Builder、Test Strategist 和 Refiner prompt 把 Product Journey Contract 作为共同事实源，包含 `主业务对象血缘拆分矩阵` 和 main business object lineage。
+- 明确 fixture、engineering layer、screenshot 或 prototype artifact 不能替代 product journey closure。
+- 同步正式 workflow/architecture 文档、README/USAGE、CHANGELOG、docs registry 和 package version metadata。
+- 不新增 deterministic validator、state schema、CLI 参数或 hard gate，也不把 Product Journey / user-task 字段变成 manifest 必填字段。
+
 ### V0.6.3 - Strict Test Presence and Per-Role Runner Configuration
 
 目标：非 manual 验收标准不能在缺少可执行测试或明确证据时通过。

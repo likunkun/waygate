@@ -420,14 +420,20 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert 'Unit Plan 阶段必须把所有自动化执行命令落成 `scripts/verify/` 下的脚本入口' in requirements_prompt
     assert 'Agent-side requirements clarification' in requirements_prompt
     assert '写正式 Requirements Gate 前，必须先提出简洁、集中的澄清问题' in requirements_prompt
+    assert '当前版本目标、非目标、验收重点、成功/失败证据和范围边界' in requirements_prompt
     assert '当前 tmux agent pane' in requirements_prompt
     assert '等待用户回答期间不得写 `DONE_FILE`' in requirements_prompt
     assert '收到用户回答后，再继续生成 Requirements Gate' in requirements_prompt
     assert '用户回答后，将澄清结果写入本 Requirements Gate' in requirements_prompt
+    assert '产品旅程闭环' in requirements_prompt
     assert '`acceptance_criterion`' in unit_plan_prompt
     assert '`fixture`' in unit_plan_prompt
     assert '`product_design_refs`' in unit_plan_prompt
     assert '`technical_architecture_refs`' in unit_plan_prompt
+    assert 'Product Journey Contract' in unit_plan_prompt
+    assert '主业务对象血缘拆分矩阵' in unit_plan_prompt
+    assert '主业务对象 -> 起点 -> 状态/事件 -> 成功终点' in unit_plan_prompt
+    assert 'fixture、工程层、截图或 prototype artifact 都不能替代产品旅程闭环' in unit_plan_prompt
     assert '沿用已批准 Requirements `## 4.6` 中的 E2E 方法、真实入口、fixture/setup、命令意图、环境类型、mock policy 和断言意图' in unit_plan_prompt
     assert '`golden_path: true` 必须同时声明 `layer: "e2e"`' in unit_plan_prompt
     assert 'API-only 或 service-only 项目的 golden path 可以使用 pytest/API/service E2E' in unit_plan_prompt
@@ -441,11 +447,15 @@ def test_prompt_contracts_require_ac_mapped_executable_e2e_assertions(tmp_path: 
     assert '测试命令退出码为 0 且断言覆盖 AC' in unit_plan_prompt
     assert '对不适合 E2E 的 AC' in unit_plan_prompt
     assert 'script entrypoint under scripts/verify' in test_strategist_prompt
+    assert 'Product Journey Contract' in test_strategist_prompt
+    assert 'real user task' in test_strategist_prompt
     assert 'Do not suggest direct `pytest ...`, `playwright test ...`, `python -c`, `bash -lc`, pipes, or inline shell as Unit Plan commands' in test_strategist_prompt
     requirements_body = render_requirements_gate_body(state)
     unit_plan_body = render_unit_plan_gate_body(state)
 
     assert 'command 指向的 `scripts/verify/` 脚本' in builder_prompt
+    assert 'Product Journey Contract' in builder_prompt
+    assert '主业务对象' in builder_prompt
     assert '脚本内部可以运行 pytest、Playwright、环境准备或多步 shell' in builder_prompt
     assert '`verification_commands` must run the Playwright test suite (e.g. `npx playwright test`)' not in builder_prompt
     assert '覆盖了哪些 AC' in builder_prompt

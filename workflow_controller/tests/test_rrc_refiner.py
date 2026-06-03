@@ -96,6 +96,9 @@ def test_run_refiner_enabled_invokes_refiner_runner_and_uses_agent_result(
     assert 'tests/test_login.py' in prompt
     assert 'Preserve behavior' in prompt
     assert 'Do not expand scope' in prompt
+    assert 'Product Journey Contract' in prompt
+    assert '主业务对象' in prompt
+    assert 'fixture、工程层、截图或 prototype artifact 都不能替代产品旅程闭环' in prompt
 
     payload_text = (unit_dir / 'simplifier-result.json').read_text(encoding='utf-8')
     assert 'top-secret' not in payload_text
