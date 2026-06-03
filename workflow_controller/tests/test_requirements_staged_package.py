@@ -855,6 +855,34 @@ def test_test_strategy_stage_validation_accepts_fixed_4_6_matrix_covering_scope_
     validate_staged_requirements_stage_output(state, tmp_path / 'artifacts', 'test_strategy')
 
 
+def test_test_strategy_stage_validation_ignores_stale_scope_4_6_matrix(
+    tmp_path: Path,
+) -> None:
+    state: dict = {}
+    scope_path = _write_artifact(
+        tmp_path,
+        'scope.md',
+        _scope_with_e2e_journey()
+        + '\n\n'
+        + _requirements_4_6_matrix(
+            'J-V04-001',
+            command='Unit Plan must create Playwright browser E2E command for classroom flow',
+        ).replace(
+            'Assert persisted status `ready`, chapter count 3, and visible row count 1',
+            'Human screenshots confirm the flow looks correct',
+        ),
+    )
+    test_strategy_path = _write_artifact(
+        tmp_path,
+        'test-strategy.md',
+        '# Requirements Test Strategy Brief\n\n' + _requirements_4_6_matrix('J-V04-001'),
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+    mark_stage_artifact(state, 'test_strategy', test_strategy_path)
+
+    validate_staged_requirements_stage_output(state, tmp_path / 'artifacts', 'test_strategy')
+
+
 def test_test_strategy_stage_validation_ignores_non_4_6_tables_under_4_6_subsections(
     tmp_path: Path,
 ) -> None:

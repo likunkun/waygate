@@ -858,7 +858,8 @@ def _test_strategy_stage_e2e_matrix_issues(
             'Requirements Test Strategy checkpoint declares or inherits E2E/browser review but is missing '
             f'fixed heading `## {_REQUIREMENTS_E2E_REVIEW_FIXED_HEADING}` with the fixed 11-column table'
         ]
-    combined = scope_content.rstrip() + '\n\n' + content
+    scope_contract_content = _requirements_content_without_e2e_review_section(scope_content)
+    combined = scope_contract_content.rstrip() + '\n\n' + content
     return _requirements_e2e_review_matrix_issues(combined, state)
 
 
