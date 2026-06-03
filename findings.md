@@ -1,5 +1,12 @@
 # 发现与决策
 
+## 2026-06-03 Requirements AC-SPEC provenance prose boundary
+
+- Source/provenance prose is not a current-version Acceptance Criteria declaration. Lines such as `AC-SPEC-001 -> AC-V10-001`, `AC-SPEC-001 至 AC-SPEC-012`, source spec mapping notes, conversion artifact notes, and `AC-SPEC-*` wildcard examples must not create missing-layer, coverage, unknown-current-AC, or E2E obligations.
+- Source-like table columns are also provenance when their headers identify source/imported/original IDs, including `Source AC`, `Source AC / TC`, `Imported AC`, and `Original AC`. Current/canonical AC columns in the same table remain readable.
+- The parser boundary is contextual, not prefix-based. `AC-SPEC-001 [verification: integration]` still becomes a current AC if it is explicitly adopted in canonical Acceptance Criteria or another current AC/layer declaration.
+- This is a V0.6.2h follow-up parser fix. Package version, README/USAGE version references, ROADMAP version scope, and Debian metadata remain `0.6.2h`; recovery should rerun the blocked Requirements gate through the normal controller route.
+
 ## 2026-06-03 Requirements 4.6 fixed-table parser boundary
 
 - Requirements Test Strategy 4.6 validation is scoped to the canonical fixed-column E2E matrix block. Later subsection tables under the same markdown section, such as `### 4.7 Scope AC Verification Layer Closure`, are review/closure material and must not inherit the previous 4.6 header.

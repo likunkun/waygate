@@ -2,6 +2,23 @@
 
 ## 会话：2026-06-03
 
+### Requirements AC-SPEC provenance prose parser / V0.6.2h follow-up
+- **状态：** implementation verified; focused/full regression passed; Debian package rebuilt as `0.6.2h`.
+- 根因：`_requirements_current_ac_ids_in_text()` 已忽略 `Source AC` / `Source AC / TC` 表格列，但仍把 source map prose、conversion note、`AC-SPEC-001 -> AC-V10-001`、`AC-SPEC-001 至 AC-SPEC-012` 等 provenance 文本当作当前版本 AC obligation，导致 final Requirements gate 误报 `AC-SPEC-001 missing verification layer` / `AC-SPEC-012 missing verification layer`。
+- 修复：当前 AC 收集增加 source/provenance section 与 line 边界，并扩展 source-like 表头识别到 `Imported AC` / `Original AC`；provenance prose、mapping note、wildcard example 和 source/imported/original columns 不参与当前 AC obligation 收集。canonical Acceptance Criteria 中显式声明 `AC-SPEC-001 [verification: integration]` 仍作为当前 AC 处理；`_requirements_ac_layer_pairs()`、4.6 E2E quality checks 和 Journey/AC coverage 规则不放宽。
+- 文档/版本：同步 staged Requirements workflow / architecture docs、docs registry、CHANGELOG、findings 和 task_plan；版本保持 `0.6.2h`，未引入后续 patch 版本号。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'ac_spec_mapping_prose or provenance_prose or imported_original_ac_columns or canonical_ac_spec'` -> 修复前 3 failed，其中 final gate 用例报 `AC-SPEC-001 missing verification layer, AC-SPEC-012 missing verification layer`。
+  - GREEN: 同一命令 -> `4 passed, 104 deselected`。
+  - Focused: `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q -k 'source_ac or wildcard or ac_spec or provenance or verification_layer or e2e_review or 4_6'` -> `11 passed, 97 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'requirements_auto_revision or staged'` -> `4 passed, 243 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_requirements_staged_package.py -q` -> `108 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `878 passed, 1 skipped in 82.95s`。
+  - `git diff --check` -> passed。
+  - `rg -n "0\.6\.2i" .` -> no matches.
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2h_all.deb`。
+  - `dpkg-deb --field dist/waygate_0.6.2h_all.deb Version` -> `0.6.2h`。
+
 ### Requirements 4.6 parser boundary / V0.6.2h
 - **状态：** implementation verified; focused/full regression passed; Debian package built as `0.6.2h`.
 - 根因：`_requirements_e2e_review_rows()` 在同一 markdown section 内复用最近一次 4.6 header；当有效 11 列 `## 4.6` E2E matrix 后面出现 `### 4.7 Scope AC Verification Layer Closure` 的 5 列表时，后续 `AC-V10-010` closure row 会继承旧 4.6 header，被误判为 `Requirements 4.6 Verification Command is empty or placeholder` 等缺列问题。

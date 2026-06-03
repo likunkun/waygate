@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import workflow_controller.gates.validators as validators_module
 import workflow_controller.rrc_controller as rrc_controller_module
 import workflow_controller.prompts.requirements_package as requirements_package_prompts
 from workflow_controller.requirements_package import (
@@ -2182,6 +2183,87 @@ def test_package_consistency_ignores_source_ac_columns_as_active_obligations(
     gate.write_text(render_staged_requirements_package_gate_body(state), encoding='utf-8')
 
     validate_requirements_acceptance_quality(gate, state)
+
+
+def test_requirements_gate_ignores_ac_spec_mapping_prose_as_current_obligations(
+    tmp_path: Path,
+) -> None:
+    state = _complete_checkpoint_artifacts_with_content(tmp_path)
+    scope_path = Path(state['requirementsPackage']['artifacts']['scope']['path'])
+    ac_rows = ''.join(
+        f'| AC-V10-{index:03d} | integration | canonical current scope AC {index} |\n'
+        for index in range(1, 15)
+    )
+    scope_path.write_text(
+        (
+            '# Scope\n\n'
+            '## Acceptance Criteria\n'
+            '| AC | Verification Layer | Notes |\n'
+            '| --- | --- | --- |\n'
+            f'{ac_rows}\n'
+            '## Source Provenance\n'
+            '- AC-SPEC-001 至 AC-SPEC-012 在本 Scope 中映射为 '
+            'AC-V10-001 至 AC-V10-012；这是 source spec 到当前 AC 的映射说明，不是当前 AC 声明。\n\n'
+            '## Journey Acceptance Matrix\n'
+            '| Journey | Title | Status | Steps | AC | Verification Layer |\n'
+            '| --- | --- | --- | --- | --- | --- |\n'
+            '| J-V10-001 | Imported source review | active | Review package -> approve scope | AC-V10-001 | integration |\n'
+        ),
+        encoding='utf-8',
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(render_staged_requirements_package_gate_body(state), encoding='utf-8')
+
+    validate_requirements_acceptance_quality(gate, state)
+    current_ids = validators_module._requirements_current_ac_ids_in_text(gate.read_text(encoding='utf-8'))
+    assert 'AC-SPEC-001' not in current_ids
+    assert 'AC-SPEC-012' not in current_ids
+    assert {f'AC-V10-{index:03d}' for index in range(1, 15)} <= current_ids
+
+
+def test_source_ac_provenance_prose_does_not_create_current_ac_ids() -> None:
+    content = (
+        '## Acceptance Criteria\n'
+        '- AC-V10-001 [verification: integration]: Canonical current AC.\n\n'
+        '## Source Map\n'
+        '- AC-SPEC-001 -> AC-V10-001 is source-to-current provenance.\n'
+        '- AC-SPEC-001 至 AC-SPEC-012 are external source IDs.\n'
+        '- AC-SPEC-* is a wildcard imported source example.\n'
+    )
+
+    assert validators_module._requirements_current_ac_ids_in_text(content) == {'AC-V10-001'}
+
+
+def test_source_imported_original_ac_columns_do_not_create_current_ac_ids() -> None:
+    content = (
+        '## Source Conversion Matrix\n'
+        '| Source | Imported AC | Original AC | Current AC | Notes |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| Open Spec package | AC-SPEC-001 | AC-SPEC-009 | AC-V10-001 | imported provenance |\n'
+        '| Source package | AC-SPEC-002 | AC-SPEC-010 | AC-V10-002 | imported provenance |\n'
+    )
+
+    assert validators_module._requirements_current_ac_ids_in_text(content) == {
+        'AC-V10-001',
+        'AC-V10-002',
+    }
+
+
+def test_canonical_ac_spec_acceptance_criterion_still_creates_current_ac_id(tmp_path: Path) -> None:
+    gate = tmp_path / 'requirements-and-acceptance.md'
+    gate.write_text(
+        (
+            '## Acceptance Criteria\n'
+            '- AC-SPEC-001 [verification: integration]: The supported external spec ID is adopted as a current AC.\n'
+        ),
+        encoding='utf-8',
+    )
+
+    assert validators_module._requirements_current_ac_ids_in_text(gate.read_text(encoding='utf-8')) == {
+        'AC-SPEC-001',
+    }
+    validate_requirements_acceptance_quality(gate, {})
 
 
 def test_package_consistency_does_not_apply_journey_verification_marker_to_ac_on_same_line(

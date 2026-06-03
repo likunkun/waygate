@@ -3523,7 +3523,15 @@ def _requirements_acceptance_criterion_ids(content: str) -> set[str]:
 def _requirements_current_ac_ids_in_text(content: str) -> set[str]:
     ids: set[str] = set()
     source_ac_indices: set[int] | None = None
+    source_provenance_section_level: int | None = None
     for line in content.splitlines():
+        heading = _requirements_markdown_heading(line)
+        if heading:
+            level, heading_text = heading
+            if source_provenance_section_level is not None and level <= source_provenance_section_level:
+                source_provenance_section_level = None
+            if _requirements_heading_is_source_ac_provenance(heading_text):
+                source_provenance_section_level = level
         if _is_markdown_table_separator(line):
             continue
         cells = _markdown_table_cells(line)
@@ -3541,26 +3549,77 @@ def _requirements_current_ac_ids_in_text(content: str) -> set[str]:
             ids.update(_requirements_ac_ids_in_text(line))
             continue
         source_ac_indices = None
+        if (
+            source_provenance_section_level is not None
+            and not _requirements_line_is_explicit_current_ac_declaration(line)
+        ):
+            continue
+        if _requirements_line_is_source_ac_provenance(line):
+            continue
         ids.update(_requirements_ac_ids_in_text(line))
     return ids
 
 
 def _requirements_source_ac_table_indices(cells: list[str]) -> set[int] | None:
     indices: set[int] = set()
+    normalized_cells = [_normalized_table_header(cell) for cell in cells]
+    table_has_ac_context = any(
+        'ac' in value or 'acceptancecriterion' in value or 'acceptancecriteria' in value
+        for value in normalized_cells
+    )
     for index, cell in enumerate(cells):
         raw = str(cell or '').strip().lower()
-        normalized = _normalized_table_header(cell)
+        normalized = normalized_cells[index]
+        if normalized in {
+            'currentac',
+            'currentacs',
+            'currentacceptancecriterion',
+            'currentacceptancecriteria',
+            'canonicalac',
+            'canonicalacs',
+            'targetac',
+            'targetacs',
+        }:
+            continue
         if normalized in {
             'sourceac',
             'sourceacs',
             'sourceactc',
+            'importedac',
+            'importedacs',
+            'originalac',
+            'originalacs',
+            'sourceid',
+            'sourceids',
+            'importedid',
+            'importedids',
+            'originalid',
+            'originalids',
             'sourceacceptancecriterion',
             'sourceacceptancecriteria',
             'sourceacceptancecriterionid',
             'sourceacceptancecriteriaid',
             'sourceacceptancecriterionids',
             'sourceacceptancecriteriaids',
+            'importedacceptancecriterion',
+            'importedacceptancecriteria',
+            'importedacceptancecriterionid',
+            'importedacceptancecriteriaid',
+            'importedacceptancecriterionids',
+            'importedacceptancecriteriaids',
+            'originalacceptancecriterion',
+            'originalacceptancecriteria',
+            'originalacceptancecriterionid',
+            'originalacceptancecriteriaid',
+            'originalacceptancecriterionids',
+            'originalacceptancecriteriaids',
         }:
+            indices.add(index)
+            continue
+        if normalized == 'source' and table_has_ac_context:
+            indices.add(index)
+            continue
+        if normalized in {'imported', 'original'} and table_has_ac_context:
             indices.add(index)
             continue
         if normalized.startswith('source') and (
@@ -3571,11 +3630,104 @@ def _requirements_source_ac_table_indices(cells: list[str]) -> set[int] | None:
         ):
             indices.add(index)
             continue
+        if normalized.startswith('imported') and (
+            normalized.endswith('ac')
+            or 'acceptancecriterion' in normalized
+            or 'acceptancecriteria' in normalized
+        ):
+            indices.add(index)
+            continue
+        if normalized.startswith('original') and (
+            normalized.endswith('ac')
+            or 'acceptancecriterion' in normalized
+            or 'acceptancecriteria' in normalized
+        ):
+            indices.add(index)
+            continue
         if 'source' in raw and re.search(r'(?:^|[^a-z0-9_])acs?(?:$|[^a-z0-9_])|acceptance\s+criter', raw):
+            indices.add(index)
+            continue
+        if (
+            ('imported' in raw or 'original' in raw)
+            and re.search(r'(?:^|[^a-z0-9_])acs?(?:$|[^a-z0-9_])|acceptance\s+criter', raw)
+        ):
             indices.add(index)
     if not indices:
         return None
     return indices
+
+
+def _requirements_line_is_explicit_current_ac_declaration(line: str) -> bool:
+    return bool(_requirements_inline_ac_layer_pairs(line)) or _requirements_line_starts_with_layer_bucket(line)
+
+
+def _requirements_heading_is_source_ac_provenance(heading: str) -> bool:
+    normalized = _normalized_requirements_text(heading)
+    compact = _normalized_table_header(heading)
+    if any(
+        marker in normalized
+        for marker in [
+            'source map',
+            'source mapping',
+            'source provenance',
+            'source conversion',
+            'conversion artifact',
+            'conversion matrix',
+            'imported ac',
+            'original ac',
+            'external spec',
+            'source spec',
+            'source label',
+            'provenance',
+        ]
+    ):
+        return True
+    if any(marker in compact for marker in ['sourcemap', 'sourcemapping', 'sourceprovenance']):
+        return True
+    return any(marker in heading for marker in ['来源', '源映射', '映射说明', '导入', '原始', '转换'])
+
+
+def _requirements_line_is_source_ac_provenance(line: str) -> bool:
+    if not _requirements_ac_ids_in_text(line):
+        return False
+    if _requirements_line_is_explicit_current_ac_declaration(line):
+        return False
+    normalized = _normalized_requirements_text(line)
+    compact = _normalized_table_header(line)
+    strong_markers = [
+        'source ac',
+        'source spec',
+        'source id',
+        'source label',
+        'source map',
+        'source-to-current',
+        'source to current',
+        'provenance',
+        'imported ac',
+        'original ac',
+        'external spec',
+        'conversion artifact',
+        'conversion matrix',
+    ]
+    if any(marker in normalized for marker in strong_markers):
+        return True
+    if any(marker in compact for marker in ['sourceac', 'sourceactc', 'importedac', 'originalac']):
+        return True
+    if any(marker in line for marker in ['来源', '源 AC', '源AC', '导入 AC', '导入AC', '原始 AC', '原始AC', '转换']):
+        return True
+    has_mapping_syntax = (
+        '->' in line
+        or '→' in line
+        or '=>' in line
+        or '至' in line
+        or '映射' in line
+        or 'mapped' in normalized
+        or 'maps to' in normalized
+        or 'mapping' in normalized
+    )
+    if re.search(r'\bAC-SPEC-[A-Za-z0-9_-]+\b', line, flags=re.IGNORECASE) and has_mapping_syntax:
+        return True
+    return False
 
 
 def _requirements_acceptance_criterion_layers(content: str) -> dict[str, str]:

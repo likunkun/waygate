@@ -7,6 +7,7 @@ All notable project changes should be recorded here.
 - Fixed Requirements Test Strategy 4.6 parsing so the validator consumes only the canonical fixed-column E2E matrix block and does not treat later subsection tables, such as 4.7 AC closure matrices, as 4.6 obligations.
 - Added staged Requirements regression coverage for a valid 11-column 4.6 matrix followed by a 5-column 4.7 closure table containing the same E2E AC.
 - Updated staged Requirements workflow and architecture docs, release notes, and package version metadata to `0.6.2h`.
+- Follow-up: fixed current AC collection so source/provenance prose, source maps, conversion notes, `AC-SPEC-*` wildcard examples, `AC-SPEC-001 -> AC-V10-001` mappings, and source/imported/original AC columns do not create current-version AC obligations. Canonical current AC declarations with verification layers still count, including deliberately adopted external-looking IDs.
 
 ## 0.6.2g
 
