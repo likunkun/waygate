@@ -203,7 +203,17 @@ def _acceptance_obligation_coverage(
     for row in evidence_rows:
         if not _row_is_valid_coverage(row):
             continue
-        for obligation_id in _ids_from_value(row.get('acceptance_obligations'), 'AO'):
+        for obligation_id in _ids_from_row(
+            row,
+            'AO',
+            [
+                'acceptance_obligations',
+                'acceptance_obligation_ids',
+                'obligations',
+                'obligation_ids',
+                'covers_obligations',
+            ],
+        ):
             evidence_by_id.setdefault(obligation_id, []).append(_evidence_ref(row))
 
     required_ids = [item['id'] for item in required_items]
@@ -232,7 +242,16 @@ def _acceptance_criterion_coverage(
     for row in evidence_rows:
         if not _row_is_valid_coverage(row):
             continue
-        for ac_id in _ids_from_value(row.get('acceptance_criterion'), 'AC'):
+        for ac_id in _ids_from_row(
+            row,
+            'AC',
+            [
+                'acceptance_criterion',
+                'acceptance_criteria',
+                'acceptance_criterion_ids',
+                'acceptance_criteria_ids',
+            ],
+        ):
             evidence_by_id.setdefault(ac_id, []).append(_evidence_ref(row))
 
     covered_ids = [item for item in required_ids if item in evidence_by_id]
@@ -681,6 +700,13 @@ def _ids_from_value(value: Any, prefix: str) -> list[str]:
         if not _match_is_wildcard_placeholder(text, match)
     ]
     return _unique_list(item for item in ids if _id_is_not_placeholder(item, prefix))
+
+
+def _ids_from_row(row: dict[str, Any], prefix: str, keys: list[str]) -> list[str]:
+    ids: list[str] = []
+    for key in keys:
+        ids.extend(_ids_from_value(row.get(key), prefix))
+    return _unique_list(ids)
 
 
 def _normalize_id(value: Any) -> str:

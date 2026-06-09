@@ -3749,6 +3749,8 @@ def test_final_acceptance_gate_renders_prototype_conformance_matrix(tmp_path: Pa
                             'viewport': 'desktop 1440x900',
                             'entrypoint': '/dashboard/teacher',
                             'action_path': ['Open /dashboard/teacher', 'Click Preview'],
+                            'screenshot_regression': 'passed threshold 0.02',
+                            'pixel_diff': 'artifacts/unit-01/screenshots/teacher-dashboard.diff.png',
                             'fidelity_level': 'structural_interaction',
                         },
                     }
@@ -3788,10 +3790,15 @@ def test_final_acceptance_gate_renders_prototype_conformance_matrix(tmp_path: Pa
 
     content = gate_path.read_text(encoding='utf-8')
     assert '## Prototype Conformance Matrix' in content
-    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Fidelity | Visual Evidence | Prototype Screenshot | Production Screenshot | Interaction Screenshot | Action Path | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
-    assert '| teacher-dashboard | - | - | AC-21 | route:/dashboard/teacher | L2 structural_interaction | complete | artifacts/requirements-draft/prototypes/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard-preview.png | Open /dashboard/teacher; Click Preview | TC-PROTO-TEACHER | local_real | no | 0 | `npx playwright test tests/e2e/teacher-dashboard.spec.ts` | passed |' in content
+    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Fidelity | Visual Evidence | Prototype Screenshot | Production Screenshot | Interaction Screenshot | Screenshot Regression | Diff Artifact | Action Path | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
+    assert '| teacher-dashboard | - | - | AC-21 | route:/dashboard/teacher | L3 screenshot_regression | complete | artifacts/requirements-draft/prototypes/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard-preview.png | passed threshold 0.02 | artifacts/unit-01/screenshots/teacher-dashboard.diff.png | Open /dashboard/teacher; Click Preview | TC-PROTO-TEACHER | local_real | no | 0 | `npx playwright test tests/e2e/teacher-dashboard.spec.ts` | passed |' in content
     assert '## Visual Prototype Evidence' in content
-    assert '| teacher-dashboard | - | L2 structural_interaction | complete | artifacts/requirements-draft/prototypes/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard-preview.png | desktop 1440x900 | /dashboard/teacher | Open /dashboard/teacher; Click Preview |' in content
+    assert '| teacher-dashboard | - | L3 screenshot_regression | complete | artifacts/requirements-draft/prototypes/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard.png | artifacts/unit-01/screenshots/teacher-dashboard-preview.png | desktop 1440x900 | /dashboard/teacher | Open /dashboard/teacher; Click Preview | passed threshold 0.02 | artifacts/unit-01/screenshots/teacher-dashboard.diff.png |' in content
+    matrix_path = artifacts_dir / 'final-acceptance' / 'prototype-conformance-matrix.json'
+    matrix = json.loads(matrix_path.read_text(encoding='utf-8'))
+    assert matrix['rows'][0]['prototype_id'] == 'teacher-dashboard'
+    assert matrix['rows'][0]['screenshot_regression'] == 'passed threshold 0.02'
+    assert matrix['rows'][0]['diff_artifact'] == 'artifacts/unit-01/screenshots/teacher-dashboard.diff.png'
 
 
 def test_final_prototype_conformance_rejects_mock_browser_evidence(tmp_path: Path) -> None:
@@ -3932,6 +3939,10 @@ def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path
                                 'id': 'assignment-management-dialog',
                                 'title': 'Assignment management dialog',
                                 'kind': 'dialog',
+                                'actor': 'teacher',
+                                'task_start': 'teacher opens /dashboard/teacher with an assignable course card',
+                                'main_business_object': 'course assignment',
+                                'success_endpoint': 'assignment dialog saves one student assignment',
                                 'page_states': ['Teacher dashboard', 'Assign management dialog'],
                                 'click_path': ['Open dashboard', 'Click 分配管理'],
                                 'entrypoints': ['CourseCard -> 分配管理'],
@@ -3939,6 +3950,7 @@ def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path
                                     {'kind': 'component', 'path': 'OpenMAIC/components/course/AssignManageDialog.tsx'}
                                 ],
                                 'linked_acceptance_criteria': ['AC-21'],
+                                'linked_journeys': ['J-01'],
                                 'required': True,
                             }
                         ],
@@ -3978,6 +3990,8 @@ def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path
                             'viewport': 'desktop 1440x900',
                             'entrypoint': '/dashboard/teacher',
                             'action_path': ['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
+                            'screenshot_regression': 'passed threshold 0.02',
+                            'pixel_diff': 'artifacts/unit-01/screenshots/assign-dialog.diff.png',
                             'fidelity_level': 'structural_interaction',
                         },
                     }
@@ -4017,8 +4031,8 @@ def test_final_acceptance_gate_renders_surface_conformance_matrix(tmp_path: Path
     gate_path = ensure_final_acceptance_gate(state, approvals_dir, artifacts_dir, force=True)
 
     content = gate_path.read_text(encoding='utf-8')
-    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Fidelity | Visual Evidence | Prototype Screenshot | Production Screenshot | Interaction Screenshot | Action Path | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
-    assert '| v291-course-ops-prototype-contract | assignment-management-dialog | CourseCard -> 分配管理 | AC-21 | component:OpenMAIC/components/course/AssignManageDialog.tsx | L2 structural_interaction | complete | artifacts/requirements-draft/prototypes/assign-dialog.png | artifacts/unit-01/screenshots/assign-dialog.png | artifacts/unit-01/screenshots/assign-dialog-after-click.png | Open /dashboard/teacher; Click CourseCard 分配管理 | TC-PROTO-ASSIGN-MANAGE-DIALOG | local_real | no | 0 | `npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium` | passed |' in content
+    assert '| Prototype | Surface | Entry Point | Linked AC | Production Target | Fidelity | Visual Evidence | Prototype Screenshot | Production Screenshot | Interaction Screenshot | Screenshot Regression | Diff Artifact | Action Path | Test Case | Environment | Core API Mock | Runtime Errors | Command | Status |' in content
+    assert '| v291-course-ops-prototype-contract | assignment-management-dialog | CourseCard -> 分配管理 | AC-21 | component:OpenMAIC/components/course/AssignManageDialog.tsx | L3 screenshot_regression | complete | artifacts/requirements-draft/prototypes/assign-dialog.png | artifacts/unit-01/screenshots/assign-dialog.png | artifacts/unit-01/screenshots/assign-dialog-after-click.png | passed threshold 0.02 | artifacts/unit-01/screenshots/assign-dialog.diff.png | Open /dashboard/teacher; Click CourseCard 分配管理 | TC-PROTO-ASSIGN-MANAGE-DIALOG | local_real | no | 0 | `npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium` | passed |' in content
 
 
 def test_builder_prompt_includes_final_acceptance_defect_list_for_defect_fix_units(tmp_path: Path) -> None:

@@ -315,6 +315,10 @@ def test_prototype_manifest_normalizes_surface_contracts_and_aliases(tmp_path: P
                                 'id': 'assignment-management-dialog',
                                 'title': 'Assignment management dialog',
                                 'kind': 'dialog',
+                                'actor': 'teacher',
+                                'task_start': 'teacher opens /dashboard/teacher with an assignable course card',
+                                'main_business_object': 'course assignment',
+                                'success_endpoint': 'assignment dialog saves one student assignment',
                                 'page_states': ['Teacher dashboard', 'Assign management dialog'],
                                 'click_path': ['Open dashboard', 'Click 分配管理'],
                                 'entrypoints': ['CourseCard -> 分配管理'],
@@ -322,6 +326,7 @@ def test_prototype_manifest_normalizes_surface_contracts_and_aliases(tmp_path: P
                                     {'kind': 'component', 'path': 'OpenMAIC/components/course/AssignManageDialog.tsx'}
                                 ],
                                 'linked_acceptance_criteria': ['AC-01'],
+                                'linked_journeys': ['J-01'],
                                 'required': True,
                             }
                         ],
@@ -344,6 +349,10 @@ def test_prototype_manifest_normalizes_surface_contracts_and_aliases(tmp_path: P
             'id': 'assignment-management-dialog',
             'title': 'Assignment management dialog',
             'kind': 'dialog',
+            'actor': 'teacher',
+            'task_start': 'teacher opens /dashboard/teacher with an assignable course card',
+            'main_business_object': 'course assignment',
+            'success_endpoint': 'assignment dialog saves one student assignment',
             'page_states': ['Teacher dashboard', 'Assign management dialog'],
             'click_path': ['Open dashboard', 'Click 分配管理'],
             'entrypoints': ['CourseCard -> 分配管理'],
@@ -351,6 +360,7 @@ def test_prototype_manifest_normalizes_surface_contracts_and_aliases(tmp_path: P
                 {'kind': 'component', 'path': 'OpenMAIC/components/course/AssignManageDialog.tsx'}
             ],
             'linked_acceptance_criteria': ['AC-01'],
+            'linked_journeys': ['J-01'],
             'required': True,
             'fidelity_required': 'structural_interaction',
         }

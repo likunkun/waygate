@@ -162,7 +162,6 @@ def same_requirements_spec(existing: dict[str, Any] | None, incoming: dict[str, 
         return False
     return (
         str(existing.get('path') or '') == str(incoming.get('path') or '')
-        and str(existing.get('hash') or '') == str(incoming.get('hash') or '')
         and str(existing.get('sourceType') or '') == str(incoming.get('sourceType') or '')
     )
 

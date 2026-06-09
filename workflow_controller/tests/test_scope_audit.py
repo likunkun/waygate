@@ -107,6 +107,32 @@ def _passed_row(ac_id: str, ao_ids: list[str]) -> dict:
     }
 
 
+def _passed_row_with_array_aliases(ac_ids: list[str], ao_ids: list[str]) -> dict:
+    return {
+        'unit_id': 'unit-01',
+        'test_case_id': 'TC-ARRAY-ALIASES',
+        'acceptance_criteria': ac_ids,
+        'obligations': ao_ids,
+        'layer': 'e2e',
+        'command': 'pytest tests/test_delivery.py -q',
+        'manual_evidence': None,
+        'expected': 'array-style evidence covers acceptance criteria and obligations',
+        'status': 'passed',
+        'result_index': 0,
+        'returncode': 0,
+        'artifact_refs': ['artifacts/unit-01/verification.json'],
+        'golden_path': True,
+        'environment_kind': 'local_real',
+        'real_entrypoint': '/delivery',
+        'uses_core_api_mock': False,
+        'mocked_routes': [],
+        'browser_console_errors': [],
+        'page_errors': [],
+        'request_failures': [],
+        'screenshot_refs': [],
+    }
+
+
 def _manual_row(ac_id: str, ao_ids: list[str], manual_evidence: str | None, artifact_refs: list[str]) -> dict:
     return {
         'unit_id': 'unit-01',
@@ -160,6 +186,30 @@ def test_scope_audit_writes_json_and_markdown_with_manual_evidence_rules(tmp_pat
     assert any(issue['type'] == 'missing_acceptance_criterion_evidence' for issue in audit['issues'])
     with pytest.raises(ValueError, match='AC-3'):
         validate_final_scope_audit(audit)
+
+
+def test_scope_audit_accepts_verifier_array_aliases_for_ac_and_ao_coverage(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    requirements_path = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    _write_requirements(requirements_path, ['AC-1', 'AC-2'])
+    _write_unit_artifacts(
+        artifacts_dir,
+        [
+            _passed_row_with_array_aliases(['AC-1', 'AC-2'], ['AO-001', 'AO-002']),
+        ],
+    )
+
+    audit = write_final_scope_audit(
+        _final_acceptance_state(),
+        artifacts_dir,
+        requirements_path=requirements_path,
+    )
+
+    assert audit['ao_coverage']['covered_ids'] == ['AO-001', 'AO-002']
+    assert audit['ac_coverage']['covered_ids'] == ['AC-1', 'AC-2']
+    assert audit['ao_coverage']['uncovered_ids'] == []
+    assert audit['ac_coverage']['uncovered_ids'] == []
+    validate_final_scope_audit(audit)
 
 
 def test_scope_audit_records_coverage_status_separately_from_ledger_status(tmp_path: Path) -> None:

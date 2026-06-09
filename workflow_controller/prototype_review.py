@@ -22,10 +22,12 @@ from workflow_controller.evidence_policy import (
     evidence_row_real_e2e_issue,
     fidelity_label,
     normalize_fidelity_required,
+    visual_evidence_refs_from_result,
     visual_evidence_issue,
 )
 from workflow_controller.networking import browser_display_host, url_host
 from workflow_controller.requirements_ids import acceptance_criterion_ids_in_text
+from workflow_controller.requirements_ids import journey_ids_in_text
 
 
 PROTOTYPE_REVIEW_VERSION = 'v0.6.0b'
@@ -692,7 +694,11 @@ def _build_normalized_manifest(
     if not isinstance(raw_prototypes, list) or not raw_prototypes:
         raise ValueError('prototype manifest must contain a non-empty prototypes list')
 
-    requirements_ac_ids = _requirements_ac_ids(requirements_path)
+    requirements_content = _requirements_content(requirements_path)
+    requirements_ac_ids = acceptance_criterion_ids_in_text(requirements_content)
+    requirements_journey_ids = journey_ids_in_text(requirements_content)
+    requirements_e2e_ac_ids = _requirements_e2e_ac_ids(requirements_content)
+    requirements_e2e_journey_ids = _requirements_e2e_journey_ids(requirements_content)
     draft_dir = artifacts_dir / 'requirements-draft'
     prototypes_dir = draft_dir / PROTOTYPES_DIR_NAME
     issues: list[str] = []
@@ -708,6 +714,9 @@ def _build_normalized_manifest(
             manifest_path=manifest_path,
             prototypes_dir=prototypes_dir,
             requirements_ac_ids=requirements_ac_ids,
+            requirements_journey_ids=requirements_journey_ids,
+            requirements_e2e_ac_ids=requirements_e2e_ac_ids,
+            requirements_e2e_journey_ids=requirements_e2e_journey_ids,
             require_clickable=require_clickable,
             require_implementation_targets=require_implementation_targets,
             copy_assets=copy_assets,
@@ -739,6 +748,9 @@ def _normalize_prototype(
     manifest_path: Path,
     prototypes_dir: Path,
     requirements_ac_ids: set[str],
+    requirements_journey_ids: set[str],
+    requirements_e2e_ac_ids: set[str],
+    requirements_e2e_journey_ids: set[str],
     require_clickable: bool,
     require_implementation_targets: bool,
     copy_assets: bool,
@@ -781,13 +793,24 @@ def _normalize_prototype(
         prototype_label=raw_id or str(index),
         issues=issues,
     )
-    fidelity_required = normalize_fidelity_required(
-        _first_present(raw, 'fidelity_required', 'fidelityRequired', 'fidelity_level', 'fidelityLevel')
+    raw_fidelity_required = _first_present(raw, 'fidelity_required', 'fidelityRequired', 'fidelity_level', 'fidelityLevel')
+    prototype_default_fidelity = _default_fidelity_required(
+        explicit=raw_fidelity_required,
+        kind='',
+        targets=implementation_targets,
+        linked_acs=acs,
+        linked_journeys=_string_list(raw.get('linked_journeys') or raw.get('journeys')),
+        requirements_e2e_ac_ids=requirements_e2e_ac_ids,
+        requirements_e2e_journey_ids=requirements_e2e_journey_ids,
     )
+    fidelity_required = normalize_fidelity_required(raw_fidelity_required, default=prototype_default_fidelity)
     surface_contracts = _normalize_surface_contracts(
         raw,
         prototype_label=raw_id or str(index),
         requirements_ac_ids=requirements_ac_ids,
+        requirements_journey_ids=requirements_journey_ids,
+        requirements_e2e_ac_ids=requirements_e2e_ac_ids,
+        requirements_e2e_journey_ids=requirements_e2e_journey_ids,
         default_fidelity_required=fidelity_required,
         issues=issues,
     )
@@ -866,6 +889,9 @@ def _normalize_surface_contracts(
     *,
     prototype_label: str,
     requirements_ac_ids: set[str],
+    requirements_journey_ids: set[str],
+    requirements_e2e_ac_ids: set[str],
+    requirements_e2e_journey_ids: set[str],
     default_fidelity_required: str,
     issues: list[str],
 ) -> list[dict[str, Any]]:
@@ -897,6 +923,16 @@ def _normalize_surface_contracts(
         elif kind not in ALLOWED_SURFACE_KINDS:
             issues.append(f'prototype {prototype_label} surface {surface_label} has unsupported kind: {kind}')
 
+        actor = _string_value(surface, 'actor', 'user_actor', 'userActor', 'role')
+        task_start = _string_value(surface, 'task_start', 'taskStart', 'start_state', 'startState')
+        main_business_object = _string_value(
+            surface,
+            'main_business_object',
+            'mainBusinessObject',
+            'business_object',
+            'businessObject',
+        )
+        success_endpoint = _string_value(surface, 'success_endpoint', 'successEndpoint', 'end_state', 'endState')
         page_states = _string_list(surface.get('page_states') or surface.get('pageStates'))
         click_path = _string_list(surface.get('click_path') or surface.get('clickPath'))
         entrypoints = _string_list(surface.get('entrypoints') or surface.get('entry_points') or surface.get('entryPoints'))
@@ -913,13 +949,26 @@ def _normalize_surface_contracts(
             or surface.get('linked_acs')
             or surface.get('acs')
         )
+        linked_journeys = _string_list(surface.get('linked_journeys') or surface.get('journeys'))
         unknown_acs = sorted({ac.upper() for ac in linked_acs if ac.upper() not in requirements_ac_ids})
+        unknown_journeys = (
+            sorted({journey.upper() for journey in linked_journeys if journey.upper() not in requirements_journey_ids})
+            if requirements_journey_ids
+            else []
+        )
         if not linked_acs:
             issues.append(f'prototype {prototype_label} surface {surface_label} missing linked_acceptance_criteria')
         if unknown_acs:
             issues.append(
                 f'prototype {prototype_label} surface {surface_label} unknown acceptance criteria: '
                 + ', '.join(unknown_acs)
+            )
+        if requirements_journey_ids and not linked_journeys:
+            issues.append(f'prototype {prototype_label} surface {surface_label} missing linked_journeys')
+        if unknown_journeys:
+            issues.append(
+                f'prototype {prototype_label} surface {surface_label} unknown Journey: '
+                + ', '.join(unknown_journeys)
             )
 
         implementation_targets = _normalize_implementation_targets(
@@ -933,10 +982,30 @@ def _normalize_surface_contracts(
         required = surface.get('required')
         if required is not True:
             issues.append(f'prototype {prototype_label} surface {surface_label} missing required=true')
+        if required is True:
+            for field, value in (
+                ('actor', actor),
+                ('task_start', task_start),
+                ('main_business_object', main_business_object),
+                ('success_endpoint', success_endpoint),
+            ):
+                if not value:
+                    issues.append(f'prototype {prototype_label} surface {surface_label} missing {field}')
 
+        raw_fidelity_required = _first_present(surface, 'fidelity_required', 'fidelityRequired', 'fidelity_level', 'fidelityLevel')
+        surface_default_fidelity = _default_fidelity_required(
+            explicit=raw_fidelity_required,
+            kind=kind,
+            targets=implementation_targets,
+            linked_acs=linked_acs,
+            linked_journeys=linked_journeys,
+            requirements_e2e_ac_ids=requirements_e2e_ac_ids,
+            requirements_e2e_journey_ids=requirements_e2e_journey_ids,
+            fallback=default_fidelity_required,
+        )
         fidelity_required = normalize_fidelity_required(
-            _first_present(surface, 'fidelity_required', 'fidelityRequired', 'fidelity_level', 'fidelityLevel'),
-            default=default_fidelity_required,
+            raw_fidelity_required,
+            default=surface_default_fidelity,
         )
 
         if not surface_id or not title or kind not in ALLOWED_SURFACE_KINDS:
@@ -945,11 +1014,16 @@ def _normalize_surface_contracts(
             'id': surface_id,
             'title': title,
             'kind': kind,
+            'actor': actor,
+            'task_start': task_start,
+            'main_business_object': main_business_object,
+            'success_endpoint': success_endpoint,
             'page_states': page_states,
             'click_path': click_path,
             'entrypoints': entrypoints,
             'implementation_targets': implementation_targets,
             'linked_acceptance_criteria': [ac.upper() for ac in linked_acs],
+            'linked_journeys': [journey.upper() for journey in linked_journeys],
             'required': required is True,
             'fidelity_required': fidelity_required,
         })
@@ -1053,6 +1127,8 @@ def prototype_conformance_matrix_rows(
                 'prototype_screenshot': '',
                 'production_screenshot': '',
                 'interaction_screenshot': '',
+                'screenshot_regression': '',
+                'diff_artifact': '',
                 'action_path': [],
                 'viewport': '',
                 'visual_entrypoint': '',
@@ -1098,6 +1174,13 @@ def prototype_conformance_matrix_rows(
                 'prototype_screenshot': str(visual_refs.get('prototype_screenshot') or '').strip(),
                 'production_screenshot': str(visual_refs.get('production_screenshot') or '').strip(),
                 'interaction_screenshot': str(visual_refs.get('interaction_screenshot') or '').strip(),
+                'screenshot_regression': str(visual_refs.get('screenshot_regression') or '').strip(),
+                'diff_artifact': str(
+                    visual_refs.get('pixel_diff')
+                    or visual_refs.get('diff_artifact')
+                    or visual_refs.get('diffArtifact')
+                    or ''
+                ).strip(),
                 'action_path': _string_list(visual_refs.get('action_path')),
                 'viewport': str(visual_refs.get('viewport') or '').strip(),
                 'visual_entrypoint': str(visual_refs.get('entrypoint') or '').strip(),
@@ -1399,7 +1482,7 @@ def _matching_evidence_row(case: dict[str, Any], evidence_rows: list[dict[str, A
     case_id = str(case.get('id') or '').strip()
     command = str(case.get('command') or '').strip()
     for row in evidence_rows:
-        if case_id and str(row.get('test_case_id') or '').strip() == case_id:
+        if case_id and _evidence_row_test_case_id(row) == case_id:
             return row
     if case_id:
         return None
@@ -1409,6 +1492,17 @@ def _matching_evidence_row(case: dict[str, Any], evidence_rows: list[dict[str, A
     return None
 
 
+def _evidence_row_test_case_id(row: dict[str, Any]) -> str:
+    for key in ('test_case_id', 'testCaseId', 'test_case', 'testCase', 'case_id', 'caseId'):
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ''
+
+
 def _prototype_effective_evidence_row(
     case: dict[str, Any],
     evidence: dict[str, Any] | None,
@@ -1416,14 +1510,18 @@ def _prototype_effective_evidence_row(
     if evidence is None:
         return None
     row = dict(evidence)
-    row.setdefault('layer', case.get('layer'))
-    row.setdefault('environment_kind', case_environment_kind(case))
-    row.setdefault('real_entrypoint', case_real_entrypoint(case, str(row.get('command') or case.get('command') or '')))
+    if not str(row.get('layer') or '').strip():
+        row['layer'] = case.get('layer')
+    if not str(row.get('environment_kind') or '').strip():
+        row['environment_kind'] = case_environment_kind(case)
+    if not str(row.get('real_entrypoint') or '').strip():
+        row['real_entrypoint'] = case_real_entrypoint(case, str(row.get('command') or case.get('command') or ''))
     row.setdefault('uses_core_api_mock', False)
     row.setdefault('mocked_routes', [])
     for field in ('browser_console_errors', 'page_errors', 'request_failures', 'screenshot_refs'):
         row.setdefault(field, [])
-    row.setdefault('visual_evidence_refs', {})
+    visual_refs = visual_evidence_refs_from_result(row)
+    row['visual_evidence_refs'] = visual_refs if visual_refs else {}
     return row
 
 
@@ -1466,9 +1564,91 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
 
 
 def _requirements_ac_ids(requirements_path: Path) -> set[str]:
+    return acceptance_criterion_ids_in_text(_requirements_content(requirements_path))
+
+
+def _requirements_content(requirements_path: Path) -> str:
     if not requirements_path.exists():
-        return set()
-    return acceptance_criterion_ids_in_text(_gate_body(requirements_path.read_text(encoding='utf-8')))
+        return ''
+    return _gate_body(requirements_path.read_text(encoding='utf-8'))
+
+
+def _requirements_e2e_ac_ids(content: str) -> set[str]:
+    ids: set[str] = set()
+    for match in re.finditer(r'(AC-[A-Za-z0-9_][A-Za-z0-9_-]*[A-Za-z0-9_])\s*\[\s*verification\s*:\s*e2e\s*\]', content, flags=re.IGNORECASE):
+        ids.add(match.group(1).upper())
+    return ids
+
+
+def _requirements_e2e_journey_ids(content: str) -> set[str]:
+    ids: set[str] = set()
+    for line in content.splitlines():
+        if '|' not in line:
+            continue
+        cells = [cell.strip() for cell in line.strip().strip('|').split('|')]
+        if len(cells) < 3:
+            continue
+        lowered = [cell.lower() for cell in cells]
+        if any(cell in {'---', ':---', '---:', ':---:'} for cell in lowered):
+            continue
+        journey_cells = [cell for cell in cells if re.search(r'\bJ-[A-Za-z0-9_][A-Za-z0-9_-]*[A-Za-z0-9_]\b', cell, flags=re.IGNORECASE)]
+        if not journey_cells:
+            continue
+        if any('e2e' == cell.lower() or '[verification: e2e]' in cell.lower() for cell in cells):
+            ids.update(journey.upper() for cell in journey_cells for journey in journey_ids_in_text(cell))
+    for match in re.finditer(r'(J-[A-Za-z0-9_][A-Za-z0-9_-]*[A-Za-z0-9_])\s*\[\s*verification\s*:\s*e2e\s*\]', content, flags=re.IGNORECASE):
+        ids.add(match.group(1).upper())
+    return ids
+
+
+def _default_fidelity_required(
+    *,
+    explicit: Any,
+    kind: str,
+    targets: list[dict[str, str]],
+    linked_acs: list[str],
+    linked_journeys: list[str],
+    requirements_e2e_ac_ids: set[str],
+    requirements_e2e_journey_ids: set[str],
+    fallback: str = 'structural_interaction',
+) -> str:
+    if explicit is not None and str(explicit).strip():
+        return normalize_fidelity_required(explicit, default=fallback)
+    if _critical_surface_fidelity_required(
+        kind=kind,
+        targets=targets,
+        linked_acs=linked_acs,
+        linked_journeys=linked_journeys,
+        requirements_e2e_ac_ids=requirements_e2e_ac_ids,
+        requirements_e2e_journey_ids=requirements_e2e_journey_ids,
+    ):
+        return 'screenshot_regression'
+    return normalize_fidelity_required(fallback)
+
+
+def _critical_surface_fidelity_required(
+    *,
+    kind: str,
+    targets: list[dict[str, str]],
+    linked_acs: list[str],
+    linked_journeys: list[str],
+    requirements_e2e_ac_ids: set[str],
+    requirements_e2e_journey_ids: set[str],
+) -> bool:
+    normalized_kind = str(kind or '').strip().lower()
+    browser_visible = (
+        normalized_kind in BROWSER_SURFACE_KINDS
+        or any(implementation_target_is_browser_route(target) for target in targets)
+        or any(str(target.get('kind') or '').strip().lower() in {'route', 'page'} for target in targets)
+    )
+    if not browser_visible:
+        return False
+    linked_ac_set = {str(ac).upper() for ac in linked_acs}
+    linked_journey_set = {str(journey).upper() for journey in linked_journeys}
+    return bool(
+        linked_ac_set & requirements_e2e_ac_ids
+        or linked_journey_set & requirements_e2e_journey_ids
+    )
 
 
 def _gate_body(content: str) -> str:
@@ -1521,6 +1701,11 @@ def _string_list(value: Any) -> list[str]:
         if text:
             items.append(text)
     return items
+
+
+def _string_value(payload: dict[str, Any], *keys: str) -> str:
+    value = _first_present(payload, *keys)
+    return str(value or '').strip()
 
 
 def _safe_id(value: str) -> str:

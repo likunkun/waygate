@@ -517,7 +517,54 @@ def _normalize_visual_evidence_refs(raw: dict[str, Any]) -> dict[str, Any]:
             refs[canonical] = normalize_fidelity_required(value)
         else:
             refs[canonical] = value
+    _merge_nested_visual_evidence_refs(refs, raw)
     return refs
+
+
+def _merge_nested_visual_evidence_refs(refs: dict[str, Any], raw: dict[str, Any]) -> None:
+    for nested_key in (
+        'screenshot_regression_result',
+        'screenshotRegressionResult',
+        'screenshot_regression',
+        'screenshotRegression',
+        'pixel_exact_result',
+        'pixelExactResult',
+        'pixel_exact',
+        'pixelExact',
+    ):
+        nested = raw.get(nested_key)
+        if not isinstance(nested, dict) or nested is raw:
+            continue
+        action_path = _first_present(
+            nested,
+            'action_path',
+            'actionPath',
+            'click_path',
+            'clickPath',
+            'user_steps',
+            'userSteps',
+        )
+        if 'action_path' not in refs:
+            items = _string_list(action_path)
+            if items:
+                refs['action_path'] = items
+        entrypoint = _first_present(nested, 'entrypoint', 'entry_point', 'real_entrypoint', 'realEntrypoint')
+        if entrypoint is not None and 'entrypoint' not in refs:
+            value = str(entrypoint).strip()
+            if value:
+                refs['entrypoint'] = value
+        fidelity_level = _first_present(nested, 'fidelity_level', 'fidelityLevel', 'fidelity_required', 'fidelityRequired')
+        if fidelity_level is not None and 'fidelity_level' not in refs:
+            refs['fidelity_level'] = normalize_fidelity_required(fidelity_level)
+        pixel_tolerance = _first_present(nested, 'pixel_tolerance', 'pixelTolerance', 'threshold')
+        if pixel_tolerance is not None and 'pixel_tolerance' not in refs:
+            refs['pixel_tolerance'] = pixel_tolerance
+        compared = _first_present(nested, 'compared_screenshots', 'comparedScreenshots')
+        if isinstance(compared, dict):
+            compared_refs = _normalize_visual_evidence_refs(compared)
+            for field in ('prototype_screenshot', 'production_screenshot', 'interaction_screenshot'):
+                if field not in refs and compared_refs.get(field):
+                    refs[field] = compared_refs[field]
 
 
 def _visual_evidence_reports_obstruction(refs: dict[str, Any]) -> bool:

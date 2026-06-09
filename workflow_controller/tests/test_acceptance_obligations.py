@@ -12,6 +12,7 @@ from workflow_controller.acceptance_obligations import (
 from workflow_controller.gates.generators import format_requirements_gate_body
 from workflow_controller.gates.validators import validate_requirements_acceptance_quality
 from workflow_controller.gates.validators import validate_final_document_deliverables
+from workflow_controller.gates.validators import validate_final_real_e2e_evidence
 from workflow_controller.gates.validators import validate_unit_plan_acceptance_obligation_coverage
 from workflow_controller.gates.validators import validate_unit_plan_design_architecture_traceability
 from workflow_controller.gates.validators import validate_unit_plan_document_deliverables
@@ -90,6 +91,7 @@ def _visual_evidence_plan(
     production: str = 'artifacts/unit-01/screenshots/dashboard-production.png',
     interaction: str = 'artifacts/unit-01/screenshots/dashboard-preview-after-click.png',
     entrypoint: str = '/dashboard/preview',
+    action_path: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         'prototype_screenshot': prototype,
@@ -97,7 +99,7 @@ def _visual_evidence_plan(
         'interaction_screenshot': interaction,
         'viewport': 'desktop 1440x900',
         'entrypoint': entrypoint,
-        'action_path': ['Open the production entrypoint', 'Click Preview'],
+        'action_path': action_path or ['Open the production entrypoint', 'Click Preview'],
     }
 
 
@@ -127,6 +129,10 @@ def _write_surface_prototype_manifest_for_gate(gate: Path) -> Path:
                                 'id': 'publish-target-dialog',
                                 'title': 'Publish target dialog',
                                 'kind': 'dialog',
+                                'actor': 'teacher',
+                                'task_start': 'teacher opens /dashboard/teacher with a published course card',
+                                'main_business_object': 'course publish target',
+                                'success_endpoint': 'publish target dialog shows selected class count',
                                 'page_states': ['Teacher dashboard', 'Publish target dialog'],
                                 'click_path': ['Open dashboard', 'Click 发布对象'],
                                 'entrypoints': ['CourseCard -> 发布对象'],
@@ -134,12 +140,17 @@ def _write_surface_prototype_manifest_for_gate(gate: Path) -> Path:
                                     {'kind': 'component', 'path': 'OpenMAIC/components/course/PublishTargetDialog.tsx'}
                                 ],
                                 'linked_acceptance_criteria': ['AC-21'],
+                                'linked_journeys': ['J-01'],
                                 'required': True,
                             },
                             {
                                 'id': 'assignment-management-dialog',
                                 'title': 'Assignment management dialog',
                                 'kind': 'dialog',
+                                'actor': 'teacher',
+                                'task_start': 'teacher opens /dashboard/teacher with an assignable course card',
+                                'main_business_object': 'course assignment',
+                                'success_endpoint': 'assignment dialog saves one student assignment',
                                 'page_states': ['Teacher dashboard', 'Assign management dialog'],
                                 'click_path': ['Open dashboard', 'Click 分配管理'],
                                 'entrypoints': ['CourseCard -> 分配管理'],
@@ -147,6 +158,7 @@ def _write_surface_prototype_manifest_for_gate(gate: Path) -> Path:
                                     {'kind': 'component', 'path': 'OpenMAIC/components/course/AssignManageDialog.tsx'}
                                 ],
                                 'linked_acceptance_criteria': ['AC-21'],
+                                'linked_journeys': ['J-01'],
                                 'required': True,
                             },
                         ],
@@ -185,6 +197,10 @@ def _write_non_browser_surface_prototype_manifest_for_gate(gate: Path) -> Path:
                                 'id': 'prompt-contract',
                                 'title': 'Prompt contract',
                                 'kind': 'other',
+                                'actor': 'workflow reviewer',
+                                'task_start': 'reviewer opens workflow review artifact',
+                                'main_business_object': 'prompt contract',
+                                'success_endpoint': 'prompt contract and audit tabs are visible',
                                 'page_states': ['Prompt Contract'],
                                 'click_path': ['Open artifact', 'Select Prompt Contract'],
                                 'entrypoints': ['workflow review artifact -> Prompt Contract tab'],
@@ -195,6 +211,7 @@ def _write_non_browser_surface_prototype_manifest_for_gate(gate: Path) -> Path:
                                     {'kind': 'events', 'path': '.rrc-controller-*/events.jsonl'},
                                 ],
                                 'linked_acceptance_criteria': ['AC-42'],
+                                'linked_journeys': [],
                                 'required': True,
                             }
                         ],
@@ -1298,6 +1315,26 @@ def test_final_acceptance_accepts_existing_required_document_deliverable(tmp_pat
     validate_final_document_deliverables(gate, {'workspacePath': str(workspace)})
 
 
+def test_final_acceptance_accepts_multiple_backticked_required_document_paths_in_one_cell(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    first = workspace / 'docs' / 'open-spec' / 'feature' / '05-development-plan.md'
+    second = workspace / 'docs' / 'open-spec' / 'feature' / '06-test-cases.md'
+    first.parent.mkdir(parents=True)
+    first.write_text('# Development Plan\n', encoding='utf-8')
+    second.write_text('# Test Cases\n', encoding='utf-8')
+    gate = tmp_path / 'unit-plan.md'
+    gate.write_text(
+        '# Unit Plan Confirmation\n\n'
+        '## Document Deliverables Matrix\n'
+        '| Area | Target Path | Action | Required For Acceptance | Evidence / Reason |\n'
+        '| --- | --- | --- | --- | --- |\n'
+        '| open-spec | `docs/open-spec/feature/05-development-plan.md` 与 `docs/open-spec/feature/06-test-cases.md` | update/verify | true | Both Open Spec files are acceptance-blocking docs. |\n',
+        encoding='utf-8',
+    )
+
+    validate_final_document_deliverables(gate, {'workspacePath': str(workspace)})
+
+
 def test_unit_plan_test_case_matrix_with_design_columns_requires_real_test_evidence(tmp_path: Path) -> None:
     gate = tmp_path / 'unit-plan.md'
     gate.write_text(
@@ -1885,7 +1922,9 @@ def test_unit_plan_accepts_real_route_prototype_conformance_test(tmp_path: Path)
                         'expected': 'route /dashboard/preview shows Dashboard and Preview states, preserves the primary action order, and opens the preview panel after clicking Preview',
                         'prototype_conformance': ['requirements-prototype'],
                         'production_targets': ['/dashboard/preview'],
-                        'visual_evidence_plan': _visual_evidence_plan(),
+                        'visual_evidence_plan': _visual_evidence_plan() | {
+                            'screenshot_regression': 'playwright visual comparison threshold 0.02',
+                        },
                     }
                 ],
             }
@@ -1973,6 +2012,140 @@ def test_unit_plan_rejects_route_text_only_prototype_conformance_expected(tmp_pa
     }
 
     with pytest.raises(ValueError, match='missing L2 structural/interaction assertions'):
+        validate_unit_plan_prototype_conformance(requirements, unit_plan, state)
+
+
+def test_unit_plan_requires_critical_surface_screenshot_regression_plan(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 课程运营原型中的每个弹窗 surface 必须落到真实入口。\n',
+        encoding='utf-8',
+    )
+    _write_surface_prototype_manifest_for_gate(requirements)
+    unit_plan = tmp_path / 'approvals' / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n\n## Test Case Matrix\n', encoding='utf-8')
+    state = {
+        'currentUnitId': 'unit-01',
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-PUBLISH-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'fixture': 'teacher dashboard with a published course',
+                        'command': 'npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium',
+                        'expected': 'CourseCard opens PublishTargetDialog and shows selected class count',
+                        'prototype_conformance': ['v291-course-ops-prototype-contract'],
+                        'prototype_surfaces': ['publish-target-dialog'],
+                        'production_targets': ['component:OpenMAIC/components/course/PublishTargetDialog.tsx'],
+                        'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        'visual_evidence_plan': _visual_evidence_plan(
+                            prototype='artifacts/requirements-draft/prototypes/course-ops/publish-dialog.png',
+                            production='artifacts/unit-01/screenshots/publish-dialog.png',
+                            interaction='artifacts/unit-01/screenshots/publish-dialog-after-click.png',
+                            entrypoint='/dashboard/teacher',
+                            action_path=['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        ) | {'screenshot_regression': 'playwright visual comparison threshold 0.02'},
+                    },
+                    {
+                        'id': 'TC-PROTO-ASSIGN-MANAGE-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'fixture': 'teacher dashboard with one assignable course and two students',
+                        'command': 'npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium',
+                        'expected': 'CourseCard opens AssignManageDialog, lists two students, toggles one assignment, and shows saved count 1',
+                        'prototype_conformance': ['v291-course-ops-prototype-contract'],
+                        'prototype_surfaces': ['assignment-management-dialog'],
+                        'production_targets': ['component:OpenMAIC/components/course/AssignManageDialog.tsx'],
+                        'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
+                        'visual_evidence_plan': _visual_evidence_plan(
+                            prototype='artifacts/requirements-draft/prototypes/course-ops/assign-dialog.png',
+                            production='artifacts/unit-01/screenshots/assign-dialog.png',
+                            interaction='artifacts/unit-01/screenshots/assign-dialog-after-click.png',
+                            entrypoint='/dashboard/teacher',
+                            action_path=['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
+                        ),
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='missing L3 screenshot regression evidence plan'):
+        validate_unit_plan_prototype_conformance(requirements, unit_plan, state)
+
+
+def test_unit_plan_rejects_visual_entrypoint_that_does_not_cover_surface_click_path(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 课程运营原型中的每个弹窗 surface 必须落到真实入口。\n',
+        encoding='utf-8',
+    )
+    _write_surface_prototype_manifest_for_gate(requirements)
+    unit_plan = tmp_path / 'approvals' / 'unit-plan.md'
+    unit_plan.write_text('# Unit Plan\n\n## Test Case Matrix\n', encoding='utf-8')
+    visual_plan = _visual_evidence_plan(
+        prototype='artifacts/requirements-draft/prototypes/course-ops/assign-dialog.png',
+        production='artifacts/unit-01/screenshots/assign-dialog.png',
+        interaction='artifacts/unit-01/screenshots/assign-dialog-after-click.png',
+        entrypoint='/settings',
+        action_path=['Open /settings', 'Click Preview'],
+    )
+    visual_plan['screenshot_regression'] = 'playwright visual comparison threshold 0.02'
+    state = {
+        'currentUnitId': 'unit-01',
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': False,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-PUBLISH-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'fixture': 'teacher dashboard with a published course',
+                        'command': 'npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium',
+                        'expected': 'CourseCard opens PublishTargetDialog and shows selected class count',
+                        'prototype_conformance': ['v291-course-ops-prototype-contract'],
+                        'prototype_surfaces': ['publish-target-dialog'],
+                        'production_targets': ['component:OpenMAIC/components/course/PublishTargetDialog.tsx'],
+                        'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        'visual_evidence_plan': _visual_evidence_plan(
+                            prototype='artifacts/requirements-draft/prototypes/course-ops/publish-dialog.png',
+                            production='artifacts/unit-01/screenshots/publish-dialog.png',
+                            interaction='artifacts/unit-01/screenshots/publish-dialog-after-click.png',
+                            entrypoint='/dashboard/teacher',
+                            action_path=['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        ) | {'screenshot_regression': 'playwright visual comparison threshold 0.02'},
+                    },
+                    {
+                        'id': 'TC-PROTO-ASSIGN-MANAGE-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'fixture': 'teacher dashboard with one assignable course and two students',
+                        'command': 'npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium',
+                        'expected': 'CourseCard opens AssignManageDialog, lists two students, toggles one assignment, and shows saved count 1',
+                        'prototype_conformance': ['v291-course-ops-prototype-contract'],
+                        'prototype_surfaces': ['assignment-management-dialog'],
+                        'production_targets': ['component:OpenMAIC/components/course/AssignManageDialog.tsx'],
+                        'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
+                        'visual_evidence_plan': visual_plan,
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='visual evidence entrypoint/action_path does not cover manifest click_path'):
         validate_unit_plan_prototype_conformance(requirements, unit_plan, state)
 
 
@@ -2074,7 +2247,8 @@ def test_unit_plan_requires_each_surface_target_not_adjacent_dialog(tmp_path: Pa
                             production='artifacts/unit-01/screenshots/publish-dialog.png',
                             interaction='artifacts/unit-01/screenshots/publish-dialog-after-click.png',
                             entrypoint='/dashboard/teacher',
-                        ),
+                            action_path=['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        ) | {'screenshot_regression': 'playwright visual comparison threshold 0.02'},
                     }
                 ],
             }
@@ -2123,7 +2297,8 @@ def test_unit_plan_accepts_required_surface_target_with_real_entrypoint_steps(tm
                             production='artifacts/unit-01/screenshots/publish-dialog.png',
                             interaction='artifacts/unit-01/screenshots/publish-dialog-after-click.png',
                             entrypoint='/dashboard/teacher',
-                        ),
+                            action_path=['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        ) | {'screenshot_regression': 'playwright visual comparison threshold 0.02'},
                     },
                     {
                         'id': 'TC-PROTO-ASSIGN-MANAGE-DIALOG',
@@ -2141,7 +2316,8 @@ def test_unit_plan_accepts_required_surface_target_with_real_entrypoint_steps(tm
                             production='artifacts/unit-01/screenshots/assign-dialog.png',
                             interaction='artifacts/unit-01/screenshots/assign-dialog-after-click.png',
                             entrypoint='/dashboard/teacher',
-                        ),
+                            action_path=['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
+                        ) | {'screenshot_regression': 'playwright visual comparison threshold 0.02'},
                     },
                 ],
             }
@@ -2292,6 +2468,130 @@ def test_final_acceptance_blocks_passed_prototype_evidence_without_visual_screen
             artifacts_dir=artifacts_dir,
             requirements_path=requirements,
         )
+
+
+def test_final_acceptance_accepts_verifier_test_case_and_visual_evidence_aliases(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 教师工作台必须符合原型合约。\n',
+        encoding='utf-8',
+    )
+    _write_prototype_manifest_for_gate(requirements, ac='AC-21')
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'npx playwright test tests/e2e/teacher-dashboard.spec.ts --project=chromium'
+    visual_evidence = _visual_evidence_plan()
+    action_path = visual_evidence.pop('action_path')
+    visual_evidence['screenshot_regression_result'] = {
+        'status': 'passed',
+        'passed': True,
+        'action_path': action_path,
+    }
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case': 'TC-PROTO-ALIAS',
+                        'acceptance_criteria': ['AC-21'],
+                        'command': command,
+                        'expected': 'dashboard route preserves prototype visuals and preview interaction',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'environment_kind': 'local_real',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'visual_evidence': visual_evidence,
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-ALIAS',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'environment_kind': 'local_real',
+                        'command': command,
+                        'expected': 'dashboard route preserves prototype visuals and preview interaction',
+                        'prototype_conformance': ['requirements-prototype'],
+                        'production_targets': ['/dashboard/preview'],
+                        'user_steps': ['Open /dashboard/preview', 'Click Preview'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    validate_final_prototype_conformance(
+        state=state,
+        artifacts_dir=artifacts_dir,
+        requirements_path=requirements,
+    )
+
+
+def test_final_real_e2e_accepts_verifier_test_case_alias_with_unit_plan_defaults(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'npx playwright test tests/e2e/golden.spec.ts --project=chromium'
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case': 'TC-GOLDEN-ALIAS',
+                        'command': command,
+                        'expected': 'golden path opens dashboard and shows production data',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'golden_path': True,
+                        'environment_kind': 'local_real',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'currentUnitId': 'unit-01',
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-GOLDEN-ALIAS',
+                        'acceptance_criterion': 'AC-1',
+                        'layer': 'e2e',
+                        'golden_path': True,
+                        'environment_kind': 'local_real',
+                        'entrypoint': '/dashboard',
+                        'command': command,
+                        'expected': 'golden path opens dashboard and shows production data',
+                    }
+                ],
+            }
+        ],
+    }
+
+    validate_final_real_e2e_evidence(state=state, artifacts_dir=artifacts_dir)
 
 
 def test_final_acceptance_accepts_local_real_non_browser_prototype_conformance_evidence(tmp_path: Path) -> None:
@@ -2513,6 +2813,120 @@ def test_final_acceptance_blocks_explicit_screenshot_regression_without_result(t
                         'prototype_conformance': ['requirements-prototype'],
                         'production_targets': ['/dashboard/preview'],
                         'user_steps': ['Open /dashboard/preview', 'Click Preview'],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match='missing screenshot regression result'):
+        validate_final_prototype_conformance(
+            state=state,
+            artifacts_dir=artifacts_dir,
+            requirements_path=requirements,
+        )
+
+
+def test_final_acceptance_blocks_default_critical_surface_without_screenshot_regression_result(tmp_path: Path) -> None:
+    requirements = tmp_path / 'approvals' / 'requirements-and-acceptance.md'
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text(
+        '# 需求与验收确认\n\n'
+        '## 3. 验收标准\n'
+        '- AC-21 [verification: e2e]: 课程运营原型中的每个弹窗 surface 必须落到真实入口。\n',
+        encoding='utf-8',
+    )
+    _write_surface_prototype_manifest_for_gate(requirements)
+    artifacts_dir = tmp_path / 'artifacts'
+    unit_dir = artifacts_dir / 'unit-01'
+    unit_dir.mkdir(parents=True)
+    command = 'npx playwright test tests/e2e/course-dialogs.spec.ts --project=chromium'
+    (unit_dir / 'verification.json').write_text(
+        json.dumps(
+            {
+                'evidence_rows': [
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-PUBLISH-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'CourseCard opens PublishTargetDialog and shows selected class count',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': '/dashboard/teacher',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'visual_evidence_refs': _visual_evidence_plan(
+                            prototype='artifacts/requirements-draft/prototypes/course-ops/publish-dialog.png',
+                            production='artifacts/unit-01/screenshots/publish-dialog.png',
+                            interaction='artifacts/unit-01/screenshots/publish-dialog-after-click.png',
+                            entrypoint='/dashboard/teacher',
+                            action_path=['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                        ) | {'screenshot_regression': 'artifacts/unit-01/visual-diff/publish-dialog.json'},
+                    },
+                    {
+                        'unit_id': 'unit-01',
+                        'test_case_id': 'TC-PROTO-ASSIGN-MANAGE-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'CourseCard opens AssignManageDialog and saves assignment count 1',
+                        'status': 'passed',
+                        'returncode': 0,
+                        'artifact_refs': ['artifacts/unit-01/verification.json'],
+                        'environment_kind': 'local_real',
+                        'real_entrypoint': '/dashboard/teacher',
+                        'uses_core_api_mock': False,
+                        'mocked_routes': [],
+                        'browser_console_errors': [],
+                        'page_errors': [],
+                        'request_failures': [],
+                        'visual_evidence_refs': _visual_evidence_plan(
+                            prototype='artifacts/requirements-draft/prototypes/course-ops/assign-dialog.png',
+                            production='artifacts/unit-01/screenshots/assign-dialog.png',
+                            interaction='artifacts/unit-01/screenshots/assign-dialog-after-click.png',
+                            entrypoint='/dashboard/teacher',
+                            action_path=['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
+                        ),
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    state = {
+        'units': [
+            {
+                'id': 'unit-01',
+                'passes': True,
+                'test_cases': [
+                    {
+                        'id': 'TC-PROTO-PUBLISH-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'CourseCard opens PublishTargetDialog and shows selected class count',
+                        'prototype_conformance': ['v291-course-ops-prototype-contract'],
+                        'prototype_surfaces': ['publish-target-dialog'],
+                        'production_targets': ['component:OpenMAIC/components/course/PublishTargetDialog.tsx'],
+                        'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 发布对象'],
+                    },
+                    {
+                        'id': 'TC-PROTO-ASSIGN-MANAGE-DIALOG',
+                        'acceptance_criterion': 'AC-21',
+                        'layer': 'e2e',
+                        'command': command,
+                        'expected': 'CourseCard opens AssignManageDialog and saves assignment count 1',
+                        'prototype_conformance': ['v291-course-ops-prototype-contract'],
+                        'prototype_surfaces': ['assignment-management-dialog'],
+                        'production_targets': ['component:OpenMAIC/components/course/AssignManageDialog.tsx'],
+                        'user_steps': ['Open /dashboard/teacher', 'Click CourseCard 分配管理'],
                     }
                 ],
             }

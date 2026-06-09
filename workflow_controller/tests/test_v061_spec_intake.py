@@ -389,6 +389,59 @@ def test_v062e_go_accepts_open_spec_package_directory(tmp_path: Path) -> None:
     assert Path(spec['conversionArtifacts']['validationReport']).exists()
 
 
+def test_go_accepts_existing_session_same_spec_path_after_open_spec_package_hash_changes(tmp_path: Path) -> None:
+    workspace = tmp_path / 'workspace'
+    package_dir = _write_open_spec_package(workspace / 'docs' / 'v1.0-course-draft-delivery-learning-mvp')
+    workspace.mkdir(exist_ok=True)
+
+    first = _run_rrc(
+        'go',
+        'V1.0',
+        '--workspace-dir',
+        str(workspace),
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        '--spec',
+        'docs/v1.0-course-draft-delivery-learning-mvp',
+        cwd=workspace,
+    )
+    assert first.returncode == 0, first.stderr
+    state_path = workspace / '.rrc-controller-v1.0' / 'session.json'
+    original_spec = json.loads(state_path.read_text(encoding='utf-8'))['requirementsSpec']
+
+    (package_dir / '02-specification.md').write_text(
+        '# Specification\n\n'
+        '## Behavior\n\n'
+        '- Draft submissions preserve author and course context.\n'
+        '- Implementation progress docs were updated after requirements intake.\n',
+        encoding='utf-8',
+    )
+
+    second = _run_rrc(
+        'go',
+        'V1.0',
+        '--workspace-dir',
+        str(workspace),
+        '--runner',
+        'subprocess',
+        '--dry-run',
+        '--max-steps',
+        '0',
+        '--spec',
+        'docs/v1.0-course-draft-delivery-learning-mvp',
+        cwd=workspace,
+    )
+
+    assert second.returncode == 0, second.stderr
+    current_spec = json.loads(state_path.read_text(encoding='utf-8'))['requirementsSpec']
+    assert current_spec['path'] == original_spec['path']
+    assert current_spec['sourceType'] == original_spec['sourceType']
+    assert current_spec['hash'] == original_spec['hash']
+
+
 def test_v061_spec_errors_are_clear_and_do_not_create_bad_sessions(tmp_path: Path) -> None:
     missing_state = tmp_path / 'missing-state'
     missing = _run_rrc(

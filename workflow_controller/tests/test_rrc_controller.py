@@ -7318,6 +7318,64 @@ def test_drive_blocked_assist_continue_requires_human_reason_and_unblocks_enviro
     assert selected[-1]['payload']['human_reason'] == 'exported production readonly URL'
 
 
+def test_drive_blocked_assist_continue_allows_stale_requirements_contract_when_current_gate_passes_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'state'
+    controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
+    controller.init_state(
+        {
+            'task_id': 'delivery',
+            'currentUnitId': 'unit-01',
+            'currentStep': 'WAITING_REQUIREMENTS_ACCEPTANCE',
+            'lastVerifiedStep': 'REQUIREMENTS_DRAFT',
+            'status': 'blocked',
+            'blockedReason': (
+                'requirements gate invalid after automatic revisions: '
+                'requirements gate invalid: stale controller validator false positive'
+            ),
+            'blockedContext': {'category': 'requirements_contract', 'source': 'controller_preflight'},
+            'requestedOutcome': 'usable-system',
+            'feasibleOutcome': 'usable-system',
+            'scopeApproved': True,
+            'requirementsAccepted': False,
+            'requirementsDraftGenerated': True,
+            'humanGatesRequired': True,
+            'objectiveCoverage': [
+                {'objective': 'Delivery objective', 'units': ['unit-01'], 'status': 'partial'},
+            ],
+            'units': [{'id': 'unit-01', 'name': 'Delivery', 'passes': False}],
+        },
+        force=True,
+    )
+    gate_path = state_dir / 'approvals' / 'requirements-and-acceptance.md'
+    write_gate_file(gate_path, '# Requirements & Acceptance Confirmation\n\nValid after controller update.\n')
+    monkeypatch.setattr(controller, '_requirements_gate_invalid_reason', lambda _state, _gate_path: None)
+    outputs: list[str] = []
+    choices = iter(['c', 'controller validator updated; current Requirements gate passes preflight'])
+
+    state = controller.drive(
+        input_func=lambda _prompt: next(choices),
+        output_func=outputs.append,
+        timestamp_output=False,
+        print_agent_target=False,
+    )
+
+    assert state['status'] == 'active'
+    assert state['currentStep'] == 'WAITING_REQUIREMENTS_ACCEPTANCE'
+    assert state['requirementsAccepted'] is False
+    assert state.get('blockedReason') is None
+    assert 'blockedContext' not in state
+    assert any('已按人工确认解除 blocked' in line for line in outputs)
+    events = [json.loads(line) for line in (state_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
+    selected = [event for event in events if event['type'] == 'blocked_assist_resolution_selected']
+    assert selected[-1]['payload']['selected_route'] == 'continue'
+    unblocked = [event for event in events if event['type'] == 'blocked_state_unblocked']
+    assert unblocked[-1]['payload']['previous_category'] == 'requirements_contract'
+
+
+
 def test_drive_blocked_assist_continue_rejects_unit_plan_contract_blocker(tmp_path: Path) -> None:
     state_dir = tmp_path / 'state'
     controller = RalphRefinerController(state_dir=state_dir, auto_approve=True)
@@ -12353,19 +12411,24 @@ def test_status_clears_stale_final_acceptance_gate_invalid_blocker_after_revalid
                         'page_states': ['Prompt Contract', 'Audit'],
                         'click_path': ['Open artifact', 'Select Prompt Contract', 'Select Audit'],
                         'surface_contracts': [
-                            {
-                                'id': 'prompt-contract',
-                                'title': 'Prompt contract',
-                                'kind': 'other',
-                                'page_states': ['Prompt Contract'],
-                                'click_path': ['Open artifact', 'Select Prompt Contract'],
-                                'entrypoints': ['workflow review artifact -> Prompt Contract tab'],
+                                {
+                                    'id': 'prompt-contract',
+                                    'title': 'Prompt contract',
+                                    'kind': 'other',
+                                    'actor': 'workflow reviewer',
+                                    'task_start': 'reviewer opens workflow review artifact',
+                                    'main_business_object': 'prompt contract',
+                                    'success_endpoint': 'prompt contract tab is visible with audit transition',
+                                    'page_states': ['Prompt Contract'],
+                                    'click_path': ['Open artifact', 'Select Prompt Contract'],
+                                    'entrypoints': ['workflow review artifact -> Prompt Contract tab'],
                                 'implementation_targets': [
                                     {'kind': 'module', 'path': 'workflow_controller/prompts/requirements_package.py'},
-                                ],
-                                'linked_acceptance_criteria': ['AC-42'],
-                                'required': True,
-                            }
+                                    ],
+                                    'linked_acceptance_criteria': ['AC-42'],
+                                    'linked_journeys': [],
+                                    'required': True,
+                                }
                         ],
                         'implementation_targets': [
                             {'kind': 'module', 'path': 'workflow_controller/prompts/requirements_package.py'},
@@ -12759,13 +12822,14 @@ def test_approved_bug_fix_gate_runs_bug_fix_and_regression_verification(tmp_path
 
     approvals_dir = state_dir / 'approvals'
     bug_gate = approvals_dir / 'bug-fix.md'
+    regression_command = _python_c("print('PASS regression')")
     write_gate_file(
         bug_gate,
         '# Bug Fix Gate\n\n'
         '## Expected Behavior\n- user can retry import.\n\n'
         '## Actual Behavior\n- retry button is missing.\n\n'
         '## Root Cause\n- implementation omitted retry control.\n\n'
-        f'## Regression Verification\n- {_python_c("print(\'PASS regression\')")}\n',
+        f'## Regression Verification\n- {regression_command}\n',
     )
     approve_gate_file(bug_gate, actor='tester')
 

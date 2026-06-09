@@ -79,7 +79,10 @@ def parse_document_deliverables(content: str) -> list[dict[str, Any]]:
         }
         if _row_is_header_or_empty(row):
             continue
-        rows.append(row)
+        for target_path in _target_paths_from_cell(str(row.get('target_path') or '')):
+            expanded_row = dict(row)
+            expanded_row['target_path'] = target_path
+            rows.append(expanded_row)
     return rows
 
 
@@ -266,6 +269,32 @@ def _clean_target_path(value: str) -> str:
     if ' / ' in text:
         text = text.replace(' / ', '/')
     return text
+
+
+def _target_paths_from_cell(value: str) -> list[str]:
+    if not str(value or '').strip():
+        return ['']
+    if _target_declares_no_formal_doc_change(value):
+        return [_clean_target_path(value)]
+
+    code_spans = re.findall(r'`([^`]+)`', value)
+    path_spans = [
+        span
+        for span in code_spans
+        if _looks_like_deliverable_target(span)
+    ]
+    if len(path_spans) >= 2:
+        return [_clean_target_path(span) for span in path_spans]
+    return [_clean_target_path(value)]
+
+
+def _looks_like_deliverable_target(value: str) -> bool:
+    text = str(value or '').strip()
+    if not text:
+        return False
+    if _target_is_external_reference(text):
+        return True
+    return '/' in text or text.endswith(('.md', '.markdown', '.rst', '.txt', '.json', '.html'))
 
 
 def _target_declares_no_formal_doc_change(value: str) -> bool:

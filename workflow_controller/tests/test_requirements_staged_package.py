@@ -143,6 +143,10 @@ def _write_required_product_prototype_manifest(draft_dir: Path) -> None:
                                 'id': 'course-center-page',
                                 'title': '课程生产中心页面',
                                 'kind': 'page',
+                                'actor': 'teacher',
+                                'task_start': 'teacher opens /teacher/course-center',
+                                'main_business_object': 'course draft',
+                                'success_endpoint': 'course draft detail shows generated chapter count and ready status',
                                 'page_states': ['入口页', '生成中状态', '草稿详情'],
                                 'click_path': ['打开课程生产中心', '点击生成课程', '查看草稿详情'],
                                 'entrypoints': ['/teacher/course-center'],
@@ -767,6 +771,10 @@ def test_product_design_stage_validation_rejects_manifest_references_unknown_sco
                                 'id': 'course-center-page',
                                 'title': '课程生产中心页面',
                                 'kind': 'page',
+                                'actor': 'teacher',
+                                'task_start': 'teacher opens /teacher/course-production',
+                                'main_business_object': 'course draft',
+                                'success_endpoint': 'course draft detail is reachable',
                                 'page_states': ['入口页'],
                                 'click_path': ['打开课程生产中心'],
                                 'entrypoints': ['/teacher/course-production'],
@@ -774,6 +782,7 @@ def test_product_design_stage_validation_rejects_manifest_references_unknown_sco
                                     {'kind': 'route', 'path': '/teacher/course-production'}
                                 ],
                                 'linked_acceptance_criteria': ['AC-V04-999'],
+                                'linked_journeys': ['J-V04-999'],
                                 'required': True,
                             }
                         ],
@@ -892,6 +901,29 @@ def test_test_strategy_stage_validation_ignores_stale_scope_4_6_matrix(
     mark_stage_artifact(state, 'test_strategy', test_strategy_path)
 
     validate_staged_requirements_stage_output(state, tmp_path / 'artifacts', 'test_strategy')
+
+
+def test_requirements_gate_accepts_negative_dom_action_network_assertions(
+    tmp_path: Path,
+) -> None:
+    gate = tmp_path / 'requirements.md'
+    gate.write_text(
+        '# Requirements\n\n'
+        '## Acceptance Criteria\n'
+        '- AC-V10-015 [verification: e2e]: Visible entry actions are guarded.\n\n'
+        '## Journey Acceptance Matrix\n'
+        '| Journey | Title | Status | Steps | AC | Verification Layer |\n'
+        '| --- | --- | --- | --- | --- | --- |\n'
+        '| J-V10-015 | Entry action guard | active | Open `/customer/course-production` -> enumerate primary CTA -> verify legacy action is not a failing path | AC-V10-015 | e2e |\n\n'
+        '## 4.6 E2E 测试方法与前置依赖矩阵（E2E Test Method & Prerequisite Matrix）\n'
+        '| AC / Journey | E2E Method | Real Entrypoint | User Steps | Fixture / Test Data / Setup | Verification Command | Environment Kind | Required Env / Dependencies | Mock Policy | Expected Assertions | Human Review Notes |\n'
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        '| AC-V10-015 / J-V10-015 | Playwright-driven entry action guard for all primary visible operations | `/customer/course-production` | Open entry, enumerate enabled primary CTAs, verify V1.0 main CTA navigates to the draft closure path, verify legacy `提交建课` is absent, disabled or marked `legacy/out-of-scope`, and verify it cannot fire a failing live OpenMAIC request | Fixed local stack, pre-seeded V1.0 draft, DOM action inventory, V1.0 main CTA target route/API available | `bash scripts/verify/v10-local-real-e2e.sh` | local_real | React Web entry, Go API, same-origin `/api`, fixture actors, DOM inventory collector, network collector | Do not mock core business APIs or production Web | No undeclared enabled primary CTA exists; legacy `提交建课` cannot be a clickable failing main action; V1.0 main CTA reaches review/publish/learn loop; no live OpenMAIC failure is triggered by a visible primary operation | Human may confirm wording clarity, but pass/fail depends on machine-readable DOM/action/network assertions |\n',
+        encoding='utf-8',
+    )
+
+    validate_requirements_acceptance_quality(gate, {})
+
 
 
 def test_test_strategy_stage_validation_ignores_non_4_6_tables_under_4_6_subsections(
@@ -1372,6 +1404,117 @@ def test_product_design_stage_rejects_flat_manifest_with_missing_prototypes_guid
     assert 'flat top-level prototype manifest keys are not accepted' in message
 
 
+def test_product_design_stage_rejects_required_surface_without_user_task_contract(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    draft_dir = artifacts_dir / 'requirements-draft'
+    draft_dir.mkdir(parents=True)
+    prototype_path = draft_dir / 'course-center.html'
+    prototype_path.write_text('<button>生成课程</button>', encoding='utf-8')
+    (draft_dir / 'prototype-manifest.json').write_text(
+        json.dumps({
+            'prototypes': [
+                {
+                    'id': 'course-center',
+                    'type': 'html',
+                    'path': 'course-center.html',
+                    'title': '课程生产中心',
+                    'linked_acceptance_criteria': ['AC-07'],
+                    'linked_journeys': ['J-01'],
+                    'page_states': ['入口页', '草稿详情'],
+                    'click_path': ['打开课程生产中心', '查看草稿详情'],
+                    'implementation_targets': [{'kind': 'route', 'path': '/teacher/course-center'}],
+                    'surface_contracts': [
+                        {
+                            'id': 'course-center-page',
+                            'title': '课程生产中心页面',
+                            'kind': 'page',
+                            'page_states': ['入口页', '草稿详情'],
+                            'click_path': ['打开课程生产中心', '查看草稿详情'],
+                            'entrypoints': ['/teacher/course-center'],
+                            'implementation_targets': [{'kind': 'route', 'path': '/teacher/course-center'}],
+                            'linked_acceptance_criteria': ['AC-07'],
+                            'linked_journeys': ['J-01'],
+                            'required': True,
+                        }
+                    ],
+                }
+            ]
+        }),
+        encoding='utf-8',
+    )
+    state = {
+        'task_id': 'target-v0-4',
+        'requestedOutcome': 'Classroom V0.4',
+        'stagedRequirementsEnabled': True,
+        'requirementsSurfaceClassification': {
+            'product_ui': 'required',
+            'web_system': 'required',
+            'prototype_required': 'required',
+        },
+    }
+    scope_path = _write_artifact(tmp_path, 'scope.md', _staged_checkpoint_body('scope'))
+    product_path = _write_artifact(
+        tmp_path,
+        'product.md',
+        '# Product Design\n\n'
+        '## Visible Surface Inventory\n'
+        '| Surface ID | Surface | Kind | Required |\n'
+        '| --- | --- | --- | --- |\n'
+        '| course-center-page | 课程生产中心页面 | page | yes |\n',
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        validate_staged_requirements_stage_output(
+            state,
+            artifacts_dir,
+            'product_design',
+            artifact_path=product_path,
+        )
+
+    message = str(excinfo.value)
+    assert 'surface course-center-page missing actor' in message
+    assert 'surface course-center-page missing task_start' in message
+    assert 'surface course-center-page missing main_business_object' in message
+    assert 'surface course-center-page missing success_endpoint' in message
+
+
+def test_product_design_stage_rejects_declared_visible_surface_missing_from_manifest(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    draft_dir = artifacts_dir / 'requirements-draft'
+    _write_required_product_prototype_manifest(draft_dir)
+    state = {
+        'task_id': 'target-v0-4',
+        'requestedOutcome': 'Classroom V0.4',
+        'stagedRequirementsEnabled': True,
+        'requirementsSurfaceClassification': {
+            'product_ui': 'required',
+            'web_system': 'required',
+            'prototype_required': 'required',
+        },
+    }
+    scope_path = _write_artifact(tmp_path, 'scope.md', _staged_checkpoint_body('scope'))
+    product_path = _write_artifact(
+        tmp_path,
+        'product.md',
+        '# Product Design\n\n'
+        '## Visible Surface Inventory\n'
+        '| Surface ID | Surface | Kind | Required |\n'
+        '| --- | --- | --- | --- |\n'
+        '| course-center-page | 课程生产中心页面 | page | yes |\n'
+        '| assign-dialog | 分配弹窗 | dialog | yes |\n',
+    )
+    mark_stage_artifact(state, 'scope', scope_path)
+
+    with pytest.raises(ValueError, match='visible surface assign-dialog missing from prototype-manifest surface_contracts'):
+        validate_staged_requirements_stage_output(
+            state,
+            artifacts_dir,
+            'product_design',
+            artifact_path=product_path,
+        )
+
+
 def test_product_design_stage_rejects_workspace_relative_manifest_path_with_artifact_local_guidance(tmp_path: Path) -> None:
     artifacts_dir = tmp_path / 'artifacts'
     draft_dir = artifacts_dir / 'requirements-draft'
@@ -1397,11 +1540,16 @@ def test_product_design_stage_rejects_workspace_relative_manifest_path_with_arti
                             'id': 'course-center-page',
                             'title': '课程生产中心页面',
                             'kind': 'page',
+                            'actor': 'teacher',
+                            'task_start': 'teacher opens /teacher/course-center',
+                            'main_business_object': 'course draft',
+                            'success_endpoint': 'course draft detail shows generated chapter count and ready status',
                             'page_states': ['入口页', '生成中状态', '草稿详情'],
                             'click_path': ['打开课程生产中心', '点击生成课程', '查看草稿详情'],
                             'entrypoints': ['/teacher/course-center'],
                             'implementation_targets': [{'kind': 'route', 'path': '/teacher/course-center'}],
                             'linked_acceptance_criteria': ['AC-07'],
+                            'linked_journeys': ['J-01'],
                             'required': True,
                         }
                     ],
@@ -1461,11 +1609,16 @@ def test_product_design_stage_accepts_docs_path_when_file_exists_under_artifact_
                             'id': 'course-center-page',
                             'title': '课程生产中心页面',
                             'kind': 'page',
+                            'actor': 'teacher',
+                            'task_start': 'teacher opens /teacher/course-center',
+                            'main_business_object': 'course draft',
+                            'success_endpoint': 'course draft detail shows generated chapter count and ready status',
                             'page_states': ['入口页', '生成中状态', '草稿详情'],
                             'click_path': ['打开课程生产中心', '点击生成课程', '查看草稿详情'],
                             'entrypoints': ['/teacher/course-center'],
                             'implementation_targets': [{'kind': 'route', 'path': '/teacher/course-center'}],
                             'linked_acceptance_criteria': ['AC-07'],
+                            'linked_journeys': ['J-01'],
                             'required': True,
                         }
                     ],
@@ -1523,11 +1676,16 @@ def test_product_design_stage_accepts_basic_required_prototype_manifest(tmp_path
                             'id': 'course-center-page',
                             'title': '课程生产中心页面',
                             'kind': 'page',
+                            'actor': 'teacher',
+                            'task_start': 'teacher opens /teacher/course-center',
+                            'main_business_object': 'course draft',
+                            'success_endpoint': 'course draft detail shows generated chapter count and ready status',
                             'page_states': ['入口页', '生成中状态', '草稿详情'],
                             'click_path': ['打开课程生产中心', '点击生成课程', '查看草稿详情'],
                             'entrypoints': ['/teacher/course-center'],
                             'implementation_targets': [{'kind': 'route', 'path': '/teacher/course-center'}],
                             'linked_acceptance_criteria': ['AC-07'],
+                            'linked_journeys': ['J-01'],
                             'required': True,
                         }
                     ],

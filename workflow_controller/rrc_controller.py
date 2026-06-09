@@ -835,6 +835,16 @@ class RalphRefinerController:
             state['blockedReason'] = None
         return state
 
+    def _requirements_contract_blocker_resolved_by_current_gate(self, state: dict[str, Any]) -> bool:
+        if _blocked_category(state) != 'requirements_contract':
+            return False
+        if state.get('currentStep') != 'WAITING_REQUIREMENTS_ACCEPTANCE':
+            return False
+        gate_path = self.approvals_dir / 'requirements-and-acceptance.md'
+        if not gate_path.exists():
+            return False
+        return self._requirements_gate_invalid_reason(state, gate_path) is None
+
     def _apply_and_validate_unit_plan_gate(
         self,
         state: dict[str, Any],
@@ -3475,10 +3485,12 @@ class RalphRefinerController:
         blocked_reason = str(state.get('blockedReason') or '').strip()
         category = _blocked_category(state)
         if not _blocked_category_allows_unblock(category):
-            raise ValueError(
-                'blocked reason is not an environment/external dependency blocker. '
-                + _blocked_rework_hint(state, self.state_dir)
-            )
+            contract_blocker_resolved = self._requirements_contract_blocker_resolved_by_current_gate(state)
+            if not contract_blocker_resolved:
+                raise ValueError(
+                    'blocked reason is not an environment/external dependency blocker. '
+                    + _blocked_rework_hint(state, self.state_dir)
+                )
         previous_context = state.get('blockedContext') if isinstance(state.get('blockedContext'), dict) else {}
         stage_feedback = _requirements_stage_validation_feedback(state, previous_context=previous_context)
         state['status'] = 'active'
@@ -4761,9 +4773,12 @@ class RalphRefinerController:
                 state = self.get_status()
                 category = _blocked_category(state)
                 if not _blocked_category_allows_unblock(category):
-                    output_func('[Blocked Assist] 合同类 blocked 不能直接继续；请选择 Unit Plan、Requirements 或 Final Acceptance 正式路线。')
-                    output_func(_blocked_rework_hint(state, self.state_dir))
-                    continue
+                    if self._requirements_contract_blocker_resolved_by_current_gate(state):
+                        output_func('[Blocked Assist] 当前 Requirements gate 已通过 controller 预检；允许按已解决继续同一阶段。')
+                    else:
+                        output_func('[Blocked Assist] 合同类 blocked 不能直接继续；请选择 Unit Plan、Requirements 或 Final Acceptance 正式路线。')
+                        output_func(_blocked_rework_hint(state, self.state_dir))
+                        continue
                 self._append_blocked_assist_resolution_event(
                     state,
                     selected_route='continue',

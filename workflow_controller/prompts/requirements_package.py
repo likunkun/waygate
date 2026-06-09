@@ -214,6 +214,7 @@ def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) ->
             '            {"kind": "route", "path": "/teacher/course-center"}\n'
             '          ],\n'
             '          "linked_acceptance_criteria": ["AC-07"],\n'
+            '          "linked_journeys": ["J-01"],\n'
             '          "required": true\n'
             '        }\n'
             '      ]\n'
@@ -221,8 +222,8 @@ def render_product_design_prompt(state: dict[str, Any], *, output_path: Path) ->
             '  ]\n'
             '}\n'
             '```\n'
-            '示例中的 `actor`、`task_start`、`main_business_object` 和 `success_endpoint` 是 prompt-level Product Journey 字段，'
-            '用于防止示意图冒充产品任务；V0.6.2i 不把这些字段变成 controller validator 必填字段。\n'
+            '示例中的 `actor`、`task_start`、`main_business_object` 和 `success_endpoint` 是 required surface 的 controller validator 必填字段，'
+            '用于防止示意图冒充产品任务；每个 required `surface_contracts[]` object 都必须声明。\n'
             '不要把 `clickable_prototype_access_method`、`page_states`、`click_path` 写成扁平顶层字段；'
             '这些字段必须位于 `prototypes[]` 的 prototype object 或 `surface_contracts[]` object 内。'
         )

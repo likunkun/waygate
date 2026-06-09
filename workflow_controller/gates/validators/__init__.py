@@ -19,6 +19,7 @@ from workflow_controller.evidence_policy import (
     case_declares_core_api_mock,
     case_declared_mocked_routes,
     case_environment_kind,
+    case_real_entrypoint,
     case_requires_real_e2e,
     command_core_api_mock_routes,
     evidence_row_real_e2e_issue,
@@ -666,6 +667,7 @@ def validate_requirements_acceptance_quality(
     )
     valid_prototype_manifest = False
     prototype_manifest_issue: str | None = None
+    normalized_prototype_manifest: dict[str, Any] | None = None
     if prototype_manifest_required:
         manifest_path, artifacts_dir = source_prototype_manifest_path_for_requirements(requirements_path)
         if not manifest_path.exists():
@@ -675,7 +677,7 @@ def validate_requirements_acceptance_quality(
             )
         else:
             try:
-                validate_prototype_review_manifest(
+                normalized_prototype_manifest = validate_prototype_review_manifest(
                     manifest_path,
                     requirements_path=requirements_path,
                     artifacts_dir=artifacts_dir,
@@ -688,6 +690,14 @@ def validate_requirements_acceptance_quality(
                 valid_prototype_manifest = True
             except ValueError as exc:
                 prototype_manifest_issue = str(exc)
+
+    if valid_prototype_manifest and normalized_prototype_manifest is not None:
+        missing_surface_ids = (
+            _product_design_declared_required_surface_ids(prototype_contract_content)
+            - _normalized_manifest_surface_ids(normalized_prototype_manifest)
+        )
+        for surface_id in sorted(missing_surface_ids):
+            issues.append(f'visible surface {surface_id} missing from prototype-manifest surface_contracts')
 
     if (
         needs_uiux_prototype
@@ -748,7 +758,7 @@ def validate_staged_requirements_stage_output(
         issues.extend(_requirements_scope_stage_contract_issues(content))
     elif stage == 'product_design':
         issues.extend(_staged_output_unknown_reference_issues(content, known_scope_ids, label='Product Design checkpoint'))
-        issues.extend(_product_design_stage_manifest_issues(state, artifacts_dir, known_scope_ids))
+        issues.extend(_product_design_stage_manifest_issues(state, artifacts_dir, known_scope_ids, content))
     elif stage == 'architecture':
         issues.extend(_staged_output_unknown_reference_issues(content, known_scope_ids, label='Architecture checkpoint'))
         issues.extend(_architecture_stage_e2e_handoff_issues(content, scope_content))
@@ -867,6 +877,7 @@ def _product_design_stage_manifest_issues(
     state: dict[str, Any],
     artifacts_dir: Path,
     known_scope_ids: dict[str, set[str]],
+    product_design_content: str = '',
 ) -> list[str]:
     if not _product_design_stage_requires_prototype_manifest(state):
         return []
@@ -899,6 +910,7 @@ def _product_design_stage_manifest_issues(
         return ['Product Design checkpoint prototype-manifest.json must contain a non-empty `prototypes[]` list']
 
     issues: list[str] = []
+    manifest_surface_ids: set[str] = set()
     for index, prototype in enumerate(prototypes):
         if not isinstance(prototype, dict):
             issues.append(f'prototype[{index}] must be an object')
@@ -962,7 +974,22 @@ def _product_design_stage_manifest_issues(
                     issues.append(f'prototype {label} surface_contracts[{surface_index}] must be an object')
                     continue
                 surface_label = str(surface.get('id') or surface_index)
+                if str(surface.get('id') or '').strip():
+                    manifest_surface_ids.add(str(surface.get('id') or '').strip().lower())
                 _stage_require_non_empty(surface, ['id', 'title', 'kind'], f'prototype {label} surface {surface_label}', issues)
+                for field, keys in {
+                    'actor': ('actor', 'user_actor', 'userActor', 'role'),
+                    'task_start': ('task_start', 'taskStart', 'start_state', 'startState'),
+                    'main_business_object': (
+                        'main_business_object',
+                        'mainBusinessObject',
+                        'business_object',
+                        'businessObject',
+                    ),
+                    'success_endpoint': ('success_endpoint', 'successEndpoint', 'end_state', 'endState'),
+                }.items():
+                    if not _stage_scalar_value(surface, *keys):
+                        issues.append(f'prototype {label} surface {surface_label} missing {field}')
                 if not _stage_list_value(surface, 'page_states', 'pageStates'):
                     issues.append(f'prototype {label} surface {surface_label} missing page_states')
                 if not _stage_list_value(surface, 'click_path', 'clickPath'):
@@ -979,11 +1006,16 @@ def _product_design_stage_manifest_issues(
                     'acs',
                 ):
                     issues.append(f'prototype {label} surface {surface_label} missing linked_acceptance_criteria')
+                if (known_scope_ids.get('journeys') or set()) and not _stage_list_value(surface, 'linked_journeys', 'journeys'):
+                    issues.append(f'prototype {label} surface {surface_label} missing linked_journeys')
                 issues.extend(_prototype_scope_reference_issues(
                     surface,
                     known_scope_ids,
                     f'prototype {label} surface {surface_label}',
                 ))
+
+    for surface_id in sorted(_product_design_declared_required_surface_ids(product_design_content) - manifest_surface_ids):
+        issues.append(f'visible surface {surface_id} missing from prototype-manifest surface_contracts')
 
     if issues:
         return ['Product Design checkpoint prototype-manifest.json is incomplete: ' + '; '.join(issues)]
@@ -1069,6 +1101,62 @@ def _stage_list_value(payload: dict[str, Any], *keys: str) -> list[Any]:
         if isinstance(value, str) and value.strip():
             return [part.strip() for part in value.replace(';', ',').split(',') if part.strip()]
     return []
+
+
+def _stage_scalar_value(payload: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ''
+
+
+def _product_design_declared_required_surface_ids(content: str) -> set[str]:
+    ids: set[str] = set()
+    active_header: list[str] | None = None
+    for line in content.splitlines():
+        if _is_markdown_table_separator(line):
+            continue
+        cells = _markdown_table_cells(line)
+        if not cells:
+            active_header = None
+            continue
+        lowered = [_normalized_requirements_text(cell) for cell in cells]
+        if any('surface id' in cell or 'surface_id' in cell or 'surface key' in cell for cell in lowered):
+            active_header = lowered
+            continue
+        if not active_header:
+            continue
+        surface_index = _header_index(active_header, ('surface id', 'surface_id', 'surface key'))
+        if surface_index is None or surface_index >= len(cells):
+            continue
+        required_index = _header_index(active_header, ('required', 'must register', '必须登记', '是否必需', '是否必须'))
+        if required_index is not None and required_index < len(cells):
+            required_value = _normalized_requirements_text(cells[required_index])
+            if required_value in {'no', 'false', 'not required', 'optional', '否', '不需要', '非必需'}:
+                continue
+        surface_id = str(cells[surface_index] or '').strip().strip('`')
+        if surface_id and not surface_id.lower().startswith('surface'):
+            ids.add(surface_id.lower())
+    return ids
+
+
+def _normalized_manifest_surface_ids(normalized_manifest: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for prototype in normalized_manifest.get('prototypes') or []:
+        if not isinstance(prototype, dict):
+            continue
+        for surface in prototype.get('surface_contracts') or []:
+            if isinstance(surface, dict) and str(surface.get('id') or '').strip():
+                ids.add(str(surface.get('id') or '').strip().lower())
+    return ids
+
+
+def _header_index(headers: list[str], aliases: tuple[str, ...]) -> int | None:
+    for index, header in enumerate(headers):
+        if any(alias in header for alias in aliases):
+            return index
+    return None
 
 
 def _stage_declares_real_e2e_or_browser_review(content: str) -> bool:
@@ -1830,18 +1918,75 @@ def validate_final_real_e2e_evidence(
     artifacts_dir: Path,
 ) -> None:
     issues: list[str] = []
+    cases_by_id, cases_by_command = _final_test_case_lookup(state)
     for row in _final_verification_evidence_rows(state, artifacts_dir):
         if not isinstance(row, dict):
             continue
         if row.get('golden_path') is not True:
             continue
-        issue = evidence_row_real_e2e_issue(row)
+        effective_row = _final_effective_real_e2e_row(row, cases_by_id, cases_by_command)
+        issue = evidence_row_real_e2e_issue(effective_row)
         if issue:
             issues.append(
-                f"golden_path {row.get('test_case_id') or row.get('acceptance_criterion') or 'unknown-test'}: {issue}"
+                f"golden_path {_final_evidence_row_test_case_id(effective_row) or effective_row.get('acceptance_criterion') or 'unknown-test'}: {issue}"
             )
     if issues:
         raise ValueError('real E2E evidence is incomplete: ' + '; '.join(issues))
+
+
+def _final_test_case_lookup(state: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    by_command: dict[str, dict[str, Any]] = {}
+    for unit in state.get('units') or []:
+        if not isinstance(unit, dict):
+            continue
+        for case in _unit_test_cases(unit):
+            if not isinstance(case, dict):
+                continue
+            case_id = str(case.get('id') or case.get('test_case_id') or case.get('testCaseId') or '').strip()
+            if case_id:
+                by_id.setdefault(case_id, case)
+            command = str(case.get('command') or '').strip()
+            if command:
+                by_command.setdefault(command, case)
+    return by_id, by_command
+
+
+def _final_effective_real_e2e_row(
+    row: dict[str, Any],
+    cases_by_id: dict[str, dict[str, Any]],
+    cases_by_command: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    effective = dict(row)
+    case_id = _final_evidence_row_test_case_id(effective)
+    command = str(effective.get('command') or '').strip()
+    case = cases_by_id.get(case_id) or cases_by_command.get(command)
+    if not case:
+        return effective
+    if case_id and not str(effective.get('test_case_id') or '').strip():
+        effective['test_case_id'] = case_id
+    if not str(effective.get('layer') or '').strip():
+        effective['layer'] = case.get('layer')
+    if not str(effective.get('environment_kind') or '').strip():
+        effective['environment_kind'] = case_environment_kind(case)
+    if not str(effective.get('real_entrypoint') or '').strip():
+        effective['real_entrypoint'] = case_real_entrypoint(case, command)
+    if 'uses_core_api_mock' not in effective:
+        effective['uses_core_api_mock'] = case_declares_core_api_mock(case)
+    for field in ('browser_console_errors', 'page_errors', 'request_failures'):
+        effective.setdefault(field, [])
+    return effective
+
+
+def _final_evidence_row_test_case_id(row: dict[str, Any]) -> str:
+    for key in ('test_case_id', 'testCaseId', 'test_case', 'testCase', 'case_id', 'caseId'):
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ''
 
 
 def apply_unit_plan_state_patch_from_gate(state: dict[str, Any], gate_path: Path) -> dict[str, Any]:
@@ -2676,9 +2821,18 @@ def _requirements_e2e_assertions_are_strong(value: str) -> bool:
         '导出',
         '文案',
     ]
-    return any(marker in normalized for marker in strong_markers) and not (
+    negative_machine_assertion_patterns = [
+        r'\bno\b.{0,120}\b(?:exists?|enabled|clickable|trigger(?:ed)?|fires?|requests?|network|api|failure|error|route|button|cta|operation)\b',
+        r'\b(?:cannot|must not|does not|do not|never)\b.{0,120}\b(?:clickable|trigger|fire|request|call|fail|failure|api|network|route|openmaic)\b',
+        r'\b(?:absent|disabled|hidden)\b',
+        r'(隐藏|禁用|不可点击|不会触发|不得触发|无).{0,80}(按钮|cta|请求|网络|api|错误|失败|操作)',
+    ]
+    has_strong_assertion = any(marker in normalized for marker in strong_markers) or any(
+        re.search(pattern, normalized) for pattern in negative_machine_assertion_patterns
+    )
+    return has_strong_assertion and not (
         any(marker in normalized for marker in weak_markers)
-        and not any(marker in normalized for marker in strong_markers)
+        and not has_strong_assertion
     )
 
 
@@ -3326,12 +3480,15 @@ def _prototype_conformance_case_issue(
     )
     if visual_plan_issue:
         return visual_plan_issue
+    coverage_issue = _prototype_visual_evidence_plan_coverage_issue(case, target, contract or {})
+    if coverage_issue:
+        return coverage_issue
+    if fidelity_rank(fidelity_required) >= fidelity_rank('structural_interaction') and _prototype_expected_lacks_l2_assertions(case):
+        return 'missing L2 structural/interaction assertions'
     if fidelity_rank(fidelity_required) >= fidelity_rank('pixel_exact') and not _case_has_l4_visual_plan(case):
         return 'missing L4 pixel-exact evidence plan'
     if fidelity_rank(fidelity_required) >= fidelity_rank('screenshot_regression') and not _case_has_l3_visual_plan(case):
         return 'missing L3 screenshot regression evidence plan'
-    if fidelity_rank(fidelity_required) >= fidelity_rank('structural_interaction') and _prototype_expected_lacks_l2_assertions(case):
-        return 'missing L2 structural/interaction assertions'
     return ''
 
 
@@ -3350,6 +3507,67 @@ def _prototype_visual_evidence_plan_issue(
         if requires_interaction and not plan.get('interaction_screenshot'):
             return 'missing L2 interaction screenshot evidence plan'
     return ''
+
+
+def _prototype_visual_evidence_plan_coverage_issue(
+    case: dict[str, Any],
+    target: dict[str, Any],
+    contract: dict[str, Any],
+) -> str:
+    plan = case_visual_evidence_plan(case)
+    action_path = _case_visual_plan_list(plan.get('action_path'))
+    if not action_path:
+        return ''
+    entrypoint = str(plan.get('entrypoint') or '').strip()
+    target_path = str(target.get('path') or '').strip()
+    target_kind = str(target.get('kind') or '').strip().lower()
+    if target_kind == 'route' and target_path and entrypoint and target_path not in entrypoint:
+        return 'visual evidence entrypoint/action_path does not cover manifest click_path'
+    contract_click_path = _case_visual_plan_list(contract.get('click_path'))
+    if not contract_click_path:
+        return ''
+    missing_steps = [
+        step for step in contract_click_path
+        if not _visual_action_step_is_covered(step, action_path, entrypoint=entrypoint)
+    ]
+    if missing_steps:
+        return 'visual evidence entrypoint/action_path does not cover manifest click_path'
+    return ''
+
+
+def _visual_action_step_is_covered(step: str, action_path: list[str], *, entrypoint: str) -> bool:
+    normalized_step = _normalized_visual_step(step)
+    if not normalized_step:
+        return True
+    haystack = _normalized_visual_step(' '.join([entrypoint, *action_path]))
+    if normalized_step in haystack:
+        return True
+    tokens = [token for token in re.split(r'[\s/`"\'->:：,，;；()（）]+', normalized_step) if token]
+    meaningful_tokens = [
+        token for token in tokens
+        if token not in {
+            'open',
+            'click',
+            'the',
+            'a',
+            'an',
+            'page',
+            'route',
+            'dashboard',
+            'entrypoint',
+            '打开',
+            '点击',
+            '页面',
+            '入口',
+        }
+    ]
+    if not meaningful_tokens:
+        return all(token in haystack for token in tokens if token)
+    return all(token in haystack for token in meaningful_tokens)
+
+
+def _normalized_visual_step(value: str) -> str:
+    return re.sub(r'\s+', ' ', str(value or '').strip().lower())
 
 
 def _case_visual_plan_list(value: Any) -> list[str]:
