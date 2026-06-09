@@ -2573,6 +2573,31 @@ def test_req_annotation_prompt_contains_required_categories_and_risk_only_schema
     assert 'Status: approved' not in prompt
 
 
+def test_annotation_prompt_contains_product_contract_traceability_audit_section(tmp_path: Path) -> None:
+    prompt = render_annotation_prompt(
+        'requirements_annotation',
+        artifact_path=tmp_path / 'requirements-annotations.json',
+        gate_path=tmp_path / 'requirements-and-acceptance.md',
+        validator_summary='验收标准完整、无歧义 preflight passed',
+        evidence_refs=[
+            'artifacts/requirements-draft/product-design.md',
+            'artifacts/requirements-spec-intake/source-map.json',
+        ],
+    )
+
+    for expected in [
+        'Product Contract Traceability Audit',
+        '信息衰减',
+        '受控主体选择',
+        'request payload',
+        'response/readback',
+        'action path',
+        '验收标准完整、无歧义',
+        'Requirements/Product Design/Spec -> AC/Journey -> Unit Plan test case -> command/user_steps/expected -> Final Acceptance evidence',
+    ]:
+        assert expected in prompt
+
+
 def test_unit_plan_annotation_prompt_contains_mapping_doc_and_descriptive_item_risks(tmp_path: Path) -> None:
     prompt = render_annotation_prompt(
         'unit_plan_annotation',
@@ -2597,6 +2622,110 @@ def test_unit_plan_annotation_prompt_contains_mapping_doc_and_descriptive_item_r
     assert 'document deliverables' in prompt
     assert 'AC/AO/Journey' in prompt
     assert 'must not approve Unit Plan' in prompt
+
+
+def test_product_contract_taxonomy_is_available_and_preserved_by_normalizer(tmp_path: Path) -> None:
+    for role in ANNOTATION_ROLES:
+        for category in [
+            'product_contract_gap',
+            'information_degradation',
+            'product_field_mapping_gap',
+            'out_of_scope_boundary_risk',
+        ]:
+            assert category in default_annotation_issue_categories(role)
+
+    writer = _annotation_writer_script(
+        tmp_path,
+        payload={
+            'summary': '发现产品合同字段映射风险',
+            'issues': [
+                {
+                    'category': 'product_contract_gap',
+                    'severity': 'high',
+                    'location': 'AC-TRIAL-001',
+                    'linked_ac': 'AC-TRIAL-001',
+                    'linked_ao': None,
+                    'linked_journey': 'J-TRIAL-001',
+                    'message': '试用登录入口字段在后续测试合同中消失。',
+                    'evidence_refs': ['artifacts/requirements-draft/product-design.md'],
+                }
+            ],
+        },
+    )
+    state = {
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': sys.executable,
+                'args': [str(writer)],
+                'timeout_seconds': 5,
+                'artifact_path': 'requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        }
+    }
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path,
+        artifacts_dir=tmp_path,
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+    )
+
+    payload = json.loads(result.artifact_path.read_text(encoding='utf-8'))
+    assert payload['issues'][0]['category'] == 'product_contract_gap'
+    assert 'product_contract_gap' in payload['risk_taxonomy']
+
+
+def test_default_annotation_evidence_refs_include_stable_contract_sources_only_when_present(
+    tmp_path: Path,
+) -> None:
+    artifacts_dir = tmp_path / 'artifacts'
+    existing_refs = [
+        artifacts_dir / 'requirements-draft' / 'requirements-scope.md',
+        artifacts_dir / 'requirements-draft' / 'product-design.md',
+        artifacts_dir / 'requirements-draft' / 'requirements-test-strategy.md',
+        artifacts_dir / 'requirements-spec-intake' / 'source-map.json',
+        artifacts_dir / 'requirements-spec-intake' / 'normalized-requirements.json',
+        artifacts_dir / 'requirements-draft' / 'prototype-manifest.json',
+    ]
+    for path in existing_refs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{}\n' if path.suffix == '.json' else '# fixture\n', encoding='utf-8')
+
+    state = {
+        'annotationAgents': {
+            'requirements_annotation': {
+                'enabled': True,
+                'backend': 'codex',
+                'command': sys.executable,
+                'args': [str(_annotation_writer_script(tmp_path))],
+                'timeout_seconds': 5,
+                'artifact_path': 'requirements-annotations.json',
+                'prompt_template': 'risk-json-v1',
+                'failure_policy': 'block',
+            }
+        }
+    }
+
+    result = run_annotation_pass(
+        state,
+        'requirements_annotation',
+        state_dir=tmp_path / 'state',
+        artifacts_dir=artifacts_dir,
+        workspace_dir=tmp_path,
+        gate_path=tmp_path / 'requirements.md',
+    )
+
+    prompt = result.prompt_path.read_text(encoding='utf-8')
+    for path in existing_refs:
+        assert str(path) in prompt
+    assert str(artifacts_dir / 'requirements-spec-intake' / 'validation-report.json') not in prompt
+    assert str(artifacts_dir / 'journeys' / 'journeys.json') not in prompt
 
 
 def test_requirements_and_unit_plan_annotation_prompts_flag_environment_availability_risks(

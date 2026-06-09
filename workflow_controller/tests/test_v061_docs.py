@@ -285,8 +285,8 @@ def test_v062i_prompt_document_contract_docs_and_roadmap_exist() -> None:
     assert '不新增 deterministic validator、state schema、CLI 参数或 hard gate' in roadmap_zh
     assert '0.6.2i' in readme
     assert '0.6.2i' in readme_zh
-    assert 'waygate_0.6.2i_all.deb' in usage
-    assert 'waygate_0.6.2i_all.deb' in usage_zh
+    assert 'waygate_0.6.2j_all.deb' in usage
+    assert 'waygate_0.6.2j_all.deb' in usage_zh
 
 
 def test_unit_plan_evidence_row_preflight_policy_doc_and_registry_exist() -> None:
@@ -358,3 +358,28 @@ def test_annotation_policy_docs_cover_subprocess_runtime_and_revision_freshness(
     assert '标注 Agent 开始' in usage_zh
     assert '标注 Agent 完成' in usage_zh
     assert 'Requirements 修订' in usage_zh
+
+
+def test_annotation_policy_docs_cover_product_contract_traceability_audit() -> None:
+    workflow_doc = _read('docs/workflow/external-spec-intake-and-annotation-policy.md')
+    architecture_doc = _read('docs/architecture/external-spec-intake-and-annotation-architecture.md')
+    registry = _read('docs/README.md')
+
+    for text in (workflow_doc, architecture_doc):
+        for expected in [
+            'Product Contract Traceability Audit',
+            '产品合同保真',
+            '信息衰减',
+            'product_contract_gap',
+            'information_degradation',
+            'product_field_mapping_gap',
+            'out_of_scope_boundary_risk',
+            'request payload',
+            'response/readback',
+            'action path',
+            'advisory risk-only',
+        ]:
+            assert expected in text
+
+    assert 'Product Contract Traceability Audit' in registry
+    assert '产品合同保真' in registry

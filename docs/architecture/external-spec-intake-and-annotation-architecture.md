@@ -68,6 +68,14 @@ The prompt template registry is responsible for stable prompt contracts, stage-s
 
 The templates are risk-only. They cannot ask an agent to approve a gate, change approval state, or rewrite deterministic verifier status.
 
+Every annotation prompt also renders a `Product Contract Traceability Audit` block. This is the module boundary for advisory risk-only 产品合同保真 review: `annotation_agents.py` renders the audit instructions and taxonomy, normalizes the returned risk keys, and records them in the annotation artifact; it does not add a deterministic validator, state schema field, CLI option, approval source, or hard gate.
+
+The audit compares the product-contract chain from `Requirements/Product Design/Spec -> AC/Journey -> Unit Plan test case -> command/user_steps/expected -> Final Acceptance evidence`. It asks the backend to look for 信息衰减 across entry fields, selectors, 受控主体选择, user steps, main business object, success endpoint, error states, `request payload`, `response/readback`, DOM/API/DB evidence, screenshots, and `action path`.
+
+The shared risk taxonomy includes `product_contract_gap`, `information_degradation`, `product_field_mapping_gap`, and `out_of_scope_boundary_risk`. Normalization preserves these categories in `risk_taxonomy` and in `issues[].category` when returned by a backend. Unknown categories still fall back to the role's safe default.
+
+Default annotation evidence refs are assembled from stable text and JSON contract sources when they exist or when staged package state explicitly records them. Requirements annotation can reference Requirements Scope, Product Design, Test Strategy, `source-map.json`, `normalized-requirements.json`, and `prototype-manifest.json`. Unit Plan annotation can reference the Unit Plan body, approved Requirements, Product Design, Test Strategy, Journey contracts, and prototype manifest. Final Acceptance verification assist can reference approved Requirements, approved Unit Plan, `verification.json`, Final Scope Audit, and the Prototype Conformance Matrix. Missing optional refs are omitted to avoid legacy-session noise.
+
 The environment availability checklist is rendered by `workflow_controller/annotation_agents.py`. It directs Requirements and Unit Plan annotation agents to flag `production_readonly` plans that lack real external URL/API endpoint details, including `PRODUCTION_WEB_BASE_URL` and `PRODUCTION_API_BASE_URL`, and to call out missing Docker, Docker Compose, Playwright/browser, port, service, database, cache, and external API readiness. It also states that `verification_env` key names do not prove executable values or reachable environments.
 
 ## Verification Evidence Schema

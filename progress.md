@@ -1,5 +1,118 @@
 # 进度日志
 
+## 会话：2026-06-09
+
+### Annotation Agent 产品合同保真审查增强
+- **状态：** implementation verified; focused annotation/docs suites and full regression passed.
+- 修复：annotation prompt 增加 `Product Contract Traceability Audit` section，要求人工 gate 前辅助审查当前版本产品合同是否完整、无歧义，并检查从 Requirements/Product Design/Spec 到 AC/Journey、Unit Plan test case、command/user_steps/expected 和 Final Acceptance evidence 的信息衰减。
+- 修复：annotation risk taxonomy 新增 `product_contract_gap`、`information_degradation`、`product_field_mapping_gap`、`out_of_scope_boundary_risk`，并保持 `ambiguous_acceptance` 作为验收语言歧义分类；normalizer 会保留新增 category，不降级为 `weak_evidence`。
+- 修复：默认 annotation evidence refs 改为只注入存在或 state 明确记录的稳定文本/JSON 合同源，覆盖 Requirements Scope、Product Design、Test Strategy、source-map、normalized requirements、prototype manifest、approved Requirements/Unit Plan、verification.json、Final Scope Audit 和 Prototype Conformance Matrix，避免 legacy session 噪音。
+- 文档：同步正式 workflow / architecture annotation 文档和 `docs/README.md` registry，明确该审查是 advisory risk-only，不是完整性证明、审批来源、deterministic validator、state schema、CLI 或 hard gate。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'product_contract or default_annotation_evidence_refs or traceability_audit'` -> 3 failed，分别复现缺 prompt section、缺 taxonomy 和 legacy default refs。
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q -k 'product_contract_traceability_audit'` -> 1 failed，复现正式文档缺说明。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q -k 'product_contract or default_annotation_evidence_refs or traceability_audit'` -> `3 passed, 55 deselected`。
+  - GREEN: `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q -k 'product_contract_traceability_audit'` -> `1 passed, 8 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_annotation_agents.py -q` -> `58 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_docs.py -q` -> `9 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `897 passed in 83.60s`。
+  - `git diff --check` -> passed。
+
+### V0.6.2j 版本号与 Debian 打包
+- **状态：** package built and verified.
+- 修复：`workflow_controller.__version__` 更新为 `0.6.2j`；同步 `USAGE.md` / `USAGE.zh-CN.md` 安装示例、packaging 测试期望和双语 CHANGELOG 顶部记录。
+- 打包：`bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2j_all.deb`。
+- 验证：
+  - `python3 -m pytest workflow_controller/tests/test_packaging.py workflow_controller/tests/test_v061_docs.py -q` -> `13 passed`。
+  - `python3 -m workflow_controller.cli --version` -> `waygate 0.6.2j`。
+  - `dpkg-deb --field dist/waygate_0.6.2j_all.deb Package Version Architecture Depends` -> `waygate / 0.6.2j / all / python3`。
+  - 解包后 `WAYGATE_LIB_DIR=/tmp/waygate-0.6.2j-check/usr/lib/waygate /tmp/waygate-0.6.2j-check/usr/bin/waygate --version` -> `waygate 0.6.2j`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `897 passed in 83.84s`。
+  - `git diff --check` -> passed。
+
+## 会话：2026-06-08
+
+### V2.3 Document Deliverables 多路径解析与 7 号窗口恢复
+- **状态：** controller fix verified; live V2.3 blocker cleared with patched source; Debian package rebuilt as `dist/waygate_0.6.2i_all.deb`.
+- 现场现象：tmux 7 号窗口 `/home/lichangkun/code/proxy-collector/.rrc-controller-v2.3/session.json` 在 verifier 13/13 通过后先停在 `FINAL_WALKTHROUGH_PREPARE status=blocked`，报 required document deliverable missing：`05-development-plan.md` 与 `06-test-cases.md` 被拼成一个目标路径；随后 agent 手工拆分已批准 `approvals/unit-plan.md`，触发 `journey acceptance is incomplete: unit plan gate hash in journey contract is stale`。
+- 根因：Document Deliverables Matrix parser 只把 `Target Path` cell 清理成一个字符串并直接做 `Path.exists()`；同一 cell 中两个 backticked docs path 由中文“与”连接时没有展开成两个 deliverable。后续 stale-hash blocker 是 approved gate body 被手工修改后的预期保护，不是新的业务实现失败。
+- 修复：`parse_document_deliverables()` 对同一 Target Path cell 中多个 path-like backtick span 展开为多条 deliverable row；no-formal-doc-change 行保持原样。新增回归测试覆盖一个 required row 同时声明 `05-development-plan.md` 与 `06-test-cases.md` 的 final acceptance 通过场景。
+- 现场恢复：将 live `approvals/unit-plan.md` 恢复到审批 hash `60033c9e004b38f28d5dc4d7f445f905c3aed4f6a0c3c91639a0d2773ad54317` 对应的原始正文；使用 patched source 执行 `status`，controller 通过 `final_acceptance_gate_invalid_blocker_cleared` 事件清除 blocker，当前 `status=active`、`nextAction=prepare_final_walkthrough`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_final_acceptance_accepts_multiple_backticked_required_document_paths_in_one_cell -q` -> failed，报两个 docs path 被当作一个 missing path。
+  - GREEN: 同一命令 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q -k 'document_deliverable or deliverables'` -> `5 passed, 104 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q` -> `109 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `892 passed in 86.57s`。
+  - `git diff --check` -> passed。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2i_all.deb`；`dpkg-deb --field` -> `Package: waygate`, `Version: 0.6.2i`, `Architecture: all`。
+
+### Existing Session `go --spec` Open Spec package hash drift 修复
+- **状态：** implementation verified; live V2.3 now reaches Final Acceptance human gate with patched source.
+- 现场现象：7 号窗口继续运行 `waygate go V2.3 --spec docs/open-spec/v2.3-ip-key-ops/ ...` 时，报 `Existing session does not match start arguments`；错误中 existing path 和 incoming `--spec` path 相同，但仍拒绝接续。
+- 根因：`same_requirements_spec()` 同时比较 path、sourceType 和 hash。Open Spec package 是目录 intake，实施阶段会更新同目录内的 05/06 进度与测试文档，导致当前目录 hash 与 session 初始化时的 `requirementsSpec.hash` 不同。该 hash 是 intake snapshot，不应作为已有 session 的接续兼容条件。
+- 修复：已有 session 的 `--spec` 兼容判断只要求 path 与 sourceType 一致，保留 session 中的原始 hash，不在接续时静默覆盖。不同 spec path 仍会拒绝并要求 `--force`。
+- 现场验证：
+  - patched source 下 `go V2.3 --tmux-target 7.0 --annotation-agent opencode --auto-approve --spec docs/open-spec/v2.3-ip-key-ops/ --max-steps 0` 成功接续，并显示 Final Acceptance 人工 gate。
+  - 7.1 pane 已更新状态：`currentStep=WAITING_FINAL_ACCEPTANCE status=active nextAction=check_final_acceptance`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_v061_spec_intake.py::test_go_accepts_existing_session_same_spec_path_after_open_spec_package_hash_changes -q` -> failed，复现 path 相同但 hash drift 导致 start 参数不匹配。
+  - GREEN: 同一命令 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_v061_spec_intake.py -q` -> `12 passed`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `893 passed in 85.51s`。
+
+### Final Acceptance prototype / real E2E evidence alias follow-up
+- **状态：** implementation verified; live V0.6 state revalidated with patched source; Debian package rebuilt but not installed because passwordless sudo is unavailable in this shell.
+- 现场现象：安装上一轮 Final Scope Audit 修复后，tmux 2 号窗口不再报 AC/AO coverage 缺失，但停在 `FINAL_WALKTHROUGH_PREPARE status=blocked`，报 `prototype conformance is incomplete ... missing`；源码修复 prototype conformance 后又暴露 `real E2E evidence is incomplete: golden_path unknown-test: not e2e evidence`。
+- 根因：V0.6 verifier evidence rows 使用 `test_case` 标识测试用例、使用 `visual_evidence` 保存视觉证据，并把 `action_path` 放在 `screenshot_regression_result` / `screenshot_regression` 内层；Final Acceptance prototype conformance 只匹配 `test_case_id`、只读取 `visual_evidence_refs` 顶层字段。Final real E2E gate 直接检查 raw evidence row，没有按 `test_case` / command 找回 Unit Plan test case 的 `layer=e2e` 和 `entrypoint` 默认值，导致 passed golden path 被误报为 `unknown-test: not e2e evidence`。
+- 修复：prototype conformance evidence matching 接受 `test_case` / `testCase` / `case_id` 等别名，视觉证据统一走 `visual_evidence_refs_from_result()`；视觉证据归一化读取截图回归结果内层的 `action_path`、`entrypoint`、`fidelity_level`、`pixel_tolerance` 和 `compared_screenshots`。Final real E2E gate 会按 evidence test-case alias 或 command 找到 Unit Plan case，并补齐 `layer`、`environment_kind`、`real_entrypoint`、mock 和 runtime 默认字段后再执行原有硬校验。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_final_acceptance_accepts_verifier_test_case_and_visual_evidence_aliases -q` -> failed，先报 `missing`，补 test-case alias 后报 `missing action path`。
+  - GREEN: 同一命令 -> `1 passed`。
+  - RED: `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py::test_final_real_e2e_accepts_verifier_test_case_alias_with_unit_plan_defaults -q` -> failed，报 `golden_path unknown-test: not e2e evidence`。
+  - GREEN: 同一命令 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py -q -k 'final_real_e2e or prototype_conformance or visual_evidence'` -> `6 passed, 102 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py -q -k 'final_acceptance_gate_invalid or prototype_conformance'` -> `2 passed, 246 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py -q -k 'prototype_conformance'` -> `2 passed, 74 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_real_runtime.py -q -k 'visual_evidence'` -> `2 passed, 24 deselected`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `890 passed, 1 skipped in 86.34s`。
+  - `git diff --check` -> passed。
+  - patched source revalidation: `PYTHONPATH=/home/lichangkun/works/ai-works/worktrees/workflow-controller python3 -m workflow_controller.rrc_controller status --state-dir /home/lichangkun/code/classroom/.rrc-controller-v0.6` -> `currentStep=FINAL_WALKTHROUGH_PREPARE status=active nextAction=prepare_final_walkthrough projectTargetVersion=V0.6`。
+  - `bash packaging/debian/build-deb.sh` -> `dist/waygate_0.6.2i_all.deb`；`dpkg-deb --field` -> `0.6.2i`。
+
+### Final Scope Audit evidence alias 修复
+- **状态：** implementation verified; live V0.6 blocker validated on temp state copy.
+- 现场现象：tmux 2 号窗口的 `/home/lichangkun/code/classroom/.rrc-controller-v0.6/session.json` 停在 `FINAL_WALKTHROUGH_PREPARE status=blocked`，报 `AO-001` 和 `AC-V06-001` 至 `AC-V06-010` 缺少 passed evidence row。
+- 根因：V0.6 identity unit 的 `verification.json` 已 `status=passed`、`final_acceptance_can_proceed=true`、18/18 evidence passed，并用 `acceptance_criteria[]` / `obligations[]` 记录 AC/AO 覆盖；`scope_audit.py` 只读取旧字段 `acceptance_criterion` / `acceptance_obligations`，导致 Final Scope Audit 漏认新版数组字段。
+- 修复：Final Scope Audit evidence coverage 增加字段别名识别：AC 读取 `acceptance_criterion`、`acceptance_criteria`、`acceptance_criterion_ids`、`acceptance_criteria_ids`；AO 读取 `acceptance_obligations`、`acceptance_obligation_ids`、`obligations`、`obligation_ids`、`covers_obligations`。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_scope_audit.py::test_scope_audit_accepts_verifier_array_aliases_for_ac_and_ao_coverage -q` -> failed，`ao_coverage.covered_ids == []`。
+  - GREEN: 同一命令 -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_scope_audit.py -q` -> `9 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_scope_audit.py workflow_controller/tests/test_rrc_controller.py -q -k 'final_scope_audit or scope_audit'` -> `11 passed, 246 deselected`。
+  - 临时复制 `/home/lichangkun/code/classroom/.rrc-controller-v0.6` 后用源码重算 Final Scope Audit -> valid；AO `2/2`、AC `11/11`、Journey `6/6`，blockers `[]`。
+  - `python3 -m pytest workflow_controller/tests -q` -> `888 passed, 1 skipped in 85.04s`。
+  - `git diff --check` -> passed。
+
+## 会话：2026-06-07
+
+### Prototype Surface Coverage / Fidelity Gate 硬化
+- **状态：** implementation in progress; focused prototype/controller regression passed.
+- 修复：Product Design / assembled Requirements 对 required UI/Web prototype 增加 surface coverage gate；Product Design 声明的 required visible surface 必须出现在 `prototype-manifest.json` 的 `surface_contracts[]`。
+- 修复：required surface contract 现在要求 `actor`、`task_start`、`main_business_object`、`success_endpoint`、`page_states`、`click_path`、AC 映射、存在 Journey 时的 Journey 映射，以及真实 `implementation_targets`。
+- 修复：关联 E2E AC / active E2E Journey / golden-path 候选的浏览器可见 route/page/dialog/drawer/panel/form surface 默认 fidelity 提升为 `screenshot_regression`；普通 required UI surface 仍保持 `structural_interaction`，`pixel_exact` 仍需显式声明。
+- 修复：Unit Plan prototype conformance 的 `visual_evidence_plan.entrypoint/action_path` 必须覆盖 manifest target surface 的真实生产入口和 click path；Final Acceptance matrix 增加 screenshot regression / diff artifact 字段，并写 `artifacts/final-acceptance/prototype-conformance-matrix.json`。
+- 文档/Prompt：同步 `docs/workflow/prototype-fidelity-policy.md`、`docs/README.md`、Requirements / Product Design / Unit Plan prompt guidance。
+- 验证：
+  - RED: `python3 -m pytest workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_requirements_staged_package.py -q -k 'critical_surface_screenshot_regression or visual_entrypoint_that_does_not_cover or default_critical_surface_without_screenshot_regression or required_surface_without_user_task_contract or declared_visible_surface_missing_from_manifest'` -> 修复前 5 failed。
+  - GREEN: 同一命令 -> `5 passed, 213 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_human_gates.py::test_final_acceptance_gate_renders_prototype_conformance_matrix -q` -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_rrc_human_gates.py -q -k 'prototype or surface or visual or fidelity'` -> `59 passed, 249 deselected`。
+  - `python3 -m pytest workflow_controller/tests/test_rrc_controller.py::test_status_clears_stale_final_acceptance_gate_invalid_blocker_after_revalidation -q` -> `1 passed`。
+  - `python3 -m pytest workflow_controller/tests/test_prototype_review.py workflow_controller/tests/test_acceptance_obligations.py workflow_controller/tests/test_requirements_staged_package.py workflow_controller/tests/test_rrc_human_gates.py workflow_controller/tests/test_rrc_controller.py -q` -> `556 passed in 46.73s`。
+  - 标准命令 `python -m pytest workflow_controller/tests -q` 无法执行：当前 shell 中 `python` 命令不存在。
+  - Fresh after final renderer cleanup: `python3 -m pytest workflow_controller/tests -q` -> `888 passed in 87.48s`。
+
 ## 会话：2026-06-04
 
 ### V0.6.2i Prompt 与文档合同

@@ -102,6 +102,27 @@ All annotation prompts use a shared non-approval prompt contract:
 
 Stage-specific templates add focused risk categories for Requirements, Unit Plan, and Final Acceptance. The templates must not include approval instructions, status mutation instructions, or gate-bypass language.
 
+## Product Contract Traceability Audit
+
+Annotation prompts include a `Product Contract Traceability Audit` section for 产品合同保真 review before the human gate. This section is advisory risk-only: it helps reviewers find risk, but it is not a completeness proof, approval source, deterministic validator, or hard gate.
+
+The audit asks the annotation agent to extract the current-version product contract fields that have already been accepted into Requirements, Product Design, imported Spec artifacts, AC/Journey rows, Unit Plan test cases, and Final Acceptance evidence. The expected contract facts include entry fields, selectors, 受控主体选择, user steps, main business object, success endpoint, error states, `request payload`, `response/readback`, DOM/API/DB evidence, screenshots, and `action path` evidence.
+
+The comparison chain is:
+
+`Requirements/Product Design/Spec -> AC/Journey -> Unit Plan test case -> command/user_steps/expected -> Final Acceptance evidence`.
+
+Annotation should flag 信息衰减 when an upstream field disappears downstream, when a controlled subject choice degrades into a generic role button, when only screenshots or prose summaries remain, or when tests hit only a route without checking `request payload`, `response/readback`, DOM/API/DB readback, or `action path`.
+
+The product-contract taxonomy extends the existing risk keys with:
+
+- `product_contract_gap`
+- `information_degradation`
+- `product_field_mapping_gap`
+- `out_of_scope_boundary_risk`
+
+`ambiguous_acceptance` remains valid when the acceptance wording itself is unclear. Annotation must respect explicit out-of-scope, future, backlog, and open-question boundaries, but password/MFA/SSO exclusions must not erase positive obligations such as `trial-login` user identity, 受控主体选择, `actorContext`, or `headerBundle`.
+
 ## Environment Availability Annotation
 
 Requirements and Unit Plan annotation prompts must explicitly ask the annotation agent to review external runtime availability before the human gate. This is advisory risk context only; it does not approve, reject, or bypass the gate.

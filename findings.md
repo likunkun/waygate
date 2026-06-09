@@ -1,5 +1,49 @@
 # 发现与决策
 
+## 2026-06-09 Annotation 产品合同保真审查边界
+
+- Annotation Agent 的 `Product Contract Traceability Audit` 是人工 gate 前的 advisory risk-only 审查，不是完整性证明、审批来源、deterministic validator、state schema、CLI 参数或 hard gate。它只能帮助人工看到风险，不能 approve、skip、bypass 或修改 gate 状态。
+- 产品合同保真审查的事实链路是 `Requirements/Product Design/Spec -> AC/Journey -> Unit Plan test case -> command/user_steps/expected -> Final Acceptance evidence`。标注应优先发现入口字段、selector、受控主体选择、用户步骤、主业务对象、成功终点、错误态、request payload、response/readback、DOM/API/DB、截图和 action path 在链路中的信息衰减。
+- 稳定 taxonomy 为 `product_contract_gap`、`information_degradation`、`product_field_mapping_gap`、`out_of_scope_boundary_risk`，同时保留 `ambiguous_acceptance` 表达验收语言本身不清楚。Normalizer 必须保留这些 category；未知 category 仍可降级到当前 role 的安全默认分类。
+- Scope guard 的边界是：明确 out-of-scope、future、backlog、open question 的事项不应被标成当前合同缺口；但密码/MFA/SSO 排除不能吞掉 `trial-login` 用户标识、受控主体选择、`actorContext`、`headerBundle` 等正向义务。
+- 默认 annotation evidence refs 只注入存在的稳定文本/JSON 合同源或 state 明确记录的 staged artifacts。不要为了兼容旧 session 把不存在的 optional refs 塞进 prompt；这会制造噪音并诱导 annotation agent 审查不存在的文件。
+
+## 2026-06-08 Document Deliverables multi-path target cells
+
+- Unit Plan Document Deliverables Matrix 的 `Target Path` cell 可以出现多个 backticked concrete path，例如 Open Spec package 中的 `05-development-plan.md` 与 `06-test-cases.md` 同属一个 required deliverable area。Final Acceptance 不能把整格文本当作一个 filesystem path。
+- Parser 边界是：同一 target cell 中存在两个以上 path-like backtick span 时展开为多条 deliverable row；单一路径、外部 URL、`.rrc-controller-*` artifact target 和“不需要正式文档变更”说明保持原有语义。
+- 如果 Final Acceptance 报 `required document deliverable missing: pathA` 与 `pathB` 这类组合路径，而两个文件实际存在，这是 controller parser bug，不应让 target project 改业务实现或补伪文件。
+- 手工编辑已批准的 `approvals/unit-plan.md` 会让 journey contract 中的 gate hash 变 stale。这个 hash blocker 是设计行为；恢复应通过重新批准 Unit Plan，或在确认语义等价且 hash 可验证时把 gate 恢复为原 approved body 后使用修复后的 controller 重新校验。不要手改 live `session.json` 或 `journeys.json`。
+
+## 2026-06-08 Existing session `--spec` compatibility and package hash drift
+
+- `requirementsSpec.hash` 是 Requirements intake 时的 source snapshot，用于审计“当时导入了什么”，不是已有 session 后续 `go/start` 接续时的实时一致性锁。
+- Open Spec package directory 可能同时包含输入需求文档和实施阶段需要更新的长期过程文档，例如 `05-development-plan.md`、`06-test-cases.md`。这些文件在 Builder/Verifier 后更新会改变目录 hash，但不代表 operator 传入了不同 spec。
+- 已有 session 通过 `go/start --spec <same-path>` 接续时，兼容判断应以 `path + sourceType` 为准；原 hash 保留在 session 中，不被静默覆盖。真正切换到另一个 spec path 仍必须拒绝，要求显式 `--force` 或正式 Requirements change route。
+- 如果错误信息中 existing `requirementsSpec.path` 和 incoming `--spec` path 文本相同但仍提示 start arguments mismatch，优先怀疑 package hash drift，而不是让用户 reinitialize 或 revise requirements。
+
+## 2026-06-08 Final Acceptance verifier evidence aliases
+
+- Verifier evidence rows may legitimately identify test cases with `test_case` / `testCase` / `case_id`, not only `test_case_id`. Final Acceptance checks must normalize these aliases before deciding evidence is missing or reporting `unknown-test`.
+- Prototype visual evidence may be recorded as `visual_evidence` instead of `visual_evidence_refs`; screenshot-regression metadata may carry `action_path` and compared screenshot refs inside `screenshot_regression_result` / `screenshot_regression`. Final Acceptance should normalize those nested refs rather than forcing target projects to duplicate fields at the top level.
+- Final real E2E validation is a join between verifier rows and the approved Unit Plan test case contract. When a passed verifier row omits `layer` or `real_entrypoint` but can be matched to a Unit Plan case by test-case alias or command, the gate should apply the Unit Plan `layer=e2e`, `environment_kind`, and entrypoint defaults before running the existing real-E2E hard checks.
+- A Final Acceptance blocker that says prototype conformance evidence is `missing` or golden path is `unknown-test: not e2e evidence` while the verifier aggregate has passed rows with matching commands/test IDs is a controller evidence-schema compatibility issue. Recovery should use patched controller revalidation or an installed patched package; direct edits to live `session.json` remain out of bounds.
+
+## 2026-06-08 Final Scope Audit evidence field aliases
+
+- Verifier evidence rows may legitimately record AC/AO coverage as plural array fields such as `acceptance_criteria[]` and `obligations[]`; this format is used by V0.6 identity organization evidence and can coexist with top-level `covered_acceptance_criteria` / `covered_obligations` summaries.
+- Final Scope Audit must treat singular legacy fields and plural array aliases as the same coverage contract. The coverage reader now accepts AC fields `acceptance_criterion`、`acceptance_criteria`、`acceptance_criterion_ids`、`acceptance_criteria_ids` and AO fields `acceptance_obligations`、`acceptance_obligation_ids`、`obligations`、`obligation_ids`、`covers_obligations`.
+- A blocker that reports missing AC/AO evidence while `verification.json` has passed rows and covered AC/AO summaries is a controller schema compatibility issue, not a reason to revise approved Requirements or Unit Plan. Recovery should rerun the controller after installing/running the patched source so Final Scope Audit regenerates from the same verification artifacts.
+- Directly editing live `session.json` remains out of bounds. The safe diagnostic method is to copy the state-dir to a temporary directory and recompute Final Scope Audit against the copy.
+
+## 2026-06-07 Prototype surface coverage and critical fidelity hardening
+
+- UI/Web prototype manifests are now deterministic acceptance contracts for required visible surfaces. When Scope/Product Design declares required surfaces, each surface must be registered in `prototype-manifest.json` under `surface_contracts[]`; prototype-level registration alone is not enough for page, dialog, drawer, panel, form, or other visible surface obligations.
+- Required surface contracts must preserve the Product Journey Contract in machine-readable fields: `actor`, `task_start`, `main_business_object`, `success_endpoint`, `page_states`, `click_path`, AC mapping, Journey mapping when Journeys exist, and real implementation targets. This turns the V0.6.2i prompt-only guidance into a controller-enforced contract for prototype-required UI/Web surfaces.
+- Browser-visible prototype surfaces linked to E2E ACs, active E2E Journeys, or golden-path candidates default to `screenshot_regression` evidence. Ordinary required UI surfaces still default to `structural_interaction`; `pixel_exact` remains explicit-only.
+- Unit Plan prototype conformance evidence must open the real production entrypoint and its `visual_evidence_plan.action_path` must cover the manifest surface click path. Adjacent dialogs or generic route-loaded checks no longer satisfy the target surface.
+- Final Acceptance writes `artifacts/final-acceptance/prototype-conformance-matrix.json` and shows prototype, production, interaction, screenshot regression, and diff evidence in the matrix. Browser surfaces still require real E2E evidence; target-aware non-browser prototype evidence remains valid for `module` / `artifact` / `state` / `events` targets with complete visual evidence.
+
 ## 2026-06-04 V0.6.2i prompt-only Product Journey Contract boundary
 
 - V0.6.2i is a Prompt+documentation release. It deliberately does not add deterministic validators, required state schema fields, CLI parameters, manifest hard requirements, or hard gates. Product Journey / user-task fields may appear in prompt examples, but they are not controller-blocking manifest fields in this version.

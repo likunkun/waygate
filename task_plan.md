@@ -110,6 +110,7 @@
 - [x] V0.6.2h Requirements 4.6 parser boundary 修复：4.6 row collector 只消费 canonical 11 列 E2E matrix block；遇到非表格行或非 canonical table header 会重置 active 4.6 header，避免同 section 下 4.7 AC closure 等 5 列表继承旧 header 并把 `AC-V10-010` 误报为 4.6 缺列；真实 4.6 row 质量校验不放宽。
 - [x] V0.6.2h follow-up Requirements AC-SPEC provenance prose 修复：source map / conversion artifact / mapping prose、`AC-SPEC-001 -> AC-V10-001`、`AC-SPEC-001 至 AC-SPEC-012`、`AC-SPEC-*` 和 `Imported AC` / `Original AC` provenance 列不再产生当前 AC obligation；canonical Acceptance Criteria 中显式声明 `AC-SPEC-001 [verification: integration]` 仍作为当前 AC 处理；版本保持 `0.6.2h`。
 - [x] V0.6.2i Prompt 与文档合同已实施：无 `--spec` Requirements intake 增加当前版本目标、非目标、验收重点、成功/失败证据和范围边界前置确认；Product Design prompt 要求 1:1 用户任务原型；Unit Plan、Builder、Test Strategist、Refiner prompt 继承 Product Journey Contract 并要求 `主业务对象血缘拆分矩阵`；正式 workflow/architecture 文档、README/USAGE、ROADMAP/CHANGELOG、docs registry 和 package version metadata 已同步；补齐 Test Strategy stage 忽略 Scope 内 stale 4.6 matrix 的既有 validator 边界修复；本版不新增 deterministic validator、state schema、CLI 参数或 hard gate。
+- [x] Prototype Surface Coverage / Fidelity Gate 硬化：required UI/Web prototype visible surface 必须登记到 `surface_contracts[]`，required surface 增加 Product Journey 字段硬校验；E2E/golden-path 浏览器 surface 默认 `screenshot_regression`；Unit Plan 视觉 evidence plan 必须覆盖真实 entrypoint/click path；Final Acceptance 输出 `artifacts/final-acceptance/prototype-conformance-matrix.json` 并展示截图回归 / diff 证据。
 - **状态：** complete
 
 ### 阶段 7：控制器可靠性增强

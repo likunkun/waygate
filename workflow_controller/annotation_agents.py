@@ -90,12 +90,20 @@ DEFAULT_ARTIFACT_PATHS = {
     'final_acceptance_verification_assist': 'final-acceptance/final-acceptance-annotations.json',
 }
 
+PRODUCT_CONTRACT_RISK_CATEGORIES = (
+    'product_contract_gap',
+    'information_degradation',
+    'product_field_mapping_gap',
+    'out_of_scope_boundary_risk',
+)
+
 ROLE_RISK_CATEGORIES = {
     'requirements_annotation': (
         'high_risk_claim',
         'weak_evidence',
         'missing_mapping',
         'ambiguous_acceptance',
+        *PRODUCT_CONTRACT_RISK_CATEGORIES,
         'infrastructure_gap',
         'production_readonly_gap',
         'runtime_dependency_gap',
@@ -111,6 +119,7 @@ ROLE_RISK_CATEGORIES = {
         'verification_env_gap',
         'doc_gap',
         'mapping_gap',
+        *PRODUCT_CONTRACT_RISK_CATEGORIES,
         'descriptive_item_risk',
     ),
     'final_acceptance_verification_assist': (
@@ -118,6 +127,7 @@ ROLE_RISK_CATEGORIES = {
         'missing_evidence',
         'inconsistent_status',
         'manual_review_required',
+        *PRODUCT_CONTRACT_RISK_CATEGORIES,
         'missing_manual_observation',
         'risk_assumption',
     ),
@@ -636,6 +646,7 @@ def render_annotation_prompt(
     environment_checks = '\n'.join(
         f'- {check}' for check in ENVIRONMENT_AVAILABILITY_CHECKS[role]
     )
+    product_contract_audit = _product_contract_traceability_audit_section()
 
     return (
         f'# {ROLE_TITLES[role]}\n\n'
@@ -661,6 +672,7 @@ def render_annotation_prompt(
         f'- Stage focus: {STAGE_FOCUS[role]}\n\n'
         '## Environment Availability Checks\n'
         f'{environment_checks}\n\n'
+        f'{product_contract_audit}\n\n'
         '## Output\n'
         f'- Write one JSON artifact to `{artifact_path}`.\n'
         '- The artifact is advisory evidence for a human reviewer and is not a completion basis by itself.\n'
@@ -1090,7 +1102,7 @@ def run_annotation_pass(
         artifact_path=config.artifact_path,
         gate_path=gate_path,
         validator_summary=validator_summary,
-        evidence_refs=evidence_refs or _default_evidence_refs(role, state, artifacts_dir),
+        evidence_refs=evidence_refs or _default_evidence_refs(role, state, artifacts_dir, state_dir),
         prompt_template=config.prompt_template,
         gate_content_hash=gate_content_hash,
     )
@@ -1283,6 +1295,18 @@ def _stringify_validator_summary(summary: str | dict[str, Any] | None) -> str:
         return json.dumps(summary, ensure_ascii=False, sort_keys=True)
     text = str(summary).strip()
     return text or 'not provided'
+
+
+def _product_contract_traceability_audit_section() -> str:
+    return (
+        '## Product Contract Traceability Audit\n'
+        '- 审查目标：辅助人工确认当前版本产品合同的验收标准完整、无歧义，并识别产品合同保真风险；这是 advisory risk-only 标注，不是完整性证明或审批来源。\n'
+        '- 抽取当前版本已经纳入合同的入口字段、选择器、受控主体选择、用户步骤、主业务对象、成功终点、错误态、request payload、response/readback、DOM/API/DB/截图/action path 证据要求。\n'
+        '- 对照链路：Requirements/Product Design/Spec -> AC/Journey -> Unit Plan test case -> command/user_steps/expected -> Final Acceptance evidence。\n'
+        '- 高风险信息衰减：上游字段或 selector 在下游消失；受控主体选择退化成泛化角色按钮；只剩截图或自然语言摘要；只测 route 不测 request payload、response/readback、DOM/API/DB 读回或 action path。\n'
+        '- 使用分类：product_contract_gap、information_degradation、product_field_mapping_gap、out_of_scope_boundary_risk；保留 ambiguous_acceptance 用于验收语言本身不清楚的风险。\n'
+        '- Scope guard：忽略明确标记为 out-of-scope、future、backlog 或 open question 的事项；但密码/MFA/SSO 排除不能吞掉 trial-login 的用户标识、受控主体选择、actorContext/headerBundle 等正向义务。'
+    )
 
 
 def _command_available(command: str) -> bool:
@@ -1952,28 +1976,87 @@ def _write_failure_artifact(
     config.artifact_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
-def _default_evidence_refs(role: str, state: dict[str, Any], artifacts_dir: Path) -> list[str]:
+def _default_evidence_refs(role: str, state: dict[str, Any], artifacts_dir: Path, state_dir: Path) -> list[str]:
     refs: list[str] = []
     if role == 'requirements_annotation':
-        refs.extend([
-            str(artifacts_dir / 'requirements-draft' / 'requirements-body.md'),
-            str(artifacts_dir / 'requirements-spec-intake' / 'validation-report.json'),
-            str(artifacts_dir / 'journeys' / 'journeys.json'),
-        ])
+        _append_state_artifact_ref(refs, state, 'scope')
+        _append_existing_ref(
+            refs,
+            artifacts_dir / 'requirements-scope' / 'requirements-scope.md',
+            artifacts_dir / 'requirements-draft' / 'requirements-scope.md',
+        )
+        _append_state_artifact_ref(refs, state, 'product_design')
+        _append_existing_ref(
+            refs,
+            artifacts_dir / 'requirements-product-design' / 'product-design-brief.md',
+            artifacts_dir / 'requirements-draft' / 'product-design.md',
+            artifacts_dir / 'requirements-draft' / 'product-design-brief.md',
+        )
+        _append_state_artifact_ref(refs, state, 'test_strategy')
+        _append_existing_ref(
+            refs,
+            artifacts_dir / 'requirements-test-strategy' / 'test-strategy-brief.md',
+            artifacts_dir / 'requirements-draft' / 'requirements-test-strategy.md',
+            artifacts_dir / 'requirements-draft' / 'test-strategy-brief.md',
+        )
+        _append_existing_ref(
+            refs,
+            artifacts_dir / 'requirements-spec-intake' / 'source-map.json',
+            artifacts_dir / 'requirements-spec-intake' / 'normalized-requirements.json',
+            artifacts_dir / 'requirements-draft' / 'prototype-manifest.json',
+        )
     elif role == 'unit_plan_annotation':
-        refs.extend([
-            str(artifacts_dir / 'unit-plan-draft' / 'unit-plan-body.md'),
-            str(artifacts_dir / 'journeys' / 'journeys.json'),
-        ])
+        _append_existing_ref(
+            refs,
+            artifacts_dir / 'unit-plan-draft' / 'unit-plan-body.md',
+            state_dir / 'approvals' / 'requirements-and-acceptance.md',
+        )
+        _append_state_artifact_ref(refs, state, 'product_design')
+        _append_state_artifact_ref(refs, state, 'test_strategy')
+        _append_existing_ref(
+            refs,
+            artifacts_dir / 'requirements-product-design' / 'product-design-brief.md',
+            artifacts_dir / 'requirements-draft' / 'product-design.md',
+            artifacts_dir / 'requirements-test-strategy' / 'test-strategy-brief.md',
+            artifacts_dir / 'requirements-draft' / 'requirements-test-strategy.md',
+            artifacts_dir / 'journeys' / 'journeys.json',
+            artifacts_dir / 'requirements-draft' / 'prototype-manifest.json',
+        )
     else:
         current_unit = str(state.get('currentUnitId') or '').strip()
         if current_unit:
-            refs.append(str(artifacts_dir / current_unit / 'verification.json'))
-        refs.extend([
-            str(artifacts_dir / 'final-scope-audit.json'),
-            str(artifacts_dir / 'journeys' / 'journey-evidence.json'),
-        ])
+            _append_existing_ref(refs, artifacts_dir / current_unit / 'verification.json')
+        _append_existing_ref(
+            refs,
+            state_dir / 'approvals' / 'requirements-and-acceptance.md',
+            state_dir / 'approvals' / 'unit-plan.md',
+            artifacts_dir / 'final-scope-audit.json',
+            artifacts_dir / 'final-acceptance' / 'final-scope-audit.json',
+            artifacts_dir / 'final-acceptance' / 'prototype-conformance-matrix.json',
+        )
     return refs
+
+
+def _append_existing_ref(refs: list[str], *paths: Path) -> None:
+    for path in paths:
+        if path.exists():
+            _append_ref(refs, str(path))
+
+
+def _append_state_artifact_ref(refs: list[str], state: dict[str, Any], stage: str) -> None:
+    package = state.get('requirementsPackage')
+    artifacts = package.get('artifacts') if isinstance(package, dict) else None
+    record = artifacts.get(stage) if isinstance(artifacts, dict) else None
+    if not isinstance(record, dict):
+        return
+    path = str(record.get('path') or '').strip()
+    if path:
+        _append_ref(refs, path)
+
+
+def _append_ref(refs: list[str], ref: str) -> None:
+    if ref and ref not in refs:
+        refs.append(ref)
 
 
 def _allowed_env_values(config: AnnotationAgentConfig) -> list[str]:

@@ -2,6 +2,12 @@
 
 All notable project changes should be recorded here.
 
+## 0.6.2j
+
+- Packaged the annotation Product Contract Traceability Audit enhancement as `0.6.2j`.
+- Added advisory risk-only annotation coverage for product-contract fidelity, information degradation, product field mapping gaps, and out-of-scope boundary risks before human gates.
+- Kept the annotation enhancement out of deterministic validators, state schema fields, CLI options, approval sources, and hard gates.
+
 ## 0.6.2i
 
 - V0.6.2i is a prompt-only release for the staged Requirements prompt and documentation contract.

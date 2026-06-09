@@ -2,6 +2,12 @@
 
 重要项目变更应记录在这里。
 
+## 0.6.2j
+
+- 将 Annotation Agent 产品合同保真审查增强打包为 `0.6.2j`。
+- 增加人工 gate 前 advisory risk-only annotation 覆盖，用于提示产品合同保真、信息衰减、产品字段映射缺口和 out-of-scope 边界风险。
+- 该 annotation 增强不新增 deterministic validator、state schema 字段、CLI 参数、审批来源或 hard gate。
+
 ## 0.6.2i
 
 - V0.6.2i 是 staged Requirements prompt 与正式文档合同的 prompt-only 版本。
